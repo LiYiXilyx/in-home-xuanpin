@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.temu-research/config.schema.json",
+  "title": "Temu Product Research v2 Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app", "browser", "catalog", "export", "reviews"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["databasePath", "legacyDatabasePath", "backupDir", "logDir"],
+      "properties": {
+        "environment": { "type": "string" },
+        "databasePath": { "type": "string", "minLength": 1 },
+        "legacyDatabasePath": { "type": "string", "minLength": 1 },
+        "backupDir": { "type": "string", "minLength": 1 },
+        "logDir": { "type": "string", "minLength": 1 }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["profileDir"],
+      "properties": {
+        "profileDir": { "type": "string", "minLength": 1 },
+        "headless": { "type": "boolean" },
+        "minimumDelayMs": { "type": "number", "minimum": 0 },
+        "maximumDelayMs": { "type": "number", "minimum": 0 },
+        "manualGateTimeoutMs": { "type": "integer", "minimum": 1 },
+        "manualGatePollMs": { "type": "integer", "minimum": 1 },
+        "heartbeatIntervalMs": { "type": "integer", "minimum": 1 },
+        "heartbeatTimeoutMs": { "type": "integer", "minimum": 1 },
+        "closeLaunchedBrowserOnExit": { "type": "boolean" },
+        "minimumCatalogCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["siteCountry", "language", "currency", "targetCount", "selectionRules", "jobs", "selectors"],
+      "properties": {
+        "siteCountry": { "type": "string", "minLength": 1 },
+        "language": { "type": "string", "minLength": 1 },
+        "currency": { "type": "string", "minLength": 1 },
+        "targetCount": { "type": "integer", "minimum": 1 },
+        "jobs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["url", "primaryCategory", "subcategory", "sortOrder"],
+            "properties": {
+              "url": { "type": "string", "minLength": 1 },
+              "primaryCategory": { "type": "string", "minLength": 1 },
+              "subcategory": { "type": "string", "minLength": 1 },
+              "sortOrder": { "type": "string", "minLength": 1 },
+              "targetCount": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outputDir", "imageCacheDir"],
+      "properties": {
+        "outputDir": { "type": "string", "minLength": 1 },
+        "imageCacheDir": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reviews": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "negativeMaxRating": { "type": "number", "minimum": 1, "maximum": 5 }
+      }
+    }
+  }
+}

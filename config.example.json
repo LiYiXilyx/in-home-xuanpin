@@ -1,0 +1,88 @@
+{
+  "$schema": "./config.schema.json",
+  "app": {
+    "environment": "development",
+    "databasePath": "./data/temu_research_v2.db",
+    "legacyDatabasePath": "./data/temu_week1.db",
+    "backupDir": "./backups",
+    "logDir": "./logs"
+  },
+  "browser": {
+    "profileDir": "./browser-profile",
+    "headless": false,
+    "executablePath": "",
+    "cdpEndpoint": "",
+    "launchViaCdp": true,
+    "debugPort": 9227,
+    "pauseBeforeStart": true,
+    "minimumDelayMs": 1500,
+    "maximumDelayMs": 3000,
+    "manualGateTimeoutMs": 1800000,
+    "manualGatePollMs": 500,
+    "heartbeatIntervalMs": 5000,
+    "heartbeatTimeoutMs": 30000,
+    "closeLaunchedBrowserOnExit": false,
+    "minimumCatalogCount": 50,
+    "manualRetryLimit": 8,
+    "maxStaleRounds": 6,
+    "maxReviewPages": 20,
+    "saveSnapshots": true
+  },
+  "catalog": {
+    "siteCountry": "德国",
+    "language": "en",
+    "currency": "EUR",
+    "exchangeRateRmb": 8,
+    "targetCount": 100,
+    "capture": {
+      "minSafeCount": 100,
+      "maxStaleRounds": 6,
+      "maxExpansions": 4,
+      "minimumDelayMs": 1500,
+      "maximumDelayMs": 3000,
+      "imageMinimumBytes": 1024,
+      "imageTimeoutMs": 30000,
+      "imageConcurrency": 3
+    },
+    "selectionRules": {
+      "minPriceEur": 5,
+      "minRating": 4.6,
+      "minRecentDailyReviews": 3,
+      "excludeElectronic": true,
+      "excludeUsb": true,
+      "electronicTerms": ["battery", "rechargeable", "bluetooth", "wireless", "charger", "electronic", "lithium", "led light", "电池", "充电", "蓝牙", "无线", "电子"],
+      "usbTerms": ["usb", "type-c", "type c"]
+    },
+    "jobs": [{
+      "url": "PASTE_TEMU_CATEGORY_URL_AFTER_SETTING_GERMANY_ENGLISH_EUR_TOP_SALES",
+      "primaryCategory": "Automotive",
+      "subcategory": "请填写子类目",
+      "sortOrder": "Top Sales",
+      "searchQuery": "motorcycle parts",
+      "targetCount": 100
+    }],
+    "selectors": {
+      "productLinks": "a[href*='goods.html'], a[href*='-g-']",
+      "productCard": "[data-testid*='product'], [class*='product-card'], [class*='ProductCard'], li",
+      "reviewOpen": "button:has-text('See all reviews'), button:has-text('View all reviews'), button:has-text('All reviews')",
+      "reviewSort": "button:has-text('Most recent'), [role='button']:has-text('Most recent')",
+      "reviewCard": "[data-testid*='review-item'], [data-testid*='comment-item'], [class*='reviewItem'], [class*='review-item']",
+      "reviewDate": "time, [class*='date'], [data-testid*='date']",
+      "reviewText": "[data-testid*='review-content'], [class*='review-content'], [class*='reviewContent']",
+      "reviewRating": "[aria-label*='out of 5'], [aria-label*='star'], [class*='star']",
+      "reviewLoadMore": "button:has-text('Load more'), button:has-text('Show more')"
+    }
+  },
+  "export": {
+    "outputDir": "./outputs/week1-mvp",
+    "imageCacheDir": "./outputs/week1-mvp/image-cache"
+  },
+  "reviews": {
+    "enabled": false,
+    "negativeMaxRating": 3,
+    "pilotBatchSize": 10,
+    "minimumPilotSuccess": 8,
+    "pilotFullHistory": true,
+    "fastGrowthRatio": 1.5
+  }
+}
