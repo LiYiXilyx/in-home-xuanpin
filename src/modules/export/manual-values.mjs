@@ -4,7 +4,7 @@ import { FileBlob,SpreadsheetFile } from '@oai/artifact-tool';
 
 export const MANUAL_HEADERS = ['初步分类','人工备注'];
 
-export async function findLatestValidWorkbook(outputDir,fixedPath) {
+export async function findValidWorkbooks(outputDir,fixedPath) {
   const extension=path.extname(fixedPath);
   const base=path.basename(fixedPath,extension);
   const candidates=[];
@@ -26,38 +26,51 @@ export async function findLatestValidWorkbook(outputDir,fixedPath) {
     }
   }
   candidates.sort((a,b) => b.mtimeMs-a.mtimeMs);
+  const valid=[];
   for (const candidate of candidates) {
     try {
       const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(candidate.filePath));
       workbook.worksheets.getItem('商品池');
-      return candidate.filePath;
+      valid.push(candidate.filePath);
     } catch {}
   }
-  return null;
+  return valid;
+}
+
+export async function findLatestValidWorkbook(outputDir,fixedPath) {
+  return (await findValidWorkbooks(outputDir,fixedPath))[0] ?? null;
 }
 
 export async function loadManualValues(outputDir,fixedPath) {
-  const sourcePath=await findLatestValidWorkbook(outputDir,fixedPath);
+  const sourcePaths=await findValidWorkbooks(outputDir,fixedPath);
+  const sourcePath=sourcePaths[0] ?? null;
   const empty={ sourcePath:null,byGoodsId:new Map(),byCanonicalUrl:new Map() };
   if (!sourcePath) return empty;
+  const state={ sourcePath,byGoodsId:new Map(),byCanonicalUrl:new Map() };
   try {
-    const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(sourcePath));
-    const sheet=workbook.worksheets.getItem('商品池');
-    const used=sheet.getUsedRange(true);
-    const values=used?.values ?? [];
-    const formulas=used?.formulas ?? [];
-    const headers=values[0] ?? [];
-    const goodsIndex=headers.indexOf('goods_id');
-    const urlIndex=headers.indexOf('Temu链接');
-    const manualIndexes=MANUAL_HEADERS.map(header => [header,headers.indexOf(header)]).filter(([,index]) => index >= 0);
-    const state={ sourcePath,byGoodsId:new Map(),byCanonicalUrl:new Map() };
+    // A later export can legitimately contain blank manual fields.  Merge every
+    // valid historical workbook newest-first so an older human-entered value is
+    // never erased just because a later generated workbook was blank.
+    for (const candidatePath of sourcePaths) {
+      const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(candidatePath));
+      const sheet=workbook.worksheets.getItem('商品池');
+      const used=sheet.getUsedRange(true);
+      const values=used?.values ?? [];
+      const formulas=used?.formulas ?? [];
+      const headers=values[0] ?? [];
+      const goodsIndex=headers.indexOf('goods_id');
+      const urlIndex=headers.indexOf('Temu链接');
+      const manualIndexes=MANUAL_HEADERS.map(header => [header,headers.indexOf(header)]).filter(([,index]) => index >= 0);
+      if (!manualIndexes.length) continue;
     for (let rowIndex=1;rowIndex<values.length;rowIndex+=1) {
       const row=values[rowIndex] ?? [];
       const manual=Object.fromEntries(manualIndexes.map(([header,index]) => [header,row[index] ?? '']));
+      if (!Object.values(manual).some(value => String(value ?? '').trim())) continue;
       const goodsId=goodsIndex >= 0 ? String(row[goodsIndex] ?? '').trim() : '';
       const canonicalUrl=urlIndex >= 0 ? extractHyperlink(formulas[rowIndex]?.[urlIndex]) || String(row[urlIndex] ?? '').trim() : '';
-      if (goodsId) state.byGoodsId.set(goodsId,manual);
-      if (canonicalUrl) state.byCanonicalUrl.set(canonicalUrl,manual);
+      if (goodsId && !state.byGoodsId.has(goodsId)) state.byGoodsId.set(goodsId,manual);
+      if (canonicalUrl && !state.byCanonicalUrl.has(canonicalUrl)) state.byCanonicalUrl.set(canonicalUrl,manual);
+    }
     }
     return state;
   } catch (error) {
