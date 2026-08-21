@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { FileBlob,SpreadsheetFile } from '@oai/artifact-tool';
 import { createOperationsServer } from '../../src/server/index.mjs';
 import { createJobControl } from '../../src/jobs/job-control.mjs';
 import { operatorMessage } from '../../src/server/status-service.mjs';
@@ -128,8 +129,19 @@ test('clear Excel requires confirmation and archives the workbook without touchi
   response=await request(url,'/api/clear/excel',{ confirmed:true });
   assert.equal(response.status,200);
   assert.equal(response.body.archived,1);
-  assert.equal(fs.existsSync(workbook),false);
+  assert.equal(response.body.emptyWorkbook,true);
+  assert.equal(fs.existsSync(workbook),true);
   assert.equal(fs.readdirSync(path.join(config.export.outputDir,'.excel-history')).length,1);
+  const emptyWorkbook=await SpreadsheetFile.importXlsx(await FileBlob.load(workbook));
+  assert.deepEqual(emptyWorkbook.worksheets.items.map(sheet => sheet.name),['商品池','数据质量','任务记录','字段说明']);
+  const emptyProductValues=emptyWorkbook.worksheets.getItem('商品池').getUsedRange(true)?.values ?? [];
+  assert.equal(emptyProductValues.length,1);
+  assert.equal(emptyProductValues[0].length,19);
+  response=await request(url,'/api/status');
+  assert.equal(response.body.latestExcel.exists,true,'the archived workbook remains available to open');
+  assert.equal(response.body.currentExcelExists,true,'the new empty workbook remains available to open');
+  response=await request(url,'/api/open/excel',{});
+  assert.equal(response.status,200);
   assert.equal(app.db.prepare('SELECT COUNT(*) AS count FROM crawl_jobs').get().count,0);
 });
 
@@ -195,6 +207,57 @@ test('external Chrome mode connects and server shutdown leaves the user browser 
   assert.equal(JSON.stringify(response.body).includes(directory),false);
   await app.close();
   assert.equal(browserCloseCalls,0);
+});
+
+test('production mode refuses the test reset endpoint',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-production-reset-guard-'));
+  const app=await makeServer(makeConfig(directory),[]);
+  t.after(async () => { await app.close();fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:50 }); });
+  const { url }=await app.listen({ port:0 });
+  const response=await request(url,'/api/test/reset',{ confirmed:true,phrase:'RESET_TEST_DATA' });
+  assert.equal(response.status,400);
+  assert.equal(response.body.error.code,'TEST_MODE_REQUIRED');
+});
+
+test('test mode reset clears only isolated test data and creates an empty workbook',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-test-mode-reset-'));
+  const config=makeConfig(directory);
+  config.configPath=path.join(directory,'config.test.json');
+  config.app.environment='test';
+  config.app.databasePath=path.join(directory,'data','test','temu_research_test.db');
+  config.app.legacyDatabasePath=path.join(directory,'data','test','legacy-unused.db');
+  config.app.backupDir=path.join(directory,'backups','test');
+  config.app.logDir=path.join(directory,'logs','test');
+  config.export.outputDir=path.join(directory,'outputs','test-run');
+  config.export.imageCacheDir=path.join(config.export.outputDir,'image-cache');
+  const productionSentinel=path.join(directory,'data','temu_research_v2.db');
+  fs.mkdirSync(path.dirname(productionSentinel),{ recursive:true });
+  fs.writeFileSync(productionSentinel,'PRODUCTION_MUST_NOT_CHANGE');
+  fs.mkdirSync(config.export.imageCacheDir,{ recursive:true });
+  fs.writeFileSync(path.join(config.export.imageCacheDir,'test-image.webp'),'test image');
+
+  const app=await makeServer(config,[]);
+  t.after(async () => { await app.close();fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:50 }); });
+  const oldJob=app.service.create({ jobType:'catalog',targetCount:100 });
+  app.service.start(oldJob.id);app.service.complete(oldJob.id);
+  const { url }=await app.listen({ port:0 });
+  let response=await request(url,'/api/test/reset',{ confirmed:true,phrase:'WRONG' });
+  assert.equal(response.status,400);
+  assert.equal(response.body.error.code,'TEST_RESET_CONFIRMATION_REQUIRED');
+
+  response=await request(url,'/api/test/reset',{ confirmed:true,phrase:'RESET_TEST_DATA' });
+  assert.equal(response.status,200);
+  assert.equal(response.body.reset,true);
+  assert.equal(response.body.emptyWorkbook,true);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS count FROM crawl_jobs').get().count,0);
+  assert.equal(fs.readFileSync(productionSentinel,'utf8'),'PRODUCTION_MUST_NOT_CHANGE');
+  assert.equal(fs.existsSync(path.join(config.export.outputDir,'Temu运营商品池.xlsx')),true);
+  assert.equal(fs.existsSync(config.export.imageCacheDir),true);
+  assert.ok(fs.readdirSync(config.app.backupDir).some(name => name.startsWith('test-db-before-reset-')));
+  assert.ok(fs.readdirSync(config.app.backupDir).some(name => name.startsWith('test-output-before-reset-')));
+  response=await request(url,'/api/status');
+  assert.deepEqual(response.body.environment,{ name:'test',testMode:true });
+  assert.equal(response.body.activeProducts,0);
 });
 
 async function makeServer(config,launches) {

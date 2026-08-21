@@ -1,11 +1,12 @@
 import { operatorMessage } from './status-service.mjs';
 
-export function createRouter({ statusService,browserController,jobController,exportController,serveStatic,logError=console.error }) {
+export function createRouter({ statusService,browserController,jobController,exportController,testController,serveStatic,
+  environment={ name:'development',testMode:false },logError=console.error }) {
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
       if (request.method === 'GET' && url.pathname === '/api/status') return json(response,200,await statusService.snapshot());
-      if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{ ok:true });
+      if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{ ok:true,environment:environment.name,testMode:environment.testMode });
       if (request.method === 'POST' && url.pathname === '/api/browser/open') return json(response,200,{ ok:true,...await browserController.open() });
       if (request.method === 'POST' && url.pathname === '/api/browser/connect') return json(response,200,{ ok:true,...await browserController.connectExisting() });
       if (request.method === 'POST' && url.pathname === '/api/browser/new') return json(response,200,{ ok:true,...await browserController.createFresh() });
@@ -23,6 +24,10 @@ export function createRouter({ statusService,browserController,jobController,exp
       if (request.method === 'POST' && url.pathname === '/api/clear/excel') {
         const body=await readJson(request);
         return json(response,200,{ ok:true,...await exportController.clearExcel({ confirmed:body.confirmed === true }) });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/test/reset') {
+        const body=await readJson(request);
+        return json(response,200,{ ok:true,...await testController.reset({ confirmed:body.confirmed === true,phrase:body.phrase }) });
       }
       if (request.method === 'GET' && !url.pathname.startsWith('/api/')) return serveStatic(url.pathname,response);
       return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });

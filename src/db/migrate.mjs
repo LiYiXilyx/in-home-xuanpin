@@ -17,10 +17,10 @@ export function migrateDatabase({ databasePath, migrationsDir = DEFAULT_MIGRATIO
     const skipped = [];
     for (const filename of files) {
       const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf8');
-      const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+      const checksum = migrationChecksum(sql);
       const existing = db.prepare('SELECT checksum FROM schema_migrations WHERE filename = ?').get(filename);
       if (existing) {
-        if (existing.checksum !== checksum) {
+        if (!compatibleMigrationChecksums(sql).has(existing.checksum)) {
           throw new MigrationError(`已执行迁移 ${filename} 的校验和发生变化，已停止。`, {
             code: 'MIGRATION_CHECKSUM_MISMATCH', details: { filename, expected: existing.checksum, actual: checksum }
           });
@@ -52,6 +52,22 @@ export function migrateDatabase({ databasePath, migrationsDir = DEFAULT_MIGRATIO
   } finally {
     db.close();
   }
+}
+
+function migrationChecksum(sql) {
+  return crypto.createHash('sha256').update(sql).digest('hex');
+}
+
+function compatibleMigrationChecksums(sql) {
+  const normalized = sql.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const body = normalized.replace(/\n+$/, '');
+  const candidates = new Set([migrationChecksum(sql)]);
+  for (const eol of ['\n', '\r\n']) {
+    for (let trailingLines = 0; trailingLines <= 2; trailingLines += 1) {
+      candidates.add(migrationChecksum(body + eol.repeat(trailingLines)));
+    }
+  }
+  return candidates;
 }
 
 export function getMigrationStatus({ databasePath, migrationsDir = DEFAULT_MIGRATIONS_DIR }) {

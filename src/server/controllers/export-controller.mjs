@@ -2,14 +2,17 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { exportOperationsWorkbook } from '../../modules/export/export-service.mjs';
+import { DEFAULT_WORKBOOK_NAME,exportEmptyOperationsWorkbook,exportOperationsWorkbook } from '../../modules/export/export-service.mjs';
 import { AppError } from '../../shared/errors.mjs';
 
-export function createExportController({ config,repository,service,openTarget=defaultOpenTarget,exportWorkbook=exportOperationsWorkbook }) {
+export function createExportController({ config,repository,service,openTarget=defaultOpenTarget,exportWorkbook=exportOperationsWorkbook,
+  createEmptyWorkbook=exportEmptyOperationsWorkbook }) {
   const outputDir=config.export.outputDir;
-  const latestExcel=() => findLatestExcel(outputDir);
+  const fixedWorkbookPath=path.join(outputDir,DEFAULT_WORKBOOK_NAME);
+  const latestExcel=() => findLatestExcel(outputDir,{ includeHistory:true });
+  const currentExcel=() => findLatestExcel(outputDir,{ includeHistory:false });
   return {
-    latestExcel,
+    latestExcel,currentExcel,
     async export() {
       const catalogJob=repository.listJobs({ limit:100 }).find(job => job.jobType === 'catalog' && ['completed','completed_with_errors'].includes(job.status));
       if (!catalogJob) throw new AppError('尚无已完成的商品采集任务，暂时不能导出 Excel。',{ code:'EXPORT_SOURCE_NOT_FOUND' });
@@ -33,17 +36,21 @@ export function createExportController({ config,repository,service,openTarget=de
     async clearExcel({ confirmed=false }={}) {
       if (confirmed !== true) throw new AppError('清除 Excel 前必须确认。',{ code:'CLEAR_EXCEL_CONFIRMATION_REQUIRED' });
       const files=listExcelFiles(outputDir);
-      if (files.length === 0) return { archived:0,message:'没有可清除的运营 Excel 文件。' };
-      try { await Promise.all(files.map(assertExcelMovable)); }
-      catch (error) { throw new AppError('Excel 正在被 Excel/WPS 占用。请关闭所有运营 Excel 后再清除。',{ code:'EXCEL_IN_USE',cause:error }); }
-      const stamp=new Date().toISOString().replace(/[-:]/g,'').replace('T','-').replace('Z','').replace('.','-');
-      const historyDir=path.join(outputDir,'.excel-history',stamp);
-      await fsp.mkdir(historyDir,{ recursive:true });
-      try { await Promise.all(files.map(file => fsp.rename(file,path.join(historyDir,path.basename(file))))); }
-      catch (error) {
-        throw new AppError('Excel 正在被 Excel/WPS 占用。请关闭文件后再清除。',{ code:'EXCEL_IN_USE',cause:error });
+      if (files.length) {
+        try { await Promise.all(files.map(assertExcelMovable)); }
+        catch (error) { throw new AppError('Excel 正在被 Excel/WPS 占用。请关闭所有运营 Excel 后再清除。',{ code:'EXCEL_IN_USE',cause:error }); }
+        const stamp=new Date().toISOString().replace(/[-:]/g,'').replace('T','-').replace('Z','').replace('.','-');
+        const historyDir=path.join(outputDir,'.excel-history',stamp);
+        await fsp.mkdir(historyDir,{ recursive:true });
+        try { await Promise.all(files.map(file => fsp.rename(file,path.join(historyDir,path.basename(file))))); }
+        catch (error) {
+          throw new AppError('Excel 正在被 Excel/WPS 占用。请关闭文件后再清除。',{ code:'EXCEL_IN_USE',cause:error });
+        }
       }
-      return { archived:files.length,message:`已清除 ${files.length} 个 Excel 文件；数据库、图片缓存和人工备注备份均已保留。` };
+      try { await createEmptyWorkbook(fixedWorkbookPath); }
+      catch (error) { throw new AppError('旧 Excel 已安全归档，但空白验收表生成失败。请重新点击“清除 Excel”。',{ code:'EMPTY_EXCEL_CREATE_FAILED',cause:error }); }
+      return { archived:files.length,emptyWorkbook:true,fileName:path.basename(fixedWorkbookPath),
+        message:`已归档 ${files.length} 个当前 Excel，并生成 0 商品空白验收表；可立即点击“打开 Excel”检查。数据库、图片缓存和人工备注备份均已保留。` };
     }
   };
 }
@@ -53,8 +60,10 @@ async function assertExcelMovable(filePath) {
   await handle.close();
 }
 
-export function findLatestExcel(outputDir) {
-  return listExcelFiles(outputDir).map(target => ({ target,mtime:fs.statSync(target).mtimeMs }))
+export function findLatestExcel(outputDir,{ includeHistory=true }={}) {
+  const files=listExcelFiles(outputDir);
+  if (includeHistory) files.push(...listHistoricalExcelFiles(outputDir));
+  return files.map(target => ({ target,mtime:fs.statSync(target).mtimeMs }))
     .filter(item => validXlsx(item.target)).sort((a,b) => b.mtime-a.mtime)[0]?.target ?? null;
 }
 
@@ -62,6 +71,22 @@ function listExcelFiles(outputDir) {
   if (!fs.existsSync(outputDir)) return [];
   return fs.readdirSync(outputDir,{ withFileTypes:true }).filter(entry => entry.isFile() && entry.name.startsWith('Temu运营商品池') && entry.name.toLowerCase().endsWith('.xlsx'))
     .map(entry => path.join(outputDir,entry.name));
+}
+
+function listHistoricalExcelFiles(outputDir) {
+  const historyDir=path.join(outputDir,'.excel-history');
+  if (!fs.existsSync(historyDir)) return [];
+  const files=[];
+  const pending=[historyDir];
+  while (pending.length) {
+    const directory=pending.pop();
+    for (const entry of fs.readdirSync(directory,{ withFileTypes:true })) {
+      const target=path.join(directory,entry.name);
+      if (entry.isDirectory()) pending.push(target);
+      else if (entry.isFile() && entry.name.startsWith('Temu运营商品池') && entry.name.toLowerCase().endsWith('.xlsx')) files.push(target);
+    }
+  }
+  return files;
 }
 
 function validXlsx(target) { try { const fd=fs.openSync(target,'r'); try { const bytes=Buffer.alloc(4); return fs.readSync(fd,bytes,0,4,0) === 4 && bytes.equals(Buffer.from([0x50,0x4b,0x03,0x04])); } finally { fs.closeSync(fd); } } catch { return false; } }

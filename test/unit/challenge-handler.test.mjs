@@ -41,6 +41,13 @@ test('operator page prefers the visible Temu tab and classifies wrong pages', as
   await assert.rejects(requireCurrentOperatorTemuPage({ pages: () => [] }), error => error.code === 'NO_TEMU_PAGE');
 });
 
+test('operator page prefers a catalog listing when Chrome reports multiple Temu tabs visible', async () => {
+  const page = url => ({ url:() => url,isClosed:() => false,evaluate:async () => true });
+  const motorcycleListing=page('https://www.temu.com/de-en/motorcycles--accessories-o3-585.html?opt_level=2&leaf_type=bro');
+  const unrelatedProduct=page('https://www.temu.com/de-en/elegant-clutch-g-601099796500465.html');
+  assert.equal(await findCurrentOperatorTemuPage({ pages:() => [motorcycleListing,unrelatedProduct] }),motorcycleListing);
+});
+
 test('CDP and closed-browser failures use retriable stable codes', async () => {
   await assert.rejects(connectOperatorSession({ browser: { cdpEndpoint: 'http://127.0.0.1:65530' } }, {
     fetchImpl: async () => ({ ok: false })

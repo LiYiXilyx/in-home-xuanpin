@@ -1,5 +1,6 @@
 const $=selector => document.querySelector(selector);
 const elements={
+  environmentBanner:$('#environmentBanner'),consoleTitle:$('#consoleTitle'),resetTestData:$('#resetTestData'),
   notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),newBrowser:$('#newBrowser'),connectExisting:$('#connectExisting'),validatePage:$('#validatePage'),
   pageReadiness:$('#pageReadiness'),browserMode:$('#browserMode'),profileName:$('#profileName'),cdpPort:$('#cdpPort'),healthCountry:$('#healthCountry'),
   healthLanguage:$('#healthLanguage'),healthCurrency:$('#healthCurrency'),loginStatus:$('#loginStatus'),productListVisible:$('#productListVisible'),
@@ -27,6 +28,7 @@ function statusLabel(status) { return ({ pending:'等待开始',running:'运行�
 
 function render(payload) {
   state=payload;
+  renderEnvironment(payload.environment);
   const job=payload.currentJob;
   elements.browserPulse.classList.toggle('offline',!payload.browser.connected);
   elements.browserStatus.textContent=payload.browser.connected ? `${payload.browser.modeLabel} 已连接 · CDP ${payload.browser.port}` : `${payload.browser.modeLabel} 未连接 · CDP ${payload.browser.port}`;
@@ -56,6 +58,14 @@ function render(payload) {
   renderEvents(payload.events);
   renderControls(job,payload);
   renderNotice(job,payload);
+}
+function renderEnvironment(environment={}) {
+  const testMode=environment.testMode === true;
+  document.body.classList.toggle('test-mode',testMode);
+  elements.environmentBanner.hidden=!testMode;
+  elements.resetTestData.hidden=!testMode;
+  elements.consoleTitle.textContent=testMode ? 'Temu 测试运营台':'Temu 选品运营台';
+  document.title=testMode ? 'Temu 测试运营台':'Temu 选品运营台';
 }
 function renderBrowserHealth(browser) {
   const health=browser.pageHealth;
@@ -144,7 +154,7 @@ function renderControls(job,payload) {
   elements.retry.disabled=!['failed','interrupted','completed_with_errors'].includes(status);
   elements.export.disabled=payload.activeProducts === 0;
   elements.openExcel.disabled=!payload.latestExcel.exists;
-  elements.clearExcel.disabled=!payload.latestExcel.exists;
+  elements.clearExcel.disabled=!(payload.currentExcelExists ?? payload.latestExcel.exists);
 }
 function renderNotice(job,payload) {
   let message='',kind='';
@@ -159,7 +169,7 @@ function renderNotice(job,payload) {
   if (job?.waitingForInput) { message='Temu 需要登录或安全验证。请在采集 Chrome 中人工处理，恢复摩托配件 Top Sales 页面后点击“继续”。'; kind='warn'; }
   if (job?.status === 'interrupted') { message='检测到服务或采集进程中断，数据和 checkpoint 已保留，请点击“继续”。'; kind='warn'; }
   if (job?.status === 'failed') { message=job.lastError ?? '任务失败，已成功数据仍保留。请修复页面或网络后重试。'; kind='error'; }
-  if (job?.status === 'completed') { message='任务已完成，可以导出或打开运营 Excel。'; kind='success'; }
+  if (job?.status === 'completed' && !message) { message='任务已完成，可以导出或打开运营 Excel。'; kind='success'; }
   elements.notice.textContent=message; elements.notice.className=`notice ${message ? 'show' : ''} ${kind}`;
 }
 async function action(path,message,body) { try { toast(message); await api(path,{ method:'POST',body }); await refresh(); } catch(error) { toast(error.message); await refresh(); } }
@@ -184,6 +194,12 @@ elements.openExcel.addEventListener('click',() => action('/api/open/excel','正�
 elements.clearExcel.addEventListener('click',() => {
   if (!confirm('确认清除当前导出的 Excel 文件吗？\n\n文件会移入本地历史备份，数据库、图片缓存和人工备注不会删除。之后可点击“导出 Excel”重新生成。')) return;
   action('/api/clear/excel','正在清除 Excel 文件…',{ confirmed:true });
+});
+elements.resetTestData.addEventListener('click',() => {
+  if (!confirm('第一次确认：确定重置全部测试数据吗？\n\n只允许清理独立测试数据库、测试 Excel 和测试图片；重置前会自动备份。')) return;
+  const phrase=prompt('第二次确认：请输入“重置测试数据”继续。');
+  if (phrase !== '重置测试数据') { toast('确认文字不正确，已取消重置。');return; }
+  action('/api/test/reset','正在备份并重置测试数据…',{ confirmed:true,phrase:'RESET_TEST_DATA' });
 });
 elements.openFolder.addEventListener('click',() => action('/api/open/folder','正在打开结果目录…'));
 

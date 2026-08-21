@@ -59,6 +59,17 @@ export async function exportOperationsWorkbook(config,options={}) {
   return { ...report,reportPath };
 }
 
+export async function exportEmptyOperationsWorkbook(targetPath) {
+  await fs.mkdir(path.dirname(targetPath),{ recursive:true });
+  const built=buildExportWorkbook({ products:[],quality:[],jobs:[] },{
+    manualState:{ byGoodsId:new Map(),byCanonicalUrl:new Map() },imageDataByGoodsId:new Map()
+  });
+  const output=await SpreadsheetFile.exportXlsx(built.workbook);
+  await output.save(targetPath);
+  await finalizeWorkbook(targetPath);
+  return { savedPath:targetPath,products:0,embeddedImages:0,hyperlinks:0 };
+}
+
 export function buildExportWorkbook(model,{ manualState,imageDataByGoodsId }) {
   const { workbook,sheets }=createOperationsWorkbook();
   const productResult=buildProductsSheet(sheets['商品池'],model.products,{ manualState,imageDataByGoodsId });

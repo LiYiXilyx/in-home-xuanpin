@@ -56,6 +56,21 @@ test('an applied migration cannot be edited silently', t => {
   assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
 });
 
+test('migration checksums tolerate Windows line endings and trailing blank lines only', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-eol-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(id INTEGER);\n');
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(id INTEGER);\r\n\r\n');
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.deepEqual(repeated.applied, []);
+  assert.deepEqual(repeated.skipped, ['001_sample.sql']);
+});
+
 test('a failed migration is rolled back completely', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-rollback-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

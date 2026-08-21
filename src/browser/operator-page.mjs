@@ -3,10 +3,15 @@ import { AppError } from '../shared/errors.mjs';
 export async function findCurrentOperatorTemuPage(context) {
   const pages = context.pages().filter(page => !page.isClosed());
   const temuPages = pages.filter(page => isTemuUrl(page.url()));
-  for (const page of [...temuPages].reverse()) {
-    if (await page.evaluate(() => document.visibilityState === 'visible').catch(() => false)) return page;
+  const candidates=[];
+  for (const [index,page] of temuPages.entries()) {
+    const visible=await page.evaluate(() => document.visibilityState === 'visible').catch(() => false);
+    candidates.push({ page,index,visible,listingPriority:listingPagePriority(page.url()) });
   }
-  return temuPages.at(-1) ?? null;
+  candidates.sort((left,right) => right.listingPriority-left.listingPriority
+    || Number(right.visible)-Number(left.visible)
+    || right.index-left.index);
+  return candidates[0]?.page ?? null;
 }
 
 export async function requireCurrentOperatorTemuPage(context) {
@@ -22,4 +27,14 @@ export async function requireCurrentOperatorTemuPage(context) {
 
 export function isTemuUrl(value) {
   try { return /(^|\.)temu\.com$/i.test(new URL(value).hostname); } catch { return false; }
+}
+
+function listingPagePriority(value) {
+  try {
+    const url=new URL(value);
+    const location=`${url.pathname} ${url.search}`;
+    if (/goods\.html|(?:^|[-/])g-\d+\.html/i.test(url.pathname)) return -1;
+    if (/category\.html|search_result\.html|motorcycl|powersport|opt_level=|leaf_type=/i.test(location)) return 1;
+  } catch {}
+  return 0;
 }

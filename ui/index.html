@@ -8,8 +8,9 @@
 </head>
 <body>
   <main class="shell">
+    <section id="environmentBanner" class="test-banner" hidden>测试模式 · 独立测试数据库 · 不写入正式 300 商品库</section>
     <header class="topbar">
-      <div><p class="eyebrow">德国站 · 摩托配件 · Top Sales</p><h1>Temu 选品运营台</h1></div>
+      <div><p class="eyebrow">德国站 · 摩托配件 · Top Sales</p><h1 id="consoleTitle">Temu 选品运营台</h1></div>
       <div class="connection"><span id="browserPulse" class="pulse offline"></span><span id="browserStatus">Chrome 检查中</span></div>
     </header>
 
@@ -42,6 +43,7 @@
         <button id="openExcel">打开 Excel</button>
         <button id="clearExcel" class="danger">清除 Excel</button>
         <button id="openFolder">打开结果目录</button>
+        <button id="resetTestData" class="test-danger" hidden>重置测试数据</button>
       </div>
     </section>
 

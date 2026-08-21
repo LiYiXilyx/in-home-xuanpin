@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const DISPLAY_CHECKPOINT_FIELDS = ['phase','scrollRound','round','currentCount','discovered','targetCount','lastEvent','latestCheckpointAt'];
 
-export function createStatusService({ db, jobRepository, config, browserStatus, latestExcel }) {
+export function createStatusService({ db, jobRepository, config, browserStatus, latestExcel, currentExcel }) {
   return {
     async snapshot() {
       const jobs = jobRepository.listJobs({ limit: 20 });
@@ -18,7 +18,9 @@ export function createStatusService({ db, jobRepository, config, browserStatus, 
       }
       const image = imageCoverage(db);
       const excel = latestExcel();
+      const currentWorkbook=currentExcel ? currentExcel():excel;
       return {
+        environment:{ name:config.app.environment,testMode:config.app.environment === 'test' },
         browser: await browserStatus(),
         currentJob: current ? publicJob(current) : null,
         jobs: jobs.map(publicJob),
@@ -27,6 +29,7 @@ export function createStatusService({ db, jobRepository, config, browserStatus, 
         imageCoverage:image,
         activeProducts:activeProducts(db),
         latestExcel:excel ? { exists:true,name:path.basename(excel),modifiedAt:fs.statSync(excel).mtime.toISOString() } : { exists:false,name:null,modifiedAt:null },
+        currentExcelExists:Boolean(currentWorkbook),
         recentErrors:recentErrors(jobs,events),
         events:events.map(publicEvent)
       };

@@ -9,6 +9,9 @@ export const PRODUCT_HEADERS=[
 export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoodsId }) {
   sheet.getRange(`A1:${columnLetter(PRODUCT_HEADERS.length)}1`).values=[PRODUCT_HEADERS];
   applyHeader(sheet.getRange(`A1:${columnLetter(PRODUCT_HEADERS.length)}1`));
+  const widths=[7,14,14,18,44,54,18,32,12,12,10,12,9,12,12,20,13,18,36];
+  widths.forEach((width,index) => { sheet.getRange(`${columnLetter(index+1)}:${columnLetter(index+1)}`).format.columnWidth=width; });
+  sheet.freezePanes.freezeRows(1);
   if (products.length === 0) return { imageCount:0,hyperlinkCount:0 };
   const rows=products.map((product,index) => {
     const manual=manualValuesForProduct(manualState,product);
@@ -43,9 +46,6 @@ export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoods
   sheet.getRange(`E2:E${lastRow}`).format.wrapText=true;
   sheet.getRange(`R2:S${lastRow}`).format.wrapText=true;
   sheet.getRange(`A2:S${lastRow}`).format.rowHeight=72;
-  const widths=[7,14,14,18,44,54,18,32,12,12,10,12,9,12,12,20,13,18,36];
-  widths.forEach((width,index) => { sheet.getRange(`${columnLetter(index+1)}:${columnLetter(index+1)}`).format.columnWidth=width; });
-  sheet.freezePanes.freezeRows(1);
   const table=sheet.tables.add(`A1:S${lastRow}`,true,'TemuOperationsProducts');
   table.style='TableStyleMedium2';
   table.showFilterButton=true;
