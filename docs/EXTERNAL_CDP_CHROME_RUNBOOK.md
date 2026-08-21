@@ -29,7 +29,18 @@ External CDP 模式允许运营人员先在一个可正常访问 Temu 的 Chrome
 3. 运营台验证 `READY` 后才允许采集；
 4. 当多个 Temu 标签页同时打开时，运营台优先选择类目/搜索列表页，不再误选商品详情页。
 
-## 3. 启动步骤
+## 3. 推荐启动步骤（运营人员）
+
+日常使用不需要打开 CMD，也不需要输入 Chrome 命令：
+
+1. 双击项目根目录的 `启动Temu采集Chrome.vbs`，它只负责使用 `C:\TemuExternalChrome` 启动 CDP 9222，不打开 CMD、不强制导航 Temu；
+2. 在该 Chrome 中人工登录并准备摩托配件 Top Sales 页面；
+3. 双击 `启动Temu运营台.vbs`，它只启动运营台并连接已经存在的 Chrome，不改变浏览器页面；
+4. 点击“验证当前页面”。
+
+脚本不会复制日常 Chrome profile，不会自动登录，不会绕过验证码，也不会关闭用户 Chrome。
+
+## 4. 手工启动步骤（仅故障恢复）
 
 ### 第一步：关闭 Google Chrome
 
@@ -81,7 +92,7 @@ External CDP 模式允许运营人员先在一个可正常访问 Temu 的 Chrome
 
 只有状态为 `READY` 时，开始采集按钮才会启用。
 
-## 4. 多个 Temu 标签页
+## 5. 多个 Temu 标签页
 
 可以同时打开多个 Temu 标签页，但建议目标摩托车配件列表页保持打开。运营台会优先选择类目或搜索商品列表页，并降低单个商品详情页的优先级。
 
@@ -91,7 +102,7 @@ External CDP 模式允许运营人员先在一个可正常访问 Temu 的 Chrome
 2. 确认 Top Sales 和商品卡片仍可见；
 3. 再次点击“验证当前页面”。
 
-## 5. 常见问题
+## 6. 常见问题
 
 ### 无法连接 CDP 9222
 
@@ -113,7 +124,7 @@ External CDP 模式允许运营人员先在一个可正常访问 Temu 的 Chrome
 
 系统不会绕过验证码，也不会在 `NOT_READY` 状态下强制采集或写入空商品池。
 
-## 6. 安全边界
+## 7. 安全边界
 
 - 不复制日常 Chrome profile；
 - 不读取或输出 Cookie、Token、Authorization；
@@ -123,11 +134,12 @@ External CDP 模式允许运营人员先在一个可正常访问 Temu 的 Chrome
 - 运营台关闭时只断开 CDP；
 - 页面未达到 `READY` 时禁止采集。
 
-## 7. 推荐日常流程
+## 8. 推荐日常流程
 
 ```text
-启动 Temu 运营台
-→ 使用命令启动 External Chrome
+双击启动Temu采集Chrome.vbs
+→ 人工准备 Top Sales 页面
+→ 双击启动Temu运营台.vbs并自动连接
 → 人工登录并准备 Germany / English / EUR
 → 进入摩托车配件 + Top Sales
 → 连接已有 Chrome

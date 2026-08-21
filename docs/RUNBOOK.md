@@ -7,14 +7,16 @@
 ## A. 第一次使用
 
 1. 保持项目文件夹完整，不要移动其中的 `data`、`browser-profile-day4`、`outputs` 和 `config.json`。
-2. 双击根目录的 `启动Temu运营台.vbs`。
-3. 等待浏览器自动打开 `Temu 选品运营台`。若 15 秒后仍未打开，查看 `logs/dashboard.log`，或联系开发人员。
-4. 页面右上角显示“采集 Chrome 已连接”后，才能开始采集。
-5. External 模式必须先由运营人员登录 Temu、设置 Germany / English / EUR、进入摩托配件并选择 Top Sales，再点击“连接已有 Chrome”和“验证当前页面”。只有状态为 `READY` 才能开始。
+2. 第一次或 Chrome 未运行时，双击根目录的 `启动Temu采集Chrome.vbs`。它等效执行经过验证的 CDP 9222 命令，不需要打开 CMD，也不会强制跳转 Temu 页面。
+3. 再双击 `启动Temu运营台.vbs`。它只启动运营台；如果采集 Chrome 已运行则自动连接，但不会启动 Chrome或改变当前标签页。若 20 秒后运营台仍未打开，查看 `logs/dashboard.log`，或联系开发人员。
+4. 页面右上角显示“External Chrome 已连接”后，才能继续准备页面。
+5. 运营人员只需在 External Chrome 中人工登录 Temu、设置 Germany / English / EUR、进入摩托配件并选择 Top Sales，再点击“验证当前页面”。只有状态为 `READY` 才能开始。
 
 ## B. 打开 Chrome
 
-点击“打开采集 Chrome”。系统会打开专用 Chrome，它与日常浏览器资料分开。不要复制或替换这个浏览器的 profile。
+双击 `启动Temu采集Chrome.vbs` 会打开专用 External Chrome。它使用 `C:\TemuExternalChrome`，与日常浏览器资料分开。不要复制或替换这个浏览器的 profile。
+
+`启动Temu运营台.vbs` 不负责启动或导航 Chrome，只在 CDP 9222 已存在时自动连接。只有自动连接失败时，才需要使用运营台的“连接已有 Chrome”按钮作为人工恢复入口。
 
 ## C. 登录 Temu
 

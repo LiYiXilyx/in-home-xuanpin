@@ -177,7 +177,7 @@ test('NOT_READY blocks capture and a fresh profile uses a new port without expos
   assert.equal(JSON.stringify(response.body).includes(directory),false);
 });
 
-test('external Chrome mode connects and server shutdown leaves the user browser open',async t => {
+test('external Chrome reconnect refreshes a stale session and server shutdown leaves the user browser open',async t => {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-server-external-cdp-'));
   const config=makeConfig(directory);
   config.browser.mode='external_cdp';
@@ -202,6 +202,10 @@ test('external Chrome mode connects and server shutdown leaves the user browser 
   response=await request(url,'/api/browser/connect',{});
   assert.equal(response.status,200);
   assert.equal(connectCalls,1);
+  response=await request(url,'/api/browser/connect',{});
+  assert.equal(response.status,200);
+  assert.equal(response.body.alreadyOpen,true);
+  assert.equal(connectCalls,2,'explicit reconnect must replace a stale in-memory CDP session');
   response=await request(url,'/api/browser/validate',{});
   assert.equal(response.body.validation.status,'READY');
   assert.equal(JSON.stringify(response.body).includes(directory),false);

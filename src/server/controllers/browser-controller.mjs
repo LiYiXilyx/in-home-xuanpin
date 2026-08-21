@@ -62,7 +62,9 @@ export function createBrowserController(config,{
         throw new AppError('无法连接已有 Chrome。请确认 Chrome 已开启 CDP，并检查配置的 endpoint。',{ code:'CDP_UNREACHABLE',retriable:true });
       }
       const alreadyOpen=Boolean(session);
-      session=session ?? await connectSession(config);
+      // External Chrome may have restarted while the dashboard stayed alive.
+      // Always establish a fresh CDP transport so an old in-memory context cannot hide the new Temu tabs.
+      session=await connectSession(config);
       lastValidation=null;observations=[];
       return { connected:true,alreadyOpen,mode:mode(),modeLabel:modeLabel(),profileName:profileName(),port:displayPort(),
         message:'已连接已有 Chrome。系统只读取当前页面，不会关闭或修改用户 Chrome。' };
