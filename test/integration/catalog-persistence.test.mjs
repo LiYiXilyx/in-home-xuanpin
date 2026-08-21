@@ -28,10 +28,11 @@ test('catalog persistence separates identity, membership and per-job snapshots f
   assert.equal(db.prepare('SELECT COUNT(DISTINCT product_id) AS count FROM crawl_job_items WHERE job_id=?').get(first.id).count,300);
 
   const changed = initial.map(item => ({ ...item,title: `Changed ${item.goods_id}`,
-    canonical_url: `${item.canonical_url}&title_changed=1` }));
+    source_url: `${item.source_url}&title_changed=1`,canonical_url: `${item.canonical_url}&title_changed=1` }));
   const sameJob = productService.persistCatalogBatch(service.get(first.id),changed,{ minSafeCount: 300 });
   assert.equal(sameJob.insertedSnapshots,0,'same product+job must not add snapshots');
   assertCounts(db,{ products: 300,memberships: 300,snapshots: 300,items: 300 });
+  assert.equal(db.prepare('SELECT source_url FROM products WHERE external_product_id=?').get(initial[0].goods_id).source_url,changed[0].source_url);
   service.complete(first.id);
 
   const second = createCatalogJob(service,'2026-08-21T01:00:00.000Z');
@@ -79,6 +80,6 @@ test('safe pool switch rejects a low batch and only inactivates replaced members
 function openDay4Database(directory) { const databasePath=path.join(directory,'v2.db'); migrateDatabase({ databasePath }); return openDatabase(databasePath); }
 function createCatalogJob(service) { return service.create({ jobType:'catalog',siteCountry:'德国',language:'en',currency:'EUR',primaryCategory:'Automotive',subcategory:'Motorcycle',sourceUrl:'https://www.temu.com/category',sortOrder:'Top Sales',targetCount:300 }); }
 function makeProducts(count,capturedAt='2026-08-21T00:00:00.000Z',start=1) { return Array.from({ length: count },(_,index) => makeProduct(index + start,index + 1,capturedAt)); }
-function makeProduct(index,rank,capturedAt) { const goodsId=String(800000000000000 + index); return { goods_id:goodsId,canonical_url:`https://www.temu.com/goods.html?goods_id=${goodsId}`,title:`Motorcycle Product ${index}`,image_url:`https://img.test/${goodsId}.jpg`,price_amount:10 + index/100,sales_count:index,rating:4.8,review_count:index + 10,listing_rank:rank,site_country:'德国',language:'en',currency:'EUR',primary_category:'Automotive',subcategory:'Motorcycle',sort_order:'Top Sales',captured_at:capturedAt,extraction_quality:1,raw:{ fixture:true } }; }
+function makeProduct(index,rank,capturedAt) { const goodsId=String(800000000000000 + index); return { goods_id:goodsId,source_url:`https://www.temu.com/motorcycle-part-g-${goodsId}.html?refer_page=top_sales`,canonical_url:`https://www.temu.com/goods.html?goods_id=${goodsId}`,title:`Motorcycle Product ${index}`,image_url:`https://img.test/${goodsId}.jpg`,price_amount:10 + index/100,sales_count:index,rating:4.8,review_count:index + 10,listing_rank:rank,site_country:'德国',language:'en',currency:'EUR',primary_category:'Automotive',subcategory:'Motorcycle',sort_order:'Top Sales',captured_at:capturedAt,extraction_quality:1,raw:{ fixture:true } }; }
 function activeIds(db) { return db.prepare('SELECT product_id AS productId FROM catalog_memberships WHERE active=1 ORDER BY product_id').all().map(row => row.productId); }
 function assertCounts(db,expected) { const tables={ products:'products',memberships:'catalog_memberships',snapshots:'product_snapshots',items:'crawl_job_items' }; for (const [name,count] of Object.entries(expected)) { const actual=db.prepare(`SELECT COUNT(*) AS count FROM ${tables[name]}`).get().count; assert.equal(actual,count,name); } }

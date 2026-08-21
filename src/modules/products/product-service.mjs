@@ -74,7 +74,7 @@ function linkCompletedJobItem(db,jobId,productId,product,image) {
     status='completed',checkpoint_json=excluded.checkpoint_json,
     started_at=COALESCE(crawl_job_items.started_at,excluded.started_at),finished_at=excluded.finished_at,
     error_code=NULL,error_message=NULL`).run(jobId,product.listing_rank,String(product.goods_id),productId,
-      product.canonical_url,JSON.stringify({ product,image }),product.captured_at,product.captured_at);
+      product.source_url ?? product.canonical_url,JSON.stringify({ product,image }),product.captured_at,product.captured_at);
 }
 
 function addSafetyMetrics(report, values) {

@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../../db/client.mjs';
 import { createReportRepository } from '../../db/repositories/report-repository.mjs';
-import { loadManualValues,findLatestValidWorkbook,extractHyperlink,timestampedWorkbookPath,manualValuesForProduct } from './manual-values.mjs';
+import { loadManualValues,findLatestValidWorkbook,extractHyperlink,extractHyperlinkLabel,timestampedWorkbookPath,manualValuesForProduct } from './manual-values.mjs';
 import { createOperationsWorkbook,SHEET_NAMES } from './workbook.mjs';
 import { buildProductsSheet,PRODUCT_HEADERS } from './sheets/products-sheet.mjs';
 import { buildQualitySheet,QUALITY_HEADERS } from './sheets/quality-sheet.mjs';
@@ -97,12 +97,18 @@ export async function runExportQa(config,options={}) {
   const expectedByGoods=new Map(expected.products.map(product => [product.goods_id,product]));
   let hyperlinkCount=0;
   let wrongHyperlinks=0;
+  let emptyUrlDisplays=0;
+  let displayTargetMismatches=0;
   for (let index=1;index<productValues.length;index+=1) {
     const goodsId=String(productValues[index]?.[goodsIndex] ?? '');
     if (!goodsId) continue;
-    const url=extractHyperlink(productFormulas[index]?.[linkIndex]);
+    const formula=productFormulas[index]?.[linkIndex];
+    const url=extractHyperlink(formula);
+    const displayed=extractHyperlinkLabel(formula) || String(productValues[index]?.[linkIndex] ?? '').trim();
     if (url) hyperlinkCount+=1;
-    if (url !== expectedByGoods.get(goodsId)?.canonical_url) wrongHyperlinks+=1;
+    if (!displayed) emptyUrlDisplays+=1;
+    if (displayed !== url) displayTargetMismatches+=1;
+    if (url !== expectedByGoods.get(goodsId)?.product_url) wrongHyperlinks+=1;
   }
   const formulaErrors=await workbook.inspect({
     kind:'match',searchTerm:'#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A',
@@ -143,7 +149,10 @@ export async function runExportQa(config,options={}) {
     embeddedImages:imageCount >= Math.ceil(expected.counts.activeProducts*0.95),
     imageAnchors:drawings.length === expected.counts.activeProducts && imageAnchorRows.size === expected.counts.activeProducts,
     sampledImageAnchors:sampleAnchorRows.every(row => imageAnchorRows.has(row)),
+    urlDisplayNonEmpty:emptyUrlDisplays === 0,
+    displayTargetsMatch:displayTargetMismatches === 0,
     hyperlinks:hyperlinkCount === expected.counts.activeProducts && wrongHyperlinks === 0,
+    goodsLinksCorrect:wrongHyperlinks === 0 && goodsIds.length === expected.counts.activeProducts,
     numericTypes:productRows.every(row => [2,8,11,12,13].every(index => typeof row[index] === 'number')
       && [9,10].every(index => row[index] === null || row[index] === '' || typeof row[index] === 'number')),
     completenessFormulas:productFormulas.slice(1).filter(row => /^=COUNTA\(/.test(String(row[16] ?? ''))).length === expected.counts.activeProducts,
@@ -175,7 +184,7 @@ export async function runExportQa(config,options={}) {
     counts:{
       databaseActiveProducts:expected.counts.activeProducts,excelProductRows:productRows.length,
       uniqueGoodsIds:new Set(goodsIds).size,embeddedImages:imageCount,imageAnchors:drawings.length,sampledImageAnchors:sampleAnchorRows.filter(row => imageAnchorRows.has(row)).length,hyperlinks:hyperlinkCount,
-      wrongHyperlinks,qualityDatabase:expected.quality.length,qualityExcel:qualityValues.slice(1).filter(row => row?.[1]).length,
+      wrongHyperlinks,emptyUrlDisplays,displayTargetMismatches,qualityDatabase:expected.quality.length,qualityExcel:qualityValues.slice(1).filter(row => row?.[1]).length,
       manualNotes,manualExpected:expectedManual.length,manualMatched:expectedManual.filter(item => {
         const actual=actualManualByGoods.get(String(item.goods_id));
         return actual?.classification === item.classification && actual?.note === item.note;

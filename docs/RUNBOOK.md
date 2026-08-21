@@ -2,12 +2,15 @@
 
 本手册供运营人员使用。日常操作不需要打开 VS Code，也不需要输入 npm 命令。系统只读取你在独立采集 Chrome 中准备好的公开 Temu 页面，不会绕过登录、验证码或平台访问控制。
 
+系统支持两种浏览器模式：`Managed Chrome` 由运营台维护独立 profile；`External Chrome` 只连接运营人员自行启动并开启 CDP 的 Chrome。External 模式不会创建或复制 profile，不会修改 Cookie、Token、登录或站点状态，也不会在运营台退出时关闭用户 Chrome。其连接地址由管理员在 `browser.cdpEndpoint` 配置，运营人员准备好页面后点击“连接已有 Chrome”。
+
 ## A. 第一次使用
 
 1. 保持项目文件夹完整，不要移动其中的 `data`、`browser-profile-day4`、`outputs` 和 `config.json`。
 2. 双击根目录的 `启动Temu运营台.vbs`。
 3. 等待浏览器自动打开 `Temu 选品运营台`。若 15 秒后仍未打开，查看 `logs/dashboard.log`，或联系开发人员。
 4. 页面右上角显示“采集 Chrome 已连接”后，才能开始采集。
+5. External 模式必须先由运营人员登录 Temu、设置 Germany / English / EUR、进入摩托配件并选择 Top Sales，再点击“连接已有 Chrome”和“验证当前页面”。只有状态为 `READY` 才能开始。
 
 ## B. 打开 Chrome
 

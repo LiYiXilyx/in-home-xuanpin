@@ -7,7 +7,7 @@ export const FIELD_ROWS=[
   ['Top Sales rank','MUST','catalog_memberships.current_rank','INTEGER','空白；不得补 0','否','当前 active 商品池排名'],
   ['goods_id','MUST','products.external_product_id','TEXT','不允许缺失','否','商品稳定身份；人工字段优先匹配键'],
   ['商品标题','MUST','最新 product_snapshots.title','TEXT','空白','否','抓取时展示标题'],
-  ['Temu链接','MUST','products.canonical_url','HYPERLINK','不允许缺失','否','显示“打开商品”，目标为 canonical_url'],
+  ['Temu链接','MUST','products.source_url；缺失时 products.canonical_url','HYPERLINK URL','不允许缺失','否','显示完整 URL 文本；单元格可点击，目标与显示 URL 一致'],
   ['一级类目','MUST','catalog_memberships.primary_category','TEXT','空白','否','当前 active membership'],
   ['子类目','MUST','catalog_memberships.subcategory','TEXT','空白','否','当前 active membership'],
   ['价格','MUST','product_snapshots.price_amount','DECIMAL','空白；不得补 0','否','当前 job 快照价格'],

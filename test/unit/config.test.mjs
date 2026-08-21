@@ -44,6 +44,16 @@ test('validation rejects an illegal numeric boundary with the complete field pat
   });
 });
 
+test('external CDP mode requires an explicit endpoint',() => {
+  const config=deepMerge(DEFAULT_CONFIG,{
+    browser:{ mode:'external_cdp',cdpEndpoint:'' },
+    catalog:{ jobs:[{ url:'https://www.temu.com/category',primaryCategory:'A',subcategory:'B',sortOrder:'Top Sales' }] }
+  });
+  assert.throws(() => validateConfig(config),error => error.details.fieldPath === 'browser.cdpEndpoint');
+  config.browser.cdpEndpoint='http://127.0.0.1:9222';
+  assert.equal(validateConfig(config),config);
+});
+
 test('legacy config keeps the old collector database isolated from the v2 database', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'temu-legacy-config-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));

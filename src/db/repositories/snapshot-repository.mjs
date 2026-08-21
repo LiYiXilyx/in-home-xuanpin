@@ -11,7 +11,7 @@ export function createSnapshotRepository(db) {
   return {
     insert(jobId, productId, product) {
       const missing = SNAPSHOT_FIELDS.filter(field => product[field] === null || product[field] === undefined || product[field] === '');
-      const result = insert.run(jobId, productId, product.captured_at ?? new Date().toISOString(), product.canonical_url,
+      const result = insert.run(jobId,productId,product.captured_at ?? new Date().toISOString(),product.source_url ?? product.canonical_url,
         product.title ?? null, product.price_amount ?? null, product.original_price_amount ?? null,
         product.discount_percent ?? null, product.currency ?? null, product.sales_count ?? null,
         product.rating ?? null, product.review_count ?? null, product.listing_rank ?? null,

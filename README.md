@@ -1,6 +1,27 @@
-# Temu 第一周选品采集 MVP
+# Temu 第一周选品采集 V1
 
-> v2 重构正在 `refactor/week1-catalog-core` 分支进行。Day 4 已接入稳定商品身份、类目成员关系、每任务历史快照、质量门和幂等恢复；原采集、评论和 Excel 入口仍保留。
+> 当前验收状态：Day 1—Day 6 PASS；Day 7 为 PARTIAL PASS。规则分类和 300 商品运营 Excel 已完成，真实约 1000 条任务因独立 Chrome 页面 `SEARCH_NO_RESULTS / NOT_READY` 被安全门阻止。禁止绕过页面健康检查或使用历史数据填充数量。详见 `docs/WEEK1_ACCEPTANCE_REPORT.md`。
+
+## 当前运营入口
+
+运营人员只需双击 `启动Temu运营台.vbs`。打开独立采集 Chrome 后，必须先点击“验证当前页面”；只有显示 `READY`、真实商品列表可见、类目与 Top Sales 均确认时才能开始采集。
+
+开发验收命令：
+
+```powershell
+npm run status
+npm run classify
+npm run export -- --job <CATALOG_JOB_ID>
+npm run export:qa -- --job <CATALOG_JOB_ID>
+npm run test:unit
+npm run test:integration
+npm test
+npm run check
+```
+
+分类规则位于 `config/category-rules.example.json`。规则输出写入 v2 SQLite `product_classifications`，包含层级、规则版本、置信度、人工复核标记和可解释理由。
+
+> v2 重构位于 `refactor/week1-catalog-core` 分支。旧评论和开发工具仍作为兼容能力保留，不属于当前运营主入口；在真实约 1000 条验收和引用清理完成前不会删除。
 
 ## v2 Day 4：商品池持久化与恢复
 

@@ -35,10 +35,14 @@ test('export workbook has four sheets, embedded images, links and goods-bound ma
   assert.deepEqual(values.slice(1).map(row => [row[goodsIndex],row[noteIndex]]),[['g3','备注3'],['g2','备注2'],['g1','备注1']]);
   assert.equal(sheet.images.items.length,3);
   assert.equal(sheet.getUsedRange(true).formulas.slice(1).filter(row => /^=HYPERLINK/.test(row[5])).length,3);
+  for (const [index,row] of sheet.getUsedRange(true).formulas.slice(1).entries()) {
+    assert.match(row[5],new RegExp(products[index].source_url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    assert.equal((row[5].match(new RegExp(products[index].source_url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g')) ?? []).length,2);
+  }
 });
 
 function product(goodsId,rank) {
-  return { goods_id:goodsId,canonical_url:`https://example.test/${goodsId}`,title:`Product ${goodsId}`,status:'active',rank,
+  return { goods_id:goodsId,source_url:`https://www.temu.com/product-g-${goodsId}.html?from=top-sales`,canonical_url:`https://example.test/${goodsId}`,product_url:`https://www.temu.com/product-g-${goodsId}.html?from=top-sales`,title:`Product ${goodsId}`,status:'active',rank,
     primary_category:'Automotive',subcategory:'Motorcycles',price_amount:12.5,original_price_amount:null,
     discount_percent:null,sales_count:100,rating:4.8,review_count:20,captured_at:'2026-08-21T00:00:00Z',classification:null };
 }

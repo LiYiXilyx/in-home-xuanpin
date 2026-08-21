@@ -1,6 +1,9 @@
 const $=selector => document.querySelector(selector);
 const elements={
-  notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),
+  notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),newBrowser:$('#newBrowser'),connectExisting:$('#connectExisting'),validatePage:$('#validatePage'),
+  pageReadiness:$('#pageReadiness'),browserMode:$('#browserMode'),profileName:$('#profileName'),cdpPort:$('#cdpPort'),healthCountry:$('#healthCountry'),
+  healthLanguage:$('#healthLanguage'),healthCurrency:$('#healthCurrency'),loginStatus:$('#loginStatus'),productListVisible:$('#productListVisible'),
+  categorySortStatus:$('#categorySortStatus'),pageHealthCode:$('#pageHealthCode'),profileWarning:$('#profileWarning'),diagnosticParams:$('#diagnosticParams'),
   jobStatus:$('#jobStatus'),jobId:$('#jobId'),target:$('#target'),discovered:$('#discovered'),stored:$('#stored'),
   success:$('#success'),failed:$('#failed'),resumeCount:$('#resumeCount'),imageCoverage:$('#imageCoverage'),
   imageCount:$('#imageCount'),checkpoint:$('#checkpoint'),activeProducts:$('#activeProducts'),qualitySummary:$('#qualitySummary'),
@@ -26,9 +29,12 @@ function render(payload) {
   state=payload;
   const job=payload.currentJob;
   elements.browserPulse.classList.toggle('offline',!payload.browser.connected);
-  elements.browserStatus.textContent=payload.browser.connected ? `采集 Chrome 已连接 · CDP ${payload.browser.port}` : `采集 Chrome 未连接 · CDP ${payload.browser.port}`;
-  elements.openBrowser.disabled=payload.browser.connected;
-  elements.openBrowser.textContent=payload.browser.connected ? '采集 Chrome 已打开' : '打开采集 Chrome';
+  elements.browserStatus.textContent=payload.browser.connected ? `${payload.browser.modeLabel} 已连接 · CDP ${payload.browser.port}` : `${payload.browser.modeLabel} 未连接 · CDP ${payload.browser.port}`;
+  elements.openBrowser.disabled=payload.browser.connected || payload.browser.mode !== 'managed_profile';
+  elements.newBrowser.disabled=payload.browser.mode !== 'managed_profile';
+  elements.connectExisting.disabled=payload.browser.connected || payload.browser.mode !== 'external_cdp';
+  elements.openBrowser.textContent=payload.browser.mode === 'external_cdp' ? 'Managed Chrome 已停用':payload.browser.connected ? '采集 Chrome 已打开':'打开采集 Chrome';
+  renderBrowserHealth(payload.browser);
   elements.jobStatus.textContent=statusLabel(job?.status);
   elements.jobStatus.className=job?.status ?? 'idle';
   elements.jobId.textContent=job?.id ?? '当前没有任务';
@@ -50,6 +56,52 @@ function render(payload) {
   renderEvents(payload.events);
   renderControls(job,payload);
   renderNotice(job,payload);
+}
+function renderBrowserHealth(browser) {
+  const health=browser.pageHealth;
+  const checks=health?.checks ?? {};
+  const readiness=health?.status ?? 'NOT_READY';
+  elements.pageReadiness.textContent=readiness;
+  elements.pageReadiness.className=readiness === 'READY' ? 'ready':'not-ready';
+  elements.browserMode.textContent=browser.modeLabel ?? '—';
+  elements.profileName.textContent=browser.profileName ?? '—';
+  elements.cdpPort.textContent=String(browser.port ?? '—');
+  elements.healthCountry.textContent=checks.COUNTRY ?? 'UNKNOWN';
+  elements.healthLanguage.textContent=checks.LANGUAGE ?? 'UNKNOWN';
+  elements.healthCurrency.textContent=checks.CURRENCY ?? 'UNKNOWN';
+  elements.loginStatus.textContent=checks.LOGIN_STATUS ?? 'UNKNOWN';
+  elements.productListVisible.textContent=checks.PRODUCT_LIST_VISIBLE ? 'YES':'NO';
+  elements.categorySortStatus.textContent=`${checks.CATEGORY_CONFIRMED ? 'YES':'NO'} / ${checks.TOP_SALES_CONFIRMED ? 'YES':'NO'}`;
+  elements.pageHealthCode.textContent=checks.PAGE_HEALTH ?? '尚未验证';
+  elements.profileWarning.textContent=health?.profileWarning ?? '';
+  elements.profileWarning.hidden=!health?.profileWarning;
+  elements.diagnosticParams.textContent=diagnosticText(health?.diagnostics,health?.checkedAt);
+}
+function diagnosticText(value,checkedAt) {
+  if (!value) return '点击“验证当前页面”后显示诊断参数。';
+  const navigation=value.navigation ?? {};
+  const markers=value.markers ?? {};
+  const expected=value.expected ?? {};
+  return [
+    `检查时间: ${checkedAt ?? '—'}`,
+    `URL host/path: ${value.urlHost || '—'}${value.urlPath || ''}`,
+    `URL 参数名称: ${(value.queryParamNames ?? []).join(', ') || '无'}`,
+    `会话型参数名称: ${(value.sessionParamNames ?? []).join(', ') || '无'}`,
+    `页面标题: ${value.pageTitle || '—'}`,
+    `document.readyState: ${value.documentReadyState ?? 'UNKNOWN'}`,
+    `navigator.onLine: ${String(value.navigatorOnline ?? 'UNKNOWN')}`,
+    `浏览器语言: ${value.navigatorLanguage ?? 'UNKNOWN'} / ${(value.navigatorLanguages ?? []).join(', ') || '—'}`,
+    `时区 / 可见性: ${value.timezone ?? 'UNKNOWN'} / ${value.visibilityState ?? 'UNKNOWN'}`,
+    `Service Worker 控制: ${value.serviceWorkerControlled ? 'YES':'NO'}`,
+    `页面文本长度 / 商品链接: ${value.bodyTextLength ?? 0} / ${value.productLinkCount ?? 0}`,
+    `导航: ${navigation.type ?? 'UNKNOWN'} · response ${navigation.responseStartMs ?? '—'}ms · DOM ${navigation.domContentLoadedMs ?? '—'}ms · load ${navigation.loadEventEndMs ?? '—'}ms · ${navigation.transferSize ?? '—'} bytes`,
+    `异常标志: SEARCH_NO_RESULTS=${Boolean(markers.searchNoResults)} · STALE_CATEGORY_PAGE=${Boolean(markers.staleCategory)} · NETWORK_ERROR=${Boolean(markers.networkError)}`,
+    `环境差异: 会话参数=${Boolean(markers.sessionParamsPresent)} · 浏览器语言不一致=${Boolean(markers.navigatorLanguageMismatch)} · 德国目标/系统时区不一致=${Boolean(markers.targetCountryTimezoneMismatch)}`,
+    `期望环境: ${expected.country || '—'} / ${expected.language || '—'} / ${expected.currency || '—'} / Chrome locale ${expected.browserLocale || '—'}`,
+    `期望页面: ${expected.primaryCategory || '—'} > ${expected.subcategory || '—'} / ${expected.sortOrder || '—'}`,
+    '打开标签页:',
+    ...(value.tabs ?? []).map(tab => `  [${tab.selected ? '*':' '}] #${tab.index} ${tab.visible ? 'VISIBLE':'HIDDEN'} ${tab.host || '—'}${tab.path || ''} · ${tab.title || '—'} · 参数 ${(tab.queryParamNames ?? []).join(', ') || '无'}`)
+  ].join('\n');
 }
 function checkpointText(checkpoint) {
   if (!checkpoint) return '暂无';
@@ -84,7 +136,8 @@ function renderEvents(events) {
 function renderControls(job,payload) {
   const status=job?.status;
   const active=['pending','running','paused','interrupted'].includes(status);
-  startButtons.forEach(button => button.disabled=active || !payload.browser.connected);
+  startButtons.forEach(button => button.disabled=active || !payload.browser.connected || payload.browser.pageHealth?.status !== 'READY');
+  elements.validatePage.disabled=!payload.browser.connected;
   elements.pause.disabled=status !== 'running' || job?.pauseRequested;
   elements.resume.disabled=!['paused','interrupted'].includes(status);
   elements.cancel.disabled=!['pending','running','paused','interrupted','failed'].includes(status);
@@ -95,7 +148,11 @@ function renderControls(job,payload) {
 }
 function renderNotice(job,payload) {
   let message='',kind='';
-  if (!payload.browser.connected) message='请先打开采集 Chrome，人工登录 Temu，进入摩托配件类目并选择 Top Sales。';
+  if (!payload.browser.connected) message=payload.browser.mode === 'external_cdp'
+    ? '请先由运营人员准备已开启 CDP 的 Chrome，进入摩托配件 Top Sales 页面，再点击“连接已有 Chrome”。'
+    : '请先打开采集 Chrome，人工登录 Temu，进入摩托配件类目并选择 Top Sales。';
+  else if (payload.browser.pageHealth?.status !== 'READY') message='请点击“验证当前页面”。只有摩托配件 Top Sales 页面显示真实商品且状态为 READY 才能开始采集。';
+  if (payload.browser.pageHealth?.profileWarning) { message=payload.browser.pageHealth.profileWarning;kind='warn'; }
   if (job?.pauseRequested) message='暂停请求已收到，任务会在下一个安全批次边界保存 checkpoint 后暂停。';
   if (job?.cancelRequested) message='取消请求已收到，任务会在下一个安全点停止，已成功数据会保留。';
   if (job?.status === 'paused') message='任务已安全暂停。页面准备好后点击“继续”，将按原 job_id 从 checkpoint 恢复。';
@@ -109,6 +166,14 @@ async function action(path,message,body) { try { toast(message); await api(path,
 async function refresh() { try { render(await api('/api/status')); } catch(error) { elements.notice.textContent=`运营台连接异常：${error.message}`; elements.notice.className='notice show error'; } }
 
 elements.openBrowser.addEventListener('click',() => action('/api/browser/open','正在打开采集 Chrome…'));
+elements.connectExisting.addEventListener('click',() => action('/api/browser/connect','正在连接已有 Chrome…'));
+elements.newBrowser.addEventListener('click',() => {
+  if (confirm('确认新建一个完全独立的采集 Chrome？\n\n旧 profile 会保留，新 Chrome 不复制 Cookie、Token 或登录状态，需要重新人工登录 Temu。')) action('/api/browser/new','正在创建新的独立采集 Chrome…');
+});
+elements.validatePage.addEventListener('click',async () => {
+  try { const result=await api('/api/browser/validate',{ method:'POST' });toast(`页面验证：${result.validation.status} · ${result.validation.code}`);await refresh(); }
+  catch(error) { toast(error.message);await refresh(); }
+});
 startButtons.forEach(button => button.addEventListener('click',() => action('/api/jobs/start',`正在开始 ${button.dataset.start} 条任务…`,{ targetCount:Number(button.dataset.start) })));
 elements.pause.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/pause`,'暂停请求已提交'));
 elements.resume.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/resume`,'正在从 checkpoint 继续'));

@@ -14,3 +14,19 @@
 | 寻源单价标准 | 数值 | 公式 | Temu欧元价×汇率÷5 |
 
 电子/USB识别在第一周使用关键词规则，结果需要在正式决策前人工复核。
+
+## v2 商品身份、链接与规则分类
+
+| 字段 | 要求 | 类型 | 来源/口径 |
+|---|---|---|---|
+| platform + external_product_id | MUST | 文本 | 稳定商品身份；Temu external_product_id 即 goods_id |
+| source_url | SHOULD | 文本/NULL | 列表页真实 href；历史数据允许缺失 |
+| canonical_url | MUST | 文本 | 稳定兼容地址；source_url 缺失时用于 Excel fallback |
+| level1 | MUST | 文本 | 当前固定为“摩托车配件” |
+| level2 | MUST | 文本 | 规则分类中层 |
+| level3 / category_label | MUST | 文本 | 初步细分类标签 |
+| method | MUST | 文本 | 当前固定为 `rule` |
+| rule_version | MUST | 文本 | 当前为 `week1-rule-v1` |
+| confidence | MUST | 0—1 数值 | 规则命中强度；不代表机器学习概率 |
+| needs_review | MUST | 布尔 | 低置信度、歧义或无规则命中时为 true |
+| reasons_json | MUST | JSON 数组 | 命中关键词、候选冲突或无匹配原因 |

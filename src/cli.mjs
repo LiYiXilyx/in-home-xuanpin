@@ -8,12 +8,14 @@ import { runBrowserOpenCommand } from './app/commands/browser-open.mjs';
 import { runCatalogCaptureCommand, runCatalogResumeCommand } from './app/commands/catalog-capture.mjs';
 import { runImageRepairCommand } from './app/commands/image-repair.mjs';
 import { runExportCommand,runExportQaCommand } from './app/commands/export.mjs';
+import { runClassifyCommand } from './app/commands/classify.mjs';
 import { runJobAction, runStatusCommand } from './app/commands/status.mjs';
 
 function parseArgs(argv) {
-  const result = { command: argv[2] ?? 'help', config: 'config.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc' };
+  const result = { command: argv[2] ?? 'help', config: 'config.json', rules: 'config/category-rules.example.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc' };
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === '--config') result.config = argv[++index];
+    else if (argv[index] === '--rules') result.rules = argv[++index];
     else if (argv[index] === '--batch-size') result.batchSize = Number(argv[++index]);
     else if (argv[index] === '--retry-failed') result.retryFailed = true;
     else if (argv[index] === '--include-reviewed') result.includeReviewed = true;
@@ -37,7 +39,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
   if (args.command === 'help') {
-    console.log('用法：node src/cli.mjs <init|browser-open|status|pause|resume|retry|cancel|capture|current-review|refresh|crawl|reviews|demo> --config config.json');
+    console.log('用法：node src/cli.mjs <init|browser-open|status|pause|resume|retry|cancel|capture|classify|export|export-qa|current-review|refresh|crawl|reviews|demo> --config config.json');
     console.log('评论批次：node src/cli.mjs reviews --config config.json --batch-size 10 [--retry-failed] [--include-reviewed]');
     return;
   }
@@ -73,6 +75,11 @@ async function main() {
   }
   if (args.command === 'export-qa') {
     await runExportQaCommand(config,{ jobId:args.job,output:args.output });
+    return;
+  }
+  if (args.command === 'classify') {
+    const result=await runClassifyCommand(config,{ jobId:args.job,rulesPath:args.rules });
+    console.log(JSON.stringify(result,null,2));
     return;
   }
   if (args.command === 'resume') {

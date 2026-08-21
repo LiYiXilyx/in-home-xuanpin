@@ -1,6 +1,7 @@
 import { AppError } from '../../shared/errors.mjs';
 import { isTemuUrl } from '../../browser/operator-page.mjs';
 import { detectChallenge } from '../../browser/challenge-handler.mjs';
+import { evaluatePageHealth } from './page-health.mjs';
 
 const CATEGORY_PATTERN = /motorcycl|motocross|powersport/i;
 const TOP_SALES_PATTERN = /(?:sort\s*by\s*:?\s*)?top\s*sales/i;
@@ -31,6 +32,10 @@ export async function collectListingEvidence(page, config) {
 
 export function validateListingEvidence(evidence, expected) {
   if (!isTemuUrl(evidence.url)) fail('WRONG_SITE', '当前页面不是 temu.com，采集已停止。');
+  const health=evaluatePageHealth(evidence,expected);
+  if (['SEARCH_NO_RESULTS','STALE_CATEGORY_PAGE','NETWORK_ERROR','CAPTCHA_OR_LOGIN'].includes(health.code)) {
+    fail(health.code,'当前页面处于空结果、过期类目、网络错误或人工登录验证状态，采集已停止。');
+  }
   if (!Number.isInteger(evidence.productLinkCount) || evidence.productLinkCount < 1) fail('LISTING_NOT_FOUND', '当前页面没有发现 Temu 商品列表，采集已停止。');
   const searchable = `${evidence.url} ${evidence.title} ${evidence.bodyText}`;
   if (!CATEGORY_PATTERN.test(searchable)) fail('CATEGORY_NOT_CONFIRMED', '当前页面不能确认属于摩托配件类目，采集已停止。');

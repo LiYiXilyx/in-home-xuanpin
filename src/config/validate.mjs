@@ -9,7 +9,9 @@ export function validateConfig(config) {
   requireString(config.app.backupDir, 'app.backupDir');
   requireString(config.app.logDir, 'app.logDir');
   requireObject(config.browser, 'browser');
-  requireString(config.browser.profileDir, 'browser.profileDir');
+  if (!['managed_profile','external_cdp'].includes(config.browser.mode)) fail('browser.mode','必须是 managed_profile 或 external_cdp');
+  if (config.browser.mode === 'managed_profile') requireString(config.browser.profileDir, 'browser.profileDir');
+  if (config.browser.mode === 'external_cdp') requireString(config.browser.cdpEndpoint, 'browser.cdpEndpoint');
   requireObject(config.catalog, 'catalog');
   requireObject(config.export, 'export');
   requireObject(config.reviews, 'reviews');

@@ -22,13 +22,15 @@ export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoods
   const lastRow=products.length+1;
   sheet.getRange(`A2:S${lastRow}`).values=rows;
   sheet.getRange(`F2:F${lastRow}`).formulas=products.map(product => [
-    `=HYPERLINK("${excelString(product.canonical_url)}","打开商品")`
+    `=HYPERLINK("${excelString(product.product_url || product.source_url || product.canonical_url)}","${excelString(product.product_url || product.source_url || product.canonical_url)}")`
   ]);
   sheet.getRange(`Q2:Q${lastRow}`).formulas=products.map((_,index) => {
     const row=index+2;
     return [`=COUNTA(C${row}:F${row},I${row},L${row}:N${row})/8`];
   });
   applyBody(sheet.getRange(`A2:S${lastRow}`));
+  sheet.getRange(`F2:F${lastRow}`).format.font={ color:'#0563C1',underline:true };
+  sheet.getRange(`F2:F${lastRow}`).format.wrapText=true;
   sheet.getRange(`A2:A${lastRow}`).format.numberFormat='#,##0';
   sheet.getRange(`C2:C${lastRow}`).format.numberFormat='#,##0';
   sheet.getRange(`I2:J${lastRow}`).format.numberFormat='€#,##0.00';
@@ -41,7 +43,7 @@ export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoods
   sheet.getRange(`E2:E${lastRow}`).format.wrapText=true;
   sheet.getRange(`R2:S${lastRow}`).format.wrapText=true;
   sheet.getRange(`A2:S${lastRow}`).format.rowHeight=72;
-  const widths=[7,14,14,18,44,14,18,32,12,12,10,12,9,12,12,20,13,18,36];
+  const widths=[7,14,14,18,44,54,18,32,12,12,10,12,9,12,12,20,13,18,36];
   widths.forEach((width,index) => { sheet.getRange(`${columnLetter(index+1)}:${columnLetter(index+1)}`).format.columnWidth=width; });
   sheet.freezePanes.freezeRows(1);
   const table=sheet.tables.add(`A1:S${lastRow}`,true,'TemuOperationsProducts');

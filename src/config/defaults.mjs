@@ -7,12 +7,14 @@ export const DEFAULT_CONFIG = Object.freeze({
     logDir: './logs'
   },
   browser: {
+    mode: 'managed_profile',
     profileDir: './browser-profile',
     headless: false,
     executablePath: '',
     cdpEndpoint: '',
     launchViaCdp: true,
     debugPort: 9227,
+    locale: 'en-DE',
     pauseBeforeStart: true,
     minimumDelayMs: 1500,
     maximumDelayMs: 3000,

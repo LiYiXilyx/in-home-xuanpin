@@ -1,0 +1,18 @@
+{
+  "taxonomy": "week1-motorcycle-accessories",
+  "ruleVersion": "week1-rule-v1",
+  "reviewThreshold": 0.7,
+  "defaultLevel1": "摩托车配件",
+  "categories": [
+    { "categoryKey": "phone-mount", "level2": "安装与携带", "level3": "手机支架", "priority": 10, "keywords": ["phone holder", "phone mount", "mobile holder", "mobile mount", "cell phone", "smartphone holder", "navigation holder", "手机支架", "手机夹"] },
+    { "categoryKey": "lighting", "level2": "电子与照明", "level3": "照明", "priority": 20, "keywords": ["headlight", "fog light", "driving light", "led light", "light bar", "turn signal", "indicator light", "tail light", "lamp", "照明", "车灯", "转向灯"] },
+    { "categoryKey": "mirror", "level2": "视野与安全", "level3": "后视镜", "priority": 30, "keywords": ["rearview mirror", "rear view mirror", "side mirror", "bar end mirror", "mirror extender", "mirror", "后视镜"] },
+    { "categoryKey": "storage-tail-bag", "level2": "安装与携带", "level3": "收纳/尾包", "priority": 40, "keywords": ["tail bag", "saddle bag", "saddlebag", "tank bag", "tool bag", "storage bag", "luggage rack", "pannier", "top box", "收纳", "尾包", "边包"] },
+    { "categoryKey": "protective-cover", "level2": "外观与防护", "level3": "防护罩", "priority": 50, "keywords": ["motorcycle cover", "bike cover", "seat cover", "dust cover", "rain cover", "protective cover", "防护罩", "车罩", "防尘罩"] },
+    { "categoryKey": "stickers-decoration", "level2": "外观与防护", "level3": "贴纸装饰", "priority": 60, "keywords": ["sticker", "decal", "reflective strip", "rim tape", "tank pad", "emblem", "badge", "decor", "decorative", "贴纸", "装饰"] },
+    { "categoryKey": "maintenance-tools", "level2": "维修与操控", "level3": "维护工具", "priority": 70, "keywords": ["repair tool", "maintenance tool", "tool kit", "wrench", "socket", "chain cleaner", "chain brush", "tire repair", "tyre repair", "oil filter", "spark plug", "维护", "维修工具"] },
+    { "categoryKey": "brake-control", "level2": "维修与操控", "level3": "刹车/控制", "priority": 80, "keywords": ["brake", "clutch", "throttle", "handlebar", "lever", "foot peg", "gear shifter", "master cylinder", "刹车", "离合", "油门", "车把"] },
+    { "categoryKey": "electronics-communication", "level2": "电子与照明", "level3": "电子/通信", "priority": 90, "keywords": ["intercom", "bluetooth", "headset", "usb charger", "phone charger", "gps", "camera", "dash cam", "voltmeter", "alarm", "电子", "通信", "蓝牙"] }
+  ],
+  "fallback": { "categoryKey": "other", "level2": "其他", "level3": "其他" }
+}

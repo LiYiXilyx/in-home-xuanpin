@@ -51,6 +51,7 @@ export function normalizeProduct(raw, context = {}) {
   const product = {
     goods_id: String(goodsId),
     external_product_id: String(goodsId),
+    source_url: sourceProductUrl(raw.href,goodsId),
     canonical_url: canonicalProductUrl(goodsId),
     title,
     image_url: imageUrl,
@@ -71,6 +72,14 @@ export function normalizeProduct(raw, context = {}) {
   };
   product.extraction_quality = extractionQuality(product);
   return product;
+}
+
+function sourceProductUrl(value,goodsId) {
+  try {
+    const url=new URL(value);
+    if (!['http:','https:'].includes(url.protocol) || !/(^|\.)temu\.com$/i.test(url.hostname)) return null;
+    return extractGoodsId(url.toString()) === String(goodsId) ? url.toString():null;
+  } catch { return null; }
 }
 
 export function extractionQuality(product) {

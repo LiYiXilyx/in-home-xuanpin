@@ -97,6 +97,8 @@ export function operatorMessage(code,message='') {
   if (/NETWORK|ECONN|ETIMEDOUT|TIMEOUT|EACCES/.test(`${normalized} ${message}`)) return '网络连接异常，请检查公司网络或 VPN 后重试。';
   if (/CDP|BROWSER.*CLOSED|TARGET.*CLOSED/.test(`${normalized} ${message}`)) return '采集 Chrome 连接已断开，请重新打开 Chrome 后继续原任务。';
   if (/CAPTCHA|LOGIN|ACCESS_RESTRICTED/.test(`${normalized} ${message}`)) return 'Temu 需要登录或安全验证，请在采集 Chrome 中人工处理后点击继续。';
+  if (/SEARCH_NO_RESULTS/.test(normalized)) return '当前独立 Chrome 搜索无结果；若多个普通搜索词都无结果，建议新建采集 Chrome 并重新登录。';
+  if (/STALE_CATEGORY_PAGE/.test(normalized)) return '当前 Temu 类目页面已失效，请从独立 Chrome 首页重新进入目标类目。';
   if (/WRONG_SITE/.test(normalized)) return '当前页面不是 Temu，请在采集 Chrome 中打开正确页面。';
   if (/CATEGORY/.test(normalized)) return '当前页面不是摩托配件类目，请进入正确类目后重试。';
   if (/SORT|TOP_SALES/.test(normalized)) return '当前页面未确认 Top Sales，请选择 Top Sales 后重试。';

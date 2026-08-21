@@ -22,6 +22,7 @@ test('sanitized HTML fixture extracts and normalizes catalog cards', async () =>
   const products = cards.map((card, index) => normalizeProduct(card, { ...context, listingRank: index + 1 }));
   assert.deepEqual(products.slice(0, 2).map(item => item.goods_id), ['601234567890123', '609876543210987']);
   assert.equal(products[0].canonical_url, 'https://www.temu.com/goods.html?goods_id=601234567890123');
+  assert.match(products[0].source_url,/601234567890123/);
   assert.equal(products[0].price_amount, 12.49);
   assert.equal(products[0].sales_count, 1200);
   assert.equal(products[0].rating, 4.8);

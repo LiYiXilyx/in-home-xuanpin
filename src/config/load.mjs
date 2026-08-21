@@ -22,8 +22,26 @@ export async function loadConfig(configPath = 'config.json') {
   coerceNumbers(structured);
   const baseDir = path.dirname(absolutePath);
   for (const [section, field] of PATH_FIELDS) structured[section][field] = path.resolve(baseDir, structured[section][field]);
+  await applyBrowserRuntime(structured,baseDir);
   validateConfig(structured);
   return exposeLegacyRuntimeShape(structured, absolutePath);
+}
+
+async function applyBrowserRuntime(config,baseDir) {
+  if (process.env.TEMU_BROWSER_MODE) config.browser.mode=process.env.TEMU_BROWSER_MODE;
+  if (process.env.TEMU_BROWSER_CDP_ENDPOINT) config.browser.cdpEndpoint=process.env.TEMU_BROWSER_CDP_ENDPOINT;
+  if (config.browser.mode === 'external_cdp') return;
+  const statePath=path.join(path.dirname(config.app.databasePath),'browser-runtime.json');
+  const state=await fs.readFile(statePath,'utf8').then(JSON.parse).catch(() => null);
+  const stateProfile=String(state?.profileDir ?? '');
+  if (stateProfile && path.dirname(path.resolve(stateProfile)) === baseDir && /^browser-profile(?:-|$)/i.test(path.basename(stateProfile))) {
+    config.browser.profileDir=path.resolve(stateProfile);
+  }
+  if (Number.isInteger(Number(state?.debugPort)) && Number(state.debugPort)>=1024 && Number(state.debugPort)<=65535) {
+    config.browser.debugPort=Number(state.debugPort);
+  }
+  if (process.env.TEMU_BROWSER_PROFILE_DIR) config.browser.profileDir=path.resolve(process.env.TEMU_BROWSER_PROFILE_DIR);
+  if (process.env.TEMU_BROWSER_DEBUG_PORT) config.browser.debugPort=Number(process.env.TEMU_BROWSER_DEBUG_PORT);
 }
 
 function normalizeInput(raw) {

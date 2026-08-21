@@ -15,7 +15,7 @@ export function createReportRepository(db) {
 
     listProducts(jobId,{ sortDirection = 'asc' } = {}) {
       const direction = String(sortDirection).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
-      return db.prepare(`SELECT p.id AS product_id,p.external_product_id AS goods_id,p.canonical_url,
+      return db.prepare(`SELECT p.id AS product_id,p.external_product_id AS goods_id,p.source_url,p.canonical_url,
           COALESCE(s.title,p.title) AS title,p.status,m.current_rank AS rank,
           m.primary_category,m.subcategory,s.price_amount,s.original_price_amount,s.discount_percent,
           s.sales_count,s.rating,s.review_count,s.captured_at,
@@ -78,6 +78,7 @@ export function createReportRepository(db) {
 function normalizeProduct(row) {
   return {
     ...row,product_id:Number(row.product_id),goods_id:String(row.goods_id),rank:numberOrNull(row.rank),
+    product_url:row.source_url || row.canonical_url,
     price_amount:numberOrNull(row.price_amount),original_price_amount:numberOrNull(row.original_price_amount),
     discount_percent:numberOrNull(row.discount_percent),sales_count:numberOrNull(row.sales_count),
     rating:numberOrNull(row.rating),review_count:numberOrNull(row.review_count)

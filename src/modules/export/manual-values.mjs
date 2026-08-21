@@ -75,6 +75,11 @@ export function extractHyperlink(formula) {
   return match ? match[1].replaceAll('""','"') : '';
 }
 
+export function extractHyperlinkLabel(formula) {
+  const match=String(formula ?? '').match(/^=HYPERLINK\("(?:[^"]|"")*"[;,]"((?:[^"]|"")*)"\)$/i);
+  return match ? match[1].replaceAll('""','"') : '';
+}
+
 export function timestampedWorkbookPath(fixedPath,now=new Date()) {
   const extension=path.extname(fixedPath);
   const base=path.basename(fixedPath,extension);

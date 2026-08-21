@@ -11,6 +11,8 @@ test('operator messages hide developer errors and explain recovery actions',() =
   assert.match(operatorMessage('ECONNRESET','TypeError: socket failed'),/网络|VPN/);
   assert.match(operatorMessage('CDP_UNREACHABLE','browser closed'),/Chrome/);
   assert.match(operatorMessage('CAPTCHA_OR_LOGIN','captcha'),/人工|验证/);
+  assert.match(operatorMessage('SEARCH_NO_RESULTS','No results'),/无结果|profile/);
+  assert.match(operatorMessage('STALE_CATEGORY_PAGE','items gone'),/类目|失效/);
   assert.doesNotMatch(operatorMessage('UNKNOWN','TypeError: C:\\secret\\source.mjs failed'),/TypeError|C:\\secret/);
 });
 
@@ -51,7 +53,8 @@ test('Day 6 server controls jobs through SQLite and survives a server restart',a
   assert.equal(response.body.currentJob.status,'paused');
   assert.equal(response.body.checkpoint.currentCount,41);
   assert.ok(response.body.events.some(event => event.type === 'paused'));
-  assert.equal(JSON.stringify(response.body).includes('browser-profile'),false);
+  assert.equal(response.body.browser.profileName,'browser-profile-test');
+  assert.equal(JSON.stringify(response.body).includes(directory),false);
   assert.equal(JSON.stringify(response.body).includes('token'),false);
 
   response=await request(base,`/api/jobs/${jobId}/resume`,{});
@@ -130,9 +133,74 @@ test('clear Excel requires confirmation and archives the workbook without touchi
   assert.equal(app.db.prepare('SELECT COUNT(*) AS count FROM crawl_jobs').get().count,0);
 });
 
+test('NOT_READY blocks capture and a fresh profile uses a new port without exposing its path',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-server-profile-'));
+  const config=makeConfig(directory);
+  const oldProfile=path.join(directory,'browser-profile-old');
+  config.browser.profileDir=oldProfile;
+  fs.mkdirSync(oldProfile);
+  const launches=[];
+  const app=await createOperationsServer({ config,runProcess:({ jobId,action }) => launches.push({ jobId,action }),
+    browserDependencies:{ ready:async () => true,connectSession:async () => ({ context:{} }),currentPage:async () => ({}),
+      inspectPage:async () => ({ status:'NOT_READY',code:'SEARCH_NO_RESULTS',checks:{ CDP_CONNECTED:true,TEMU_PAGE:true,PAGE_HEALTH:'SEARCH_NO_RESULTS' },
+        diagnostics:{ urlHost:'www.temu.com',urlPath:'/search_result.html',queryParamNames:['search_key','_x_sessn_id'],
+          sessionParamNames:['_x_sessn_id'],navigatorOnline:true,markers:{ searchNoResults:true } } }),
+      createFresh:async () => ({ profileDir:path.join(directory,'browser-profile-fresh-test'),profileName:'browser-profile-fresh-test',debugPort:9238 }),
+      openSession:async () => ({ context:{} }),saveRuntime:async () => {} },openTarget:async () => {},exportWorkbook:async () => ({}),logError:() => {} });
+  t.after(async () => { await app.close();fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:50 }); });
+  const { url }=await app.listen({ port:0 });
+  let validation=await request(url,'/api/browser/validate',{});
+  assert.equal(validation.body.validation.diagnostics.urlPath,'/search_result.html');
+  assert.deepEqual(validation.body.validation.diagnostics.sessionParamNames,['_x_sessn_id']);
+  assert.equal(JSON.stringify(validation.body).includes('Cookie'),false);
+  let response=await request(url,'/api/jobs/start',{ targetCount:100 });
+  assert.equal(response.status,400);
+  assert.equal(response.body.error.code,'SEARCH_NO_RESULTS');
+  assert.equal(launches.length,0);
+  response=await request(url,'/api/browser/new',{});
+  assert.equal(response.status,200);
+  assert.equal(response.body.profileName,'browser-profile-fresh-test');
+  assert.equal(response.body.port,9238);
+  assert.equal(fs.existsSync(oldProfile),true,'old profile remains');
+  assert.equal(JSON.stringify(response.body).includes(directory),false);
+});
+
+test('external Chrome mode connects and server shutdown leaves the user browser open',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-server-external-cdp-'));
+  const config=makeConfig(directory);
+  config.browser.mode='external_cdp';
+  config.browser.cdpEndpoint='http://127.0.0.1:9333';
+  let connectCalls=0,browserCloseCalls=0;
+  const app=await createOperationsServer({ config,runProcess:() => { throw new Error('capture must not start'); },
+    browserDependencies:{ ready:async endpoint => endpoint === config.browser.cdpEndpoint,
+      connectSession:async supplied => {
+        connectCalls+=1;assert.equal(supplied.browser.cdpEndpoint,config.browser.cdpEndpoint);
+        return { context:{},external:true,browser:{ close:async () => { browserCloseCalls+=1; } } };
+      },currentPage:async () => ({}),inspectPage:async () => ({ status:'READY',code:'READY',checks:{
+        CDP_CONNECTED:true,TEMU_PAGE:true,PRODUCT_LIST_VISIBLE:true,CATEGORY_CONFIRMED:true,TOP_SALES_CONFIRMED:true,PAGE_HEALTH:'READY' } }) },
+    openTarget:async () => {},exportWorkbook:async () => ({}),logError:() => {} });
+  t.after(() => fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:50 }));
+  const { url }=await app.listen({ port:0 });
+  let response=await request(url,'/api/status');
+  assert.equal(response.body.browser.mode,'external_cdp');
+  assert.equal(response.body.browser.modeLabel,'External Chrome');
+  assert.equal(response.body.browser.profileName,'不适用');
+  assert.equal(response.body.browser.connected,false);
+  assert.equal(response.body.browser.endpointAvailable,true);
+  response=await request(url,'/api/browser/connect',{});
+  assert.equal(response.status,200);
+  assert.equal(connectCalls,1);
+  response=await request(url,'/api/browser/validate',{});
+  assert.equal(response.body.validation.status,'READY');
+  assert.equal(JSON.stringify(response.body).includes(directory),false);
+  await app.close();
+  assert.equal(browserCloseCalls,0);
+});
+
 async function makeServer(config,launches) {
   return createOperationsServer({ config,port:0,runProcess:({ jobId,action }) => launches.push({ jobId,action }),
-    browserDependencies:{ ready:async () => true,openSession:async () => ({}) },openTarget:async () => {},
+    browserDependencies:{ ready:async () => true,openSession:async () => ({ context:{} }),connectSession:async () => ({ context:{} }),
+      currentPage:async () => ({}),inspectPage:async () => ({ status:'READY',code:'READY',checks:{ CDP_CONNECTED:true,TEMU_PAGE:true,PAGE_HEALTH:'READY' } }) },openTarget:async () => {},
     exportWorkbook:async (_config,{ jobId }) => ({ jobId,savedPath:path.join(config.export.outputDir,'Temu运营商品池.xlsx'),products:300,embeddedImages:300,hyperlinks:300,timestampFallback:false }),
     logError:() => {}
   });
@@ -141,7 +209,7 @@ async function makeServer(config,launches) {
 function makeConfig(directory) {
   return {
     configPath:path.join(directory,'config.json'),app:{ databasePath:path.join(directory,'v2.db') },
-    browser:{ debugPort:9237,heartbeatTimeoutMs:30_000 },
+    browser:{ profileDir:path.join(directory,'browser-profile-test'),debugPort:9237,heartbeatTimeoutMs:30_000 },
     catalog:{ siteCountry:'德国',language:'en',currency:'EUR',jobs:[{ primaryCategory:'Automotive',subcategory:'Motorcycles & Powersports Accessories',url:'https://www.temu.com/category',sortOrder:'Top Sales' }] },
     export:{ outputDir:path.join(directory,'outputs'),imageCacheDir:path.join(directory,'images') }
   };

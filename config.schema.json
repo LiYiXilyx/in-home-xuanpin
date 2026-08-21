@@ -24,7 +24,10 @@
       "additionalProperties": true,
       "required": ["profileDir"],
       "properties": {
+        "mode": { "type": "string", "enum": ["managed_profile", "external_cdp"] },
         "profileDir": { "type": "string", "minLength": 1 },
+        "cdpEndpoint": { "type": "string" },
+        "locale": { "type": "string", "minLength": 2 },
         "headless": { "type": "boolean" },
         "minimumDelayMs": { "type": "number", "minimum": 0 },
         "maximumDelayMs": { "type": "number", "minimum": 0 },

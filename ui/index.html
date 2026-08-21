@@ -19,6 +19,9 @@
       <div class="control-group">
         <span class="group-title">准备</span>
         <button id="openBrowser" class="primary">打开采集 Chrome</button>
+        <button id="newBrowser">新建采集 Chrome</button>
+        <button id="connectExisting">连接已有 Chrome</button>
+        <button id="validatePage">验证当前页面</button>
       </div>
       <div class="control-group">
         <span class="group-title">开始采集</span>
@@ -40,6 +43,28 @@
         <button id="clearExcel" class="danger">清除 Excel</button>
         <button id="openFolder">打开结果目录</button>
       </div>
+    </section>
+
+    <section class="panel browser-health">
+      <div class="section-title"><div><p class="eyebrow">PAGE HEALTH</p><h2>采集页面准备状态</h2></div><strong id="pageReadiness" class="not-ready">NOT_READY</strong></div>
+      <dl class="health-grid">
+        <div><dt>当前模式</dt><dd id="browserMode">—</dd></div>
+        <div><dt>当前 profile</dt><dd id="profileName">—</dd></div>
+        <div><dt>CDP port</dt><dd id="cdpPort">—</dd></div>
+        <div><dt>国家</dt><dd id="healthCountry">UNKNOWN</dd></div>
+        <div><dt>语言</dt><dd id="healthLanguage">UNKNOWN</dd></div>
+        <div><dt>币种</dt><dd id="healthCurrency">UNKNOWN</dd></div>
+        <div><dt>登录状态</dt><dd id="loginStatus">UNKNOWN</dd></div>
+        <div><dt>商品列表</dt><dd id="productListVisible">NO</dd></div>
+        <div><dt>类目 / Top Sales</dt><dd id="categorySortStatus">NO / NO</dd></div>
+        <div><dt>页面状态</dt><dd id="pageHealthCode">尚未验证</dd></div>
+      </dl>
+      <p id="profileWarning" class="profile-warning" hidden></p>
+      <details class="diagnostic-panel" open>
+        <summary>页面诊断参数（脱敏）</summary>
+        <pre id="diagnosticParams">点击“验证当前页面”后显示诊断参数。</pre>
+        <p>仅显示 URL 路径和参数名称，不显示参数值、Cookie、Token、浏览器会话或 profile 完整路径。</p>
+      </details>
     </section>
 
     <section class="metrics">

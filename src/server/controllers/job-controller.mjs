@@ -5,7 +5,8 @@ const TARGETS=new Set([100,300,1000]);
 
 export function createJobController({ config,repository,service,projectDir,runProcess=defaultRunProcess }) {
   function launch(jobId,action) {
-    runProcess({ projectDir,configPath:config.configPath,jobId,action });
+    runProcess({ projectDir,configPath:config.configPath,jobId,action,browserMode:config.browser.mode,
+      browserProfileDir:config.browser.profileDir,browserDebugPort:config.browser.debugPort,browserCdpEndpoint:config.browser.cdpEndpoint });
     return service.get(jobId);
   }
   return {
@@ -43,9 +44,11 @@ export function createJobController({ config,repository,service,projectDir,runPr
   };
 }
 
-function defaultRunProcess({ projectDir,configPath,jobId,action }) {
+function defaultRunProcess({ projectDir,configPath,jobId,action,browserMode,browserProfileDir,browserDebugPort,browserCdpEndpoint }) {
   const child=spawn(process.execPath,['src/cli.mjs',action,'--config',configPath,'--job',jobId],{
-    cwd:projectDir,detached:true,stdio:'ignore',windowsHide:true,env:{ ...process.env,FORCE_COLOR:'0' }
+    cwd:projectDir,detached:true,stdio:'ignore',windowsHide:true,env:{ ...process.env,FORCE_COLOR:'0',
+      TEMU_BROWSER_MODE:browserMode,TEMU_BROWSER_PROFILE_DIR:browserProfileDir,TEMU_BROWSER_DEBUG_PORT:String(browserDebugPort),
+      TEMU_BROWSER_CDP_ENDPOINT:browserCdpEndpoint || '' }
   });
   child.unref();
   return child;

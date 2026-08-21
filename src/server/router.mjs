@@ -7,8 +7,12 @@ export function createRouter({ statusService,browserController,jobController,exp
       if (request.method === 'GET' && url.pathname === '/api/status') return json(response,200,await statusService.snapshot());
       if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{ ok:true });
       if (request.method === 'POST' && url.pathname === '/api/browser/open') return json(response,200,{ ok:true,...await browserController.open() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/connect') return json(response,200,{ ok:true,...await browserController.connectExisting() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/new') return json(response,200,{ ok:true,...await browserController.createFresh() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/validate') return json(response,200,{ ok:true,validation:await browserController.validate() });
       if (request.method === 'POST' && url.pathname === '/api/jobs/start') {
         const body=await readJson(request);
+        await browserController.assertReady();
         return json(response,202,{ ok:true,job:jobController.start(body.targetCount) });
       }
       const control=url.pathname.match(/^\/api\/jobs\/([^/]+)\/(pause|resume|cancel|retry)$/);
