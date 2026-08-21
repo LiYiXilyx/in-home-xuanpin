@@ -8,18 +8,20 @@ export function createJobService(repository, { now = () => new Date() } = {}) {
     events(id, options) { return repository.listEvents(id, options); },
     start(id) { return repository.startJob(id); },
     pause(id) { return repository.requestPause(id); },
-    resume(id) { return repository.startJob(id, { eventType: 'job_resumed', message: '任务已从断点恢复。' }); },
-    retry(id) { return repository.startJob(id, { eventType: 'job_retried', message: '失败任务已重新开始。' }); },
+    resume(id) { return repository.startJob(id, { eventType: 'resumed', message: '任务已从断点恢复。' }); },
+    retry(id) { return repository.startJob(id, { eventType: 'retry_started', message: '可重试的失败任务项已重新开始。' }); },
     cancel(id) { return repository.requestCancel(id); },
     heartbeat(id, checkpoint) { return repository.heartbeat(id, checkpoint); },
     updateCounts(id, counts) { return repository.updateCounts(id, counts); },
     complete(id, counts = {}) {
-      return repository.transitionJob(id, Number(counts.failedItems ?? 0) > 0 ? 'completed_with_errors' : 'completed', {
-        payload: counts
+      const nextStatus = Number(counts.failedItems ?? 0) > 0 ? 'completed_with_errors' : 'completed';
+      return repository.transitionJob(id, nextStatus, {
+        eventType: nextStatus, payload: counts
       });
     },
     fail(id, error) {
       return repository.transitionJob(id, 'failed', {
+        eventType: 'failed',
         errorCode: error?.code ?? 'JOB_EXECUTION_FAILED', errorMessage: error?.message ?? String(error),
         payload: { retriable: Boolean(error?.retriable) }
       });

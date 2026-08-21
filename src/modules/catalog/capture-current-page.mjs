@@ -13,6 +13,7 @@ export async function captureCurrentPage(page, config, job, options = {}) {
   const debugDir = path.join(config.export?.outputDir ?? config.outputDir, 'debug', safeName(jobId));
   try {
     const validation = await (options.validatePage ?? validateListingPage)(page, config, job);
+    options.onValidated?.(summarizeValidation(validation));
     const capturedAt = options.capturedAt ?? new Date().toISOString();
     const collected = await (options.collectProducts ?? collectListingProducts)(page, config, job, {
       ...options, capturedAt,

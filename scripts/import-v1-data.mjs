@@ -74,20 +74,20 @@ function importRow(db, row, jobId, now, config, report) {
   }
   const firstSeenAt = row.first_seen_at || now;
   const lastSeenAt = row.last_seen_at || firstSeenAt;
-  db.prepare(`INSERT INTO products(goods_id,canonical_url,source_domain,title,first_seen_at,last_seen_at,raw_identity_json)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(goods_id) DO UPDATE SET
+  db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,source_domain,title,status,first_seen_at,last_seen_at,raw_identity_json)
+    VALUES('temu',?,?,?,?, 'active',?,?,?) ON CONFLICT(platform,external_product_id) DO UPDATE SET
     canonical_url=excluded.canonical_url,title=COALESCE(excluded.title,products.title),
     first_seen_at=MIN(products.first_seen_at,excluded.first_seen_at),last_seen_at=MAX(products.last_seen_at,excluded.last_seen_at)`)
     .run(goodsId, canonicalProductUrl(goodsId), 'www.temu.com', row.title || null, firstSeenAt, lastSeenAt, JSON.stringify({ legacyProductId: row.id, sourceUrl }));
-  const productId = Number(db.prepare('SELECT id FROM products WHERE goods_id=?').get(goodsId).id);
-  const membershipKey = stableId('membership', row.site_country, row.primary_category, row.subcategory, row.sort_order);
+  const productId = Number(db.prepare("SELECT id FROM products WHERE platform='temu' AND external_product_id=?").get(goodsId).id);
   const membership = db.prepare(`INSERT OR IGNORE INTO catalog_memberships(
-    job_id,product_id,membership_key,site_country,language,currency,primary_category,subcategory,sort_order,listing_rank,active,seen_at
-  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    jobId, productId, membershipKey, row.site_country || config.catalog.siteCountry,
+    product_id,site_country,language,currency,primary_category,subcategory,source_page_url,sort_order,
+    current_rank,active,first_seen_at,last_seen_at,last_job_id
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    productId, row.site_country || config.catalog.siteCountry,
     config.catalog.language, row.currency || config.catalog.currency, row.primary_category || 'Unmapped',
-    row.subcategory || 'Unmapped', row.sort_order || 'Unknown', row.listing_rank ?? null,
-    row.catalog_active === 0 ? 0 : 1, lastSeenAt
+    row.subcategory || 'Unmapped', sourceUrl || null, row.sort_order || 'Unknown', row.listing_rank ?? null,
+    row.catalog_active === 0 ? 0 : 1, firstSeenAt, lastSeenAt, jobId
   );
   const snapshot = db.prepare(`INSERT OR IGNORE INTO product_snapshots(
     job_id,product_id,captured_at,source_url,title,price_amount,currency,sales_count,rating,review_count,listing_rank,availability,raw_json

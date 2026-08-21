@@ -1,6 +1,14 @@
 # Temu 第一周选品采集 MVP
 
-> v2 重构正在 `refactor/week1-catalog-core` 分支进行。当前完成 Day 1 安全基线与 Day 2 持久化任务/browser 模块；原采集、评论和 Excel 入口仍通过兼容层保留。尚未开始 Day 3 的真实 100 条采集。
+> v2 重构正在 `refactor/week1-catalog-core` 分支进行。Day 4 已接入稳定商品身份、类目成员关系、每任务历史快照、质量门和幂等恢复；原采集、评论和 Excel 入口仍保留。
+
+## v2 Day 4：商品池持久化与恢复
+
+- `products` 仅以 `platform + external_product_id` 表示稳定身份；URL、标题变化只更新商品，不新增身份。
+- `catalog_memberships` 独立保存站点/类目/排序、当前 rank 和 active；整批达到安全数量且通过质量门后才事务切换。
+- `product_snapshots` 以 `job_id + product_id` 唯一；同一任务 resume/retry 幂等，不同任务保留新历史。
+- `crawl_job_items.product_id`、`product_images` 和 `data_quality_checks` 在同一正式链路落库。
+- 中断后保持独立 Chrome 与数据库不动，运行 `npm run status`，再运行 `npm run resume -- --job <JOB_ID>`；失败任务使用 `npm run retry -- --job <JOB_ID>`。
 
 ## v2 Day 2：浏览器与持久化任务状态
 

@@ -2,6 +2,24 @@ Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 projectDir = fso.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = projectDir
-shell.Run "cmd.exe /d /s /c ""npm.cmd run dashboard""", 0, False
-WScript.Sleep 1800
-shell.Run "http://127.0.0.1:37821", 1, False
+If Not fso.FolderExists(fso.BuildPath(projectDir, "logs")) Then fso.CreateFolder(fso.BuildPath(projectDir, "logs"))
+shell.Run "cmd.exe /d /s /c ""node.exe src/server/index.mjs >> logs\dashboard.log 2>&1""", 0, False
+
+ready = False
+For attempt = 1 To 30
+  WScript.Sleep 500
+  On Error Resume Next
+  Set request = CreateObject("MSXML2.XMLHTTP")
+  request.Open "GET", "http://127.0.0.1:37821/api/health", False
+  request.Send
+  If Err.Number = 0 And request.Status = 200 Then ready = True
+  Err.Clear
+  On Error GoTo 0
+  If ready Then Exit For
+Next
+
+If ready Then
+  shell.Run "http://127.0.0.1:37821", 1, False
+Else
+  MsgBox "Temu Operations Console did not start. Check logs\dashboard.log.", 16, "Temu Operations Console"
+End If

@@ -7,6 +7,10 @@ export const JOB_STATUSES = Object.freeze([
 ]);
 
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'cancelled']);
+const RETRIABLE_ITEM_CODES = new Set([
+  'NETWORK_ERROR', 'ECONNRESET', 'ETIMEDOUT', 'TIMEOUT', 'CDP_UNREACHABLE',
+  'BROWSER_CLOSED', 'IMAGE_FETCH_FAILED', 'CAPTCHA_OR_LOGIN', 'ACCESS_RESTRICTED'
+]);
 const BROWSER_JOB_TYPES = new Set(['catalog', 'product_detail', 'reviews']);
 const TRANSITIONS = new Map([
   ['pending', new Set(['running', 'cancelled'])],
@@ -15,7 +19,7 @@ const TRANSITIONS = new Map([
   ['interrupted', new Set(['running', 'failed', 'cancelled'])],
   ['failed', new Set(['running', 'cancelled'])],
   ['completed', new Set()],
-  ['completed_with_errors', new Set()],
+  ['completed_with_errors', new Set(['running'])],
   ['cancelled', new Set()]
 ]);
 
@@ -51,7 +55,7 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
         });
       }
       const timestamp = now();
-      const incrementResume = ['paused', 'interrupted', 'failed'].includes(job.status) ? 1 : 0;
+      const incrementResume = ['paused', 'interrupted', 'failed', 'completed_with_errors'].includes(job.status) ? 1 : 0;
       db.prepare(`UPDATE crawl_jobs SET status='running',pause_requested=0,cancel_requested=0,
         started_at=COALESCE(started_at,?),heartbeat_at=?,updated_at=?,finished_at=NULL,
         checkpoint_json=COALESCE(?,checkpoint_json),
@@ -167,11 +171,13 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
 
   function upsertJobItem(jobId, item) {
     requireJob(jobId);
-    db.prepare(`INSERT INTO crawl_job_items(job_id,sequence_no,item_key,product_url,status,checkpoint_json)
-      VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,item_key) DO UPDATE SET
-      sequence_no=excluded.sequence_no,product_url=COALESCE(excluded.product_url,crawl_job_items.product_url),
+    db.prepare(`INSERT INTO crawl_job_items(job_id,sequence_no,item_key,product_id,product_url,status,checkpoint_json)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(job_id,item_key) DO UPDATE SET
+      sequence_no=excluded.sequence_no,product_id=COALESCE(excluded.product_id,crawl_job_items.product_id),
+      product_url=COALESCE(excluded.product_url,crawl_job_items.product_url),
       checkpoint_json=COALESCE(excluded.checkpoint_json,crawl_job_items.checkpoint_json)`)
-      .run(jobId, item.sequenceNo, item.itemKey, item.productUrl ?? null, item.status ?? 'pending', stringify(item.checkpoint));
+      .run(jobId, item.sequenceNo, item.itemKey, item.productId ?? null,item.productUrl ?? null,
+        item.status ?? 'pending', stringify(item.checkpoint));
     return mapItem(db.prepare('SELECT * FROM crawl_job_items WHERE job_id=? AND item_key=?').get(jobId, item.itemKey));
   }
 
@@ -180,6 +186,10 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
       ? db.prepare('SELECT * FROM crawl_job_items WHERE job_id=? AND status=? ORDER BY sequence_no').all(jobId, status)
       : db.prepare('SELECT * FROM crawl_job_items WHERE job_id=? ORDER BY sequence_no').all(jobId);
     return rows.map(mapItem);
+  }
+
+  function listRetriableFailedJobItems(jobId) {
+    return listJobItems(jobId, { status: 'failed' }).filter(item => isRetriableJobItem(item));
   }
 
   function transitionJobItem(jobId, itemKey, nextStatus, options = {}) {
@@ -223,8 +233,15 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
 
   return {
     createJob, getJob, listJobs, startJob, transitionJob, requestPause, requestCancel, heartbeat,
-    updateCounts, updateSourceUrl, recoverInterruptedJobs, appendEvent, listEvents, upsertJobItem, listJobItems, transitionJobItem, getControlState
+    updateCounts, updateSourceUrl, recoverInterruptedJobs, appendEvent, listEvents, upsertJobItem, listJobItems,
+    listRetriableFailedJobItems, transitionJobItem, getControlState
   };
+}
+
+export function isRetriableJobItem(item) {
+  if (!item || item.status !== 'failed') return false;
+  if (item.checkpoint?.retriable === false || item.checkpoint?.permanent === true) return false;
+  return item.checkpoint?.retriable === true || RETRIABLE_ITEM_CODES.has(String(item.errorCode ?? '').toUpperCase());
 }
 
 export function assertTransition(currentStatus, nextStatus) {

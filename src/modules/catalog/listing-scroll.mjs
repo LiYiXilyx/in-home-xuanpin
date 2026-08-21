@@ -16,6 +16,7 @@ export async function collectListingProducts(page, config, job, options = {}) {
   let duplicateOccurrences = 0;
   let staleRounds = 0;
   let expansions = 0;
+  let round = 0;
 
   await page.evaluate(() => {
     const root = document.scrollingElement || document.documentElement;
@@ -25,6 +26,7 @@ export async function collectListingProducts(page, config, job, options = {}) {
   await delay(randomBetween(minimumDelayMs, maximumDelayMs));
 
   while (found.size < targetCount && staleRounds < maxStaleRounds) {
+    round += 1;
     const challenge = await (options.detectChallenge ?? detectChallenge)(page);
     if (challenge) throw new AppError('滚动过程中出现登录、验证码或访问异常。', { code: challenge.code, retriable: true });
     const rawCards = await (options.extractCards ?? extractRawCards)(page, catalog.selectors ?? {});
@@ -46,7 +48,8 @@ export async function collectListingProducts(page, config, job, options = {}) {
       found.set(product.goods_id, product);
       if (found.size >= targetCount) break;
     }
-    options.onRound?.({ discovered: found.size, targetCount, staleRounds, totalOccurrences });
+    options.onRound?.({ round, discovered: found.size, discoveredGoodsIds: [...found.keys()], targetCount,
+      staleRounds, expansions, totalOccurrences, lastEvent: 'listing_round_completed' });
     if (found.size >= targetCount) break;
     if (found.size === before && expansions < maxExpansions && await clickSeeMore(page)) {
       expansions += 1;
@@ -84,7 +87,7 @@ export async function collectListingProducts(page, config, job, options = {}) {
     }
   }
   return { products: [...found.values()].slice(0, targetCount), totalOccurrences, duplicateOccurrences,
-    uniqueGoodsIds: found.size, staleRounds, expansions, targetCount };
+    uniqueGoodsIds: found.size, staleRounds, expansions, rounds: round, targetCount };
 }
 
 async function clickSeeMore(page) {

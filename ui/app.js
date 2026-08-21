@@ -1,212 +1,126 @@
-const elements = {
-  activeProducts: document.querySelector('#activeProducts'),
-  pending: document.querySelector('#pending'),
-  completed: document.querySelector('#completed'),
-  failed: document.querySelector('#failed'),
-  reviews: document.querySelector('#reviews'),
-  notice: document.querySelector('#notice'),
-  lastRefresh: document.querySelector('#lastRefresh'),
-  taskLabel: document.querySelector('#taskLabel'),
-  taskBadge: document.querySelector('#taskBadge'),
-  taskStep: document.querySelector('#taskStep'),
-  progressBar: document.querySelector('#progressBar'),
-  manualGate: document.querySelector('#manualGate'),
-  continueButton: document.querySelector('#continueButton'),
-  logs: document.querySelector('#logs'),
-  openExcel: document.querySelector('#openExcel'),
-  openFolder: document.querySelector('#openFolder'),
-  clearLog: document.querySelector('#clearLog'),
-  clearExcel: document.querySelector('#clearExcel'),
-  openBrowser: document.querySelector('#openBrowser'),
-  browserPulse: document.querySelector('#browserPulse'),
-  browserStatus: document.querySelector('#browserStatus'),
-  toast: document.querySelector('#toast')
+const $=selector => document.querySelector(selector);
+const elements={
+  notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),
+  jobStatus:$('#jobStatus'),jobId:$('#jobId'),target:$('#target'),discovered:$('#discovered'),stored:$('#stored'),
+  success:$('#success'),failed:$('#failed'),resumeCount:$('#resumeCount'),imageCoverage:$('#imageCoverage'),
+  imageCount:$('#imageCount'),checkpoint:$('#checkpoint'),activeProducts:$('#activeProducts'),qualitySummary:$('#qualitySummary'),
+  latestExcel:$('#latestExcel'),recentError:$('#recentError'),updatedAt:$('#updatedAt'),jobHistory:$('#jobHistory'),
+  events:$('#events'),eventCount:$('#eventCount'),pause:$('#pause'),resume:$('#resume'),cancel:$('#cancel'),
+  retry:$('#retry'),export:$('#export'),openExcel:$('#openExcel'),clearExcel:$('#clearExcel'),openFolder:$('#openFolder'),toast:$('#toast')
 };
+const startButtons=[...document.querySelectorAll('[data-start]')];
+let state=null,toastTimer;
 
-const taskButtons = [...document.querySelectorAll('[data-task]')];
-let lastTaskId = null;
-let clearedTaskId = null;
-let toastTimer = null;
-
-function number(value) {
-  return new Intl.NumberFormat('zh-CN').format(Number(value || 0));
+async function api(url,options={}) {
+  const response=await fetch(url,{ method:options.method ?? 'GET',headers:{ 'Content-Type':'application/json' },body:options.body ? JSON.stringify(options.body) : undefined });
+  const payload=await response.json();
+  if (!response.ok) throw new Error(payload.error?.message ?? '操作没有完成，请稍后重试。');
+  return payload;
 }
-
-function dateTime(value) {
-  if (!value) return '商品池尚未成功采集';
-  return `最近采集：${new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))}`;
-}
-
-function showToast(message) {
-  elements.toast.textContent = message;
-  elements.toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => elements.toast.classList.remove('show'), 2600);
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || '操作失败。');
-  return result;
-}
-
-function renderNotice(payload) {
-  const { task, data, browserReady } = payload;
-  elements.notice.className = 'notice';
-  if (task.waitingForInput) {
-    elements.notice.textContent = '任务正在等待人工处理：确认采集 Chrome 已正常显示当前商品详情和评论后，再点击右侧“继续执行”。';
-    elements.notice.classList.add('show');
-  } else if (task.status === 'failed') {
-    elements.notice.textContent = '上一次任务没有完成。请查看运行记录；原商品池和已抓数据不会被清空。';
-    elements.notice.classList.add('show', 'error');
-  } else if (task.status === 'completed') {
-    elements.notice.textContent = task.kind === 'clear'
-      ? '运营 Excel 内容已清除；数据库中的商品和评论仍然保留。'
-      : '任务已完成，数据库和运营 Excel 已更新。';
-    elements.notice.classList.add('show', 'success');
-  } else if (!browserReady) {
-    elements.notice.textContent = '先点击“打开采集 Chrome”，人工进入 Temu 德国站摩托配件并选择 Top Sales；程序只读取你准备好的当前页面。';
-    elements.notice.classList.add('show');
-  } else if (!data.catalogReady) {
-    elements.notice.textContent = '采集 Chrome 已连接。请准备好摩托配件 Top Sales 页面，再运行“采集当前页面”。';
-    elements.notice.classList.add('show');
-  }
-}
-
-function renderLogs(task) {
-  if (clearedTaskId === task.id || task.logs.length === 0) {
-    elements.logs.innerHTML = '<p class="empty-log">任务日志会显示在这里。</p>';
-    return;
-  }
-  const wasNearBottom = elements.logs.scrollHeight - elements.logs.scrollTop - elements.logs.clientHeight < 60;
-  elements.logs.replaceChildren(...task.logs.map(log => {
-    const line = document.createElement('p');
-    line.className = log.source;
-    line.textContent = log.text;
-    return line;
-  }));
-  if (wasNearBottom || lastTaskId !== task.id) elements.logs.scrollTop = elements.logs.scrollHeight;
-}
+function number(value) { return new Intl.NumberFormat('zh-CN').format(Number(value ?? 0)); }
+function time(value) { return value ? new Intl.DateTimeFormat('zh-CN',{ month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit' }).format(new Date(value)) : '—'; }
+function toast(message) { elements.toast.textContent=message; elements.toast.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(() => elements.toast.classList.remove('show'),3000); }
+function statusLabel(status) { return ({ pending:'等待开始',running:'运行中',paused:'已暂停',interrupted:'异常中断',completed:'已完成',completed_with_errors:'完成但有错误',failed:'失败',cancelled:'已取消' })[status] ?? '空闲'; }
 
 function render(payload) {
-  const { data, task, excelExists, browserReady } = payload;
-  elements.activeProducts.textContent = number(data.activeProducts);
-  elements.pending.textContent = number(data.pending + data.inProgress);
-  elements.completed.textContent = number(data.completed);
-  elements.failed.textContent = number(data.failed);
-  elements.reviews.textContent = number(data.reviews);
-  elements.lastRefresh.textContent = dateTime(data.lastCatalogRefresh);
-  elements.taskLabel.textContent = task.label;
-  elements.taskStep.textContent = task.step || '请选择左侧操作开始';
-
-  const labels = {
-    idle: '空闲', running: '运行中', paused: task.waitingForInput ? '等待人工确认' : '已暂停',
-    interrupted: '异常中断，可恢复', completed: '已完成', completed_with_errors: '完成但有错误',
-    failed: '失败，可重试', cancelled: '已取消'
-  };
-  elements.taskBadge.textContent = labels[task.status] || task.status;
-  elements.taskBadge.className = `status-badge ${task.status}`;
-  elements.progressBar.className = task.status;
-  elements.manualGate.hidden = !task.waitingForInput;
-  elements.openExcel.disabled = !excelExists;
-  elements.browserStatus.textContent = browserReady ? '采集 Chrome 已连接' : '采集 Chrome 未连接';
-  elements.browserPulse.classList.toggle('offline', !browserReady);
-  elements.openBrowser.textContent = browserReady ? '采集 Chrome 已打开' : '打开采集 Chrome';
-
-  const running = task.status === 'running';
-  for (const button of taskButtons) {
-    const needsCatalog = ['current-review', 'reviews', 'retry'].includes(button.dataset.task);
-    const needsBrowser = ['capture', 'current-review', 'reviews', 'retry'].includes(button.dataset.task);
-    button.disabled = running || (needsCatalog && !data.catalogReady) || (needsBrowser && !browserReady);
-  }
-  elements.openBrowser.disabled = running || browserReady;
-  elements.clearExcel.disabled = running || !excelExists;
-  renderNotice(payload);
-  renderLogs(task);
-  lastTaskId = task.id;
+  state=payload;
+  const job=payload.currentJob;
+  elements.browserPulse.classList.toggle('offline',!payload.browser.connected);
+  elements.browserStatus.textContent=payload.browser.connected ? `采集 Chrome 已连接 · CDP ${payload.browser.port}` : `采集 Chrome 未连接 · CDP ${payload.browser.port}`;
+  elements.openBrowser.disabled=payload.browser.connected;
+  elements.openBrowser.textContent=payload.browser.connected ? '采集 Chrome 已打开' : '打开采集 Chrome';
+  elements.jobStatus.textContent=statusLabel(job?.status);
+  elements.jobStatus.className=job?.status ?? 'idle';
+  elements.jobId.textContent=job?.id ?? '当前没有任务';
+  elements.target.textContent=number(job?.targetCount);
+  elements.discovered.textContent=number(job?.discovered);
+  elements.stored.textContent=number(job?.stored);
+  elements.success.textContent=number(job?.success);
+  elements.failed.textContent=number(job?.failed);
+  elements.resumeCount.textContent=`恢复 ${number(job?.resumeCount)} 次`;
+  elements.imageCoverage.textContent=`${number(payload.imageCoverage.percent)}%`;
+  elements.imageCount.textContent=`${number(payload.imageCoverage.usable)} / ${number(payload.imageCoverage.active)}`;
+  elements.activeProducts.textContent=number(payload.activeProducts);
+  elements.checkpoint.textContent=checkpointText(payload.checkpoint);
+  elements.qualitySummary.textContent=qualityText(payload.quality);
+  elements.latestExcel.textContent=payload.latestExcel.exists ? `${payload.latestExcel.name} · ${time(payload.latestExcel.modifiedAt)}` : '尚未生成';
+  elements.recentError.textContent=payload.recentErrors[0]?.message ?? '无';
+  elements.updatedAt.textContent=`更新于 ${time(new Date())}`;
+  renderHistory(payload.jobs);
+  renderEvents(payload.events);
+  renderControls(job,payload);
+  renderNotice(job,payload);
 }
-
-async function refresh() {
-  try {
-    render(await api('/api/status'));
-  } catch (error) {
-    elements.notice.textContent = `运营台连接异常：${error.message}`;
-    elements.notice.className = 'notice show error';
-  }
+function checkpointText(checkpoint) {
+  if (!checkpoint) return '暂无';
+  const round=checkpoint.scrollRound ?? checkpoint.round;
+  const count=checkpoint.currentCount ?? checkpoint.discovered;
+  return [checkpoint.phase && `阶段 ${checkpoint.phase}`,round != null && `滚动 ${round} 轮`,count != null && `当前 ${count} 条`,checkpoint.lastEvent].filter(Boolean).join(' · ');
 }
-
-for (const button of taskButtons) {
-  button.addEventListener('click', async () => {
-    try {
-      clearedTaskId = null;
-      await api(`/api/tasks/${button.dataset.task}`, { method: 'POST' });
-      showToast('任务已开始');
-      await refresh();
-    } catch (error) {
-      showToast(error.message);
-    }
-  });
+function qualityText(rows) {
+  if (!rows.length) return '暂无质量记录';
+  const passed=rows.filter(row => row.passed).length;
+  return `${passed}/${rows.length} 项通过${passed === rows.length ? '' : '，请查看最近错误和事件'}`;
 }
+function renderHistory(jobs) {
+  elements.jobHistory.replaceChildren(...jobs.slice(0,8).map(job => {
+    const row=document.createElement('button');
+    row.type='button'; row.className='history-row'; row.disabled=true;
+    const title=document.createElement('strong'); title.textContent=`${job.jobType} · ${statusLabel(job.status)}`;
+    const meta=document.createElement('span'); meta.textContent=`${job.id} · ${time(job.updatedAt)}`;
+    row.append(title,meta); return row;
+  }));
+}
+function renderEvents(events) {
+  elements.eventCount.textContent=`${events.length} 条`;
+  if (!events.length) { elements.events.innerHTML='<p class="empty">任务事件会显示在这里。</p>'; return; }
+  elements.events.replaceChildren(...events.slice().reverse().map(event => {
+    const row=document.createElement('article'); row.className=`event ${event.level}`;
+    const top=document.createElement('div'); const type=document.createElement('strong'); type.textContent=event.type;
+    const at=document.createElement('time'); at.textContent=time(event.createdAt); top.append(type,at);
+    const message=document.createElement('p'); message.textContent=event.message; row.append(top,message); return row;
+  }));
+}
+function renderControls(job,payload) {
+  const status=job?.status;
+  const active=['pending','running','paused','interrupted'].includes(status);
+  startButtons.forEach(button => button.disabled=active || !payload.browser.connected);
+  elements.pause.disabled=status !== 'running' || job?.pauseRequested;
+  elements.resume.disabled=!['paused','interrupted'].includes(status);
+  elements.cancel.disabled=!['pending','running','paused','interrupted','failed'].includes(status);
+  elements.retry.disabled=!['failed','interrupted','completed_with_errors'].includes(status);
+  elements.export.disabled=payload.activeProducts === 0;
+  elements.openExcel.disabled=!payload.latestExcel.exists;
+  elements.clearExcel.disabled=!payload.latestExcel.exists;
+}
+function renderNotice(job,payload) {
+  let message='',kind='';
+  if (!payload.browser.connected) message='请先打开采集 Chrome，人工登录 Temu，进入摩托配件类目并选择 Top Sales。';
+  if (job?.pauseRequested) message='暂停请求已收到，任务会在下一个安全批次边界保存 checkpoint 后暂停。';
+  if (job?.cancelRequested) message='取消请求已收到，任务会在下一个安全点停止，已成功数据会保留。';
+  if (job?.status === 'paused') message='任务已安全暂停。页面准备好后点击“继续”，将按原 job_id 从 checkpoint 恢复。';
+  if (job?.waitingForInput) { message='Temu 需要登录或安全验证。请在采集 Chrome 中人工处理，恢复摩托配件 Top Sales 页面后点击“继续”。'; kind='warn'; }
+  if (job?.status === 'interrupted') { message='检测到服务或采集进程中断，数据和 checkpoint 已保留，请点击“继续”。'; kind='warn'; }
+  if (job?.status === 'failed') { message=job.lastError ?? '任务失败，已成功数据仍保留。请修复页面或网络后重试。'; kind='error'; }
+  if (job?.status === 'completed') { message='任务已完成，可以导出或打开运营 Excel。'; kind='success'; }
+  elements.notice.textContent=message; elements.notice.className=`notice ${message ? 'show' : ''} ${kind}`;
+}
+async function action(path,message,body) { try { toast(message); await api(path,{ method:'POST',body }); await refresh(); } catch(error) { toast(error.message); await refresh(); } }
+async function refresh() { try { render(await api('/api/status')); } catch(error) { elements.notice.textContent=`运营台连接异常：${error.message}`; elements.notice.className='notice show error'; } }
 
-elements.continueButton.addEventListener('click', async () => {
-  try {
-    await api('/api/tasks/continue', { method: 'POST' });
-    showToast('已继续执行');
-    await refresh();
-  } catch (error) {
-    showToast(error.message);
-  }
+elements.openBrowser.addEventListener('click',() => action('/api/browser/open','正在打开采集 Chrome…'));
+startButtons.forEach(button => button.addEventListener('click',() => action('/api/jobs/start',`正在开始 ${button.dataset.start} 条任务…`,{ targetCount:Number(button.dataset.start) })));
+elements.pause.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/pause`,'暂停请求已提交'));
+elements.resume.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/resume`,'正在从 checkpoint 继续'));
+elements.cancel.addEventListener('click',() => { if (confirm('确认取消当前任务？已成功数据和历史会保留。')) action(`/api/jobs/${state.currentJob.id}/cancel`,'取消请求已提交'); });
+elements.retry.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/retry`,'正在重试可恢复失败项'));
+elements.export.addEventListener('click',() => action('/api/export','正在从数据库导出 Excel…'));
+elements.openExcel.addEventListener('click',() => action('/api/open/excel','正在打开最新 Excel…'));
+elements.clearExcel.addEventListener('click',() => {
+  if (!confirm('确认清除当前导出的 Excel 文件吗？\n\n文件会移入本地历史备份，数据库、图片缓存和人工备注不会删除。之后可点击“导出 Excel”重新生成。')) return;
+  action('/api/clear/excel','正在清除 Excel 文件…',{ confirmed:true });
 });
-
-elements.openBrowser.addEventListener('click', async () => {
-  try {
-    showToast('正在打开采集 Chrome…');
-    await api('/api/browser/open', { method: 'POST' });
-    showToast('采集 Chrome 已打开，请人工准备 Top Sales 页面');
-    await refresh();
-  } catch (error) {
-    showToast(error.message);
-  }
-});
-
-elements.openExcel.addEventListener('click', async () => {
-  try {
-    const result = await api('/api/open/excel', { method: 'POST' });
-    showToast(result.message || '正在打开运营 Excel…');
-  }
-  catch (error) { showToast(error.message); }
-});
-elements.openFolder.addEventListener('click', async () => {
-  try {
-    const result = await api('/api/open/folder', { method: 'POST' });
-    showToast(result.message || '正在打开结果文件夹…');
-  }
-  catch (error) { showToast(error.message); }
-});
-elements.clearExcel.addEventListener('click', async () => {
-  const confirmed = window.confirm('确认清除运营 Excel 中的商品、主图和评论内容吗？\n\n数据库不会删除，之后点击“重新导出”即可恢复。');
-  if (!confirmed) {
-    showToast('已取消清除');
-    return;
-  }
-  try {
-    clearedTaskId = null;
-    await api('/api/tasks/clear', { method: 'POST', body: { confirmed: true } });
-    showToast('正在清除 Excel 内容…');
-    await refresh();
-  } catch (error) {
-    showToast(error.message);
-  }
-});
-elements.clearLog.addEventListener('click', () => {
-  clearedTaskId = lastTaskId;
-  elements.logs.innerHTML = '<p class="empty-log">当前显示已清空，不影响后台任务记录。</p>';
-});
+elements.openFolder.addEventListener('click',() => action('/api/open/folder','正在打开结果目录…'));
 
 await refresh();
-setInterval(refresh, 1000);
+setInterval(refresh,1500);

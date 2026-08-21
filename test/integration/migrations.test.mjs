@@ -16,9 +16,9 @@ test('all migrations apply once and a repeated run has no side effects', t => {
   const first = migrateDatabase({ databasePath });
   const sizeAfterFirst = fs.statSync(databasePath).size;
   const second = migrateDatabase({ databasePath });
-  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql']);
+  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql']);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 4);
+  assert.equal(second.skipped.length, 6);
   assert.equal(fs.statSync(databasePath).size, sizeAfterFirst);
 
   const db = openDatabase(databasePath);
@@ -28,10 +28,12 @@ test('all migrations apply once and a repeated run has no side effects', t => {
     for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'v_current_products']) {
       assert.ok(names.has(name), `${name} should exist`);
     }
-    db.prepare(`INSERT INTO products(goods_id,canonical_url,first_seen_at,last_seen_at)
-      VALUES('same','https://www.temu.com/goods.html?goods_id=same','2026-01-01','2026-01-01')`).run();
-    assert.throws(() => db.prepare(`INSERT INTO products(goods_id,canonical_url,first_seen_at,last_seen_at)
-      VALUES('same','https://www.temu.com/another-url','2026-01-01','2026-01-01')`).run(), /UNIQUE/);
+    db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('temu','same','https://www.temu.com/goods.html?goods_id=same','2026-01-01','2026-01-01')`).run();
+    assert.throws(() => db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('temu','same','https://www.temu.com/another-url','2026-01-01','2026-01-01')`).run(), /UNIQUE/);
+    db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('other','same','https://example.test/same','2026-01-01','2026-01-01')`).run();
   } finally {
     db.close();
   }

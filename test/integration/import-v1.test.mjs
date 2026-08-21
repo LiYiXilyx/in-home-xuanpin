@@ -53,7 +53,7 @@ test('v1 import uses goods_id, is idempotent, and never changes the source datab
   const target = openDatabase(targetPath, { readOnly: true });
   try {
     assert.equal(target.prepare('SELECT COUNT(*) AS count FROM products').get().count, 1);
-    assert.equal(target.prepare('SELECT goods_id AS goodsId FROM products').get().goodsId, '123456');
+    assert.equal(target.prepare('SELECT external_product_id AS goodsId FROM products').get().goodsId, '123456');
     assert.equal(target.prepare('SELECT COUNT(*) AS count FROM catalog_memberships').get().count, 1);
     assert.equal(target.prepare('SELECT COUNT(*) AS count FROM product_snapshots').get().count, 1);
     assert.equal(target.prepare('SELECT COUNT(*) AS count FROM product_images').get().count, 1);

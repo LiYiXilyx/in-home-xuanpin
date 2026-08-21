@@ -5,11 +5,13 @@ import { captureCurrentCatalog, captureCurrentProductReviews, crawl, crawlReview
 import { openDatabase } from './database.mjs';
 import { seedDemo } from './demo.mjs';
 import { runBrowserOpenCommand } from './app/commands/browser-open.mjs';
-import { runCatalogCaptureCommand } from './app/commands/catalog-capture.mjs';
+import { runCatalogCaptureCommand, runCatalogResumeCommand } from './app/commands/catalog-capture.mjs';
+import { runImageRepairCommand } from './app/commands/image-repair.mjs';
+import { runExportCommand,runExportQaCommand } from './app/commands/export.mjs';
 import { runJobAction, runStatusCommand } from './app/commands/status.mjs';
 
 function parseArgs(argv) {
-  const result = { command: argv[2] ?? 'help', config: 'config.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null };
+  const result = { command: argv[2] ?? 'help', config: 'config.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc' };
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === '--config') result.config = argv[++index];
     else if (argv[index] === '--batch-size') result.batchSize = Number(argv[++index]);
@@ -19,11 +21,16 @@ function parseArgs(argv) {
     else if (argv[index] === '--smoke') result.smoke = true;
     else if (argv[index] === '--dry-run') result.dryRun = true;
     else if (argv[index] === '--target') result.target = Number(argv[++index]);
+    else if (argv[index] === '--limit') result.limit = Number(argv[++index]);
+    else if (argv[index] === '--output') result.output = argv[++index];
+    else if (argv[index] === '--sort') result.sort = argv[++index];
   }
   if (!Number.isInteger(result.batchSize) || result.batchSize < 1 || result.batchSize > 100) {
     throw new Error('--batch-size 必须是1到100之间的整数。');
   }
   if (result.target !== null && (!Number.isInteger(result.target) || result.target < 1)) throw new Error('--target 必须是正整数。');
+  if (result.limit !== null && (!Number.isInteger(result.limit) || result.limit < 1)) throw new Error('--limit 必须是正整数。');
+  if (!['asc','desc'].includes(String(result.sort).toLowerCase())) throw new Error('--sort 必须是 asc 或 desc。');
   return result;
 }
 
@@ -56,7 +63,27 @@ async function main() {
     await runCatalogCaptureCommand(config, { targetCount: args.target, dryRun: args.dryRun });
     return;
   }
-  if (['pause', 'resume', 'retry', 'cancel'].includes(args.command)) {
+  if (args.command === 'image-repair') {
+    await runImageRepairCommand(config,{ limit: args.limit,dryRun: args.dryRun });
+    return;
+  }
+  if (args.command === 'export') {
+    await runExportCommand(config,{ jobId:args.job,output:args.output,sortDirection:args.sort });
+    return;
+  }
+  if (args.command === 'export-qa') {
+    await runExportQaCommand(config,{ jobId:args.job,output:args.output });
+    return;
+  }
+  if (args.command === 'resume') {
+    await runCatalogResumeCommand(config, args.job);
+    return;
+  }
+  if (args.command === 'retry') {
+    await runCatalogResumeCommand(config, args.job, { retry: true });
+    return;
+  }
+  if (['pause', 'cancel'].includes(args.command)) {
     runJobAction(config, args.command, args.job);
     return;
   }

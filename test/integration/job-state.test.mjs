@@ -13,11 +13,11 @@ import { getPersistentStatus } from '../../src/app/commands/status.mjs';
 
 test('persistent job state supports pause, resume, interruption, retry and a single browser job', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-job-state-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, 'v2.db');
   migrateDatabase({ databasePath });
   let clock = new Date('2026-08-20T00:00:00.000Z');
   let db = openDatabase(databasePath);
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   let repository = createJobRepository(db, { now: () => clock.toISOString() });
   let service = createJobService(repository, { now: () => clock });
   const control = createJobControl(repository);
@@ -80,11 +80,11 @@ test('persistent job state supports pause, resume, interruption, retry and a sin
 
 test('job runner only pauses at checkpoint boundaries and can resume cleanly', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-job-runner-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, 'v2.db');
   migrateDatabase({ databasePath });
   const db = openDatabase(databasePath);
   t.after(() => db.close());
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const repository = createJobRepository(db);
   const service = createJobService(repository);
   const runner = createJobRunner({ service, control: createJobControl(repository), heartbeatIntervalMs: 10 });

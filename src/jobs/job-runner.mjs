@@ -4,6 +4,7 @@ export function createJobRunner({ service, control, heartbeatIntervalMs = 5_000 
       if (retry) service.retry(jobId);
       else if (resume) service.resume(jobId);
       else service.start(jobId);
+      const runningJob = service.get(jobId);
       const timer = setInterval(() => {
         try { control.heartbeat(jobId); } catch {}
       }, heartbeatIntervalMs);
@@ -11,6 +12,8 @@ export function createJobRunner({ service, control, heartbeatIntervalMs = 5_000 
       try {
         const result = await operation({
           jobId,
+          savedCheckpoint: runningJob.checkpoint,
+          resumeToken: { jobId, resumeCount: runningJob.resumeCount, checkpoint: runningJob.checkpoint },
           checkpoint: checkpoint => control.checkpointBoundary(jobId, checkpoint),
           heartbeat: checkpoint => control.heartbeat(jobId, checkpoint)
         });
