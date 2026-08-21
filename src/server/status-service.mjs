@@ -51,6 +51,8 @@ function publicJob(job) {
     success:job.successItems,failed:job.failedItems,resumeCount:job.resumeCount,
     pauseRequested:job.pauseRequested,cancelRequested:job.cancelRequested,
     waitingForInput:job.status === 'paused' && Boolean(job.checkpoint?.manualGate),
+    manualGateReason:job.checkpoint?.manualGate?.reason ?? null,
+    manualGateMessage:job.checkpoint?.manualGate ? operatorMessage(job.checkpoint.manualGate.reason,job.checkpoint.manualGate.message) : null,
     requestedAt:job.requestedAt,startedAt:job.startedAt,updatedAt:job.updatedAt,finishedAt:job.finishedAt,
     lastErrorCode:job.lastErrorCode,lastError:job.lastErrorCode || job.lastErrorMessage ? operatorMessage(job.lastErrorCode,job.lastErrorMessage) : null
   };
@@ -100,6 +102,7 @@ export function operatorMessage(code,message='') {
   if (/NETWORK|ECONN|ETIMEDOUT|TIMEOUT|EACCES/.test(`${normalized} ${message}`)) return '网络连接异常，请检查公司网络或 VPN 后重试。';
   if (/CDP|BROWSER.*CLOSED|TARGET.*CLOSED/.test(`${normalized} ${message}`)) return '采集 Chrome 连接已断开，请重新打开 Chrome 后继续原任务。';
   if (/CAPTCHA|LOGIN|ACCESS_RESTRICTED/.test(`${normalized} ${message}`)) return 'Temu 需要登录或安全验证，请在采集 Chrome 中人工处理后点击继续。';
+  if (/LOAD_MORE_MANUAL_REQUIRED/.test(normalized)) return '自动加载没有产生新商品。请在采集 Chrome 页面底部人工点击“Try again”，确认新商品出现后回运营台点击“继续”。';
   if (/SEARCH_NO_RESULTS/.test(normalized)) return '当前独立 Chrome 搜索无结果；若多个普通搜索词都无结果，建议新建采集 Chrome 并重新登录。';
   if (/STALE_CATEGORY_PAGE/.test(normalized)) return '当前 Temu 类目页面已失效，请从独立 Chrome 首页重新进入目标类目。';
   if (/WRONG_SITE/.test(normalized)) return '当前页面不是 Temu，请在采集 Chrome 中打开正确页面。';

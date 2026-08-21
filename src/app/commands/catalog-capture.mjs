@@ -10,7 +10,7 @@ import { captureCurrentPage, printQualityPreview, sanitizeListingUrl, saveCaptur
 import { cacheProductImages } from '../../modules/products/image-cache.mjs';
 import { createProductService } from '../../modules/products/product-service.mjs';
 
-const MANUAL_GATE_CODES = new Set(['CAPTCHA_OR_LOGIN','ACCESS_RESTRICTED','NETWORK_ERROR']);
+const MANUAL_GATE_CODES = new Set(['CAPTCHA_OR_LOGIN','ACCESS_RESTRICTED','NETWORK_ERROR','LOAD_MORE_MANUAL_REQUIRED']);
 
 export async function runCatalogCaptureCommand(config, options = {}) {
   validateSingleJob(config);
@@ -89,6 +89,7 @@ async function executeCatalogJob(config,db,repository,service,job,options) {
       }),
       onRound: state => {
         latestCheckpoint = { phase: 'listing_scroll',...state,latestCheckpointAt: new Date().toISOString() };
+        repository.updateCounts(job.id,{ discoveredCount: state.discovered });
         control.checkpointBoundary(job.id,latestCheckpoint);
         repository.appendEvent(job.id,'listing_round_completed','info',`第 ${state.round} 轮完成，已发现 ${state.discovered} 个商品。`,{
           round:state.round,discovered:state.discovered,targetCount:state.targetCount
@@ -96,6 +97,19 @@ async function executeCatalogJob(config,db,repository,service,job,options) {
         repository.appendEvent(job.id,'checkpoint_saved','debug','采集检查点已保存。',{
           phase:'listing_scroll',round:state.round,currentCount:state.discovered
         });
+      },
+      onLoadMore: event => {
+        const messages = {
+          load_more_detected: `检测到底部加载按钮：${event.label ?? 'load more'}。`,
+          load_more_clicked: `已点击底部加载按钮：${event.label ?? 'load more'}。`,
+          load_more_completed: '底部扩展加载完成，继续扫描商品。',
+          load_more_failed: '底部加载按钮点击失败，将在安全边界重试。'
+        };
+        repository.appendEvent(job.id,event.eventType,event.eventType === 'load_more_failed' ? 'warn' : 'info',
+          messages[event.eventType] ?? '底部加载状态已更新。',{
+            round:event.round,discovered:event.discovered,label:event.label ?? null,
+            errorCode:event.errorCode ?? null
+          });
       }
     });
     printQualityPreview(result);
@@ -125,7 +139,8 @@ async function executeCatalogJob(config,db,repository,service,job,options) {
     service.updateCounts(job.id,{ totalItems: options.targetCount,processedItems: result.products.length,
       successItems: result.products.length,failedItems: 0,discoveredCount: result.quality.unique_goods_id_count,
       storedCount: stored,errorCount: imageCache.failed });
-    repository.heartbeat(job.id,{ ...latestCheckpoint,phase: 'persisted',currentCount: stored,lastEvent: 'batch_persisted' });
+    repository.heartbeat(job.id,{ ...latestCheckpoint,phase: 'persisted',
+      currentCount: options.dryRun ? result.products.length : stored,lastEvent: 'batch_persisted' });
     service.complete(job.id,{ failedItems: 0,captured: result.products.length,stored,imageErrors: imageCache.failed });
     const summary = { jobId: job.id,dryRun: Boolean(options.dryRun),products: result.products.length,
       quality: result.quality,imageCache,persistence,resultPath };

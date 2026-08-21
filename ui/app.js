@@ -166,7 +166,10 @@ function renderNotice(job,payload) {
   if (job?.pauseRequested) message='暂停请求已收到，任务会在下一个安全批次边界保存 checkpoint 后暂停。';
   if (job?.cancelRequested) message='取消请求已收到，任务会在下一个安全点停止，已成功数据会保留。';
   if (job?.status === 'paused') message='任务已安全暂停。页面准备好后点击“继续”，将按原 job_id 从 checkpoint 恢复。';
-  if (job?.waitingForInput) { message='Temu 需要登录或安全验证。请在采集 Chrome 中人工处理，恢复摩托配件 Top Sales 页面后点击“继续”。'; kind='warn'; }
+  if (job?.waitingForInput) {
+    message=job.manualGateMessage ?? 'Temu 需要人工处理。请在采集 Chrome 中完成操作后点击“继续”。';
+    kind='warn';
+  }
   if (job?.status === 'interrupted') { message='检测到服务或采集进程中断，数据和 checkpoint 已保留，请点击“继续”。'; kind='warn'; }
   if (job?.status === 'failed') { message=job.lastError ?? '任务失败，已成功数据仍保留。请修复页面或网络后重试。'; kind='error'; }
   if (job?.status === 'completed' && !message) { message='任务已完成，可以导出或打开运营 Excel。'; kind='success'; }

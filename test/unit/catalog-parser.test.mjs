@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { extractCardCandidatesFromHtml } from '../../src/modules/catalog/card-extractor.mjs';
 import { buildQualityReport, sanitizeListingUrl } from '../../src/modules/catalog/capture-current-page.mjs';
-import { collectListingProducts } from '../../src/modules/catalog/listing-scroll.mjs';
+import { activateLoadMore, collectListingProducts } from '../../src/modules/catalog/listing-scroll.mjs';
 import { validateListingEvidence } from '../../src/modules/catalog/listing-validator.mjs';
 import { canonicalizeProductUrl, normalizeProduct, parsePriceAmount, parseReviewCount, parseSalesCount } from '../../src/modules/catalog/product-normalizer.mjs';
 import { cacheProductImage } from '../../src/modules/products/image-cache.mjs';
@@ -83,6 +83,112 @@ test('virtualized listing accumulates first-seen goods_id order across DOM windo
   assert.equal(result.products[99].goods_id, '700000000000100');
   assert.deepEqual(result.products.map(item => item.listing_rank), rangeNumbers(1, 100));
   assert.ok(result.duplicateOccurrences > 0);
+});
+
+test('Try more expansion continues after a stale bottom window', async () => {
+  let scan = 0;
+  const loadEvents = [];
+  const batches = [range(1, 200), range(1, 200), range(181, 260)];
+  const page = {
+    evaluate: async callback => callback.toString().includes('nearBottom')
+      ? { scrollTop: 900, clientHeight: 100, scrollHeight: 1000, nearBottom: true }
+      : undefined,
+    mouse: { wheel: async () => {} }
+  };
+  const result = await collectListingProducts(page, { browser: {}, catalog: { ...context, selectors: {}, capture: {
+    maxStaleRounds: 1, minimumDelayMs: 0, maximumDelayMs: 0, maxProbeRounds: 20
+  } } }, { ...context, targetCount: 250 }, {
+    detectChallenge: async () => null,
+    extractCards: async () => batches[Math.min(scan++, batches.length - 1)],
+    activateLoadMore: async (_page, options) => {
+      if (scan !== 2) return { status: 'none', label: null };
+      for (const eventType of ['load_more_detected','load_more_clicked','load_more_completed']) {
+        options.onEvent({ eventType, label: 'Try more' });
+      }
+      return { status: 'completed', label: 'Try more' };
+    },
+    onLoadMore: event => loadEvents.push(event.eventType)
+  });
+  assert.equal(result.products.length, 250);
+  assert.deepEqual(loadEvents, ['load_more_detected','load_more_clicked','load_more_completed']);
+});
+
+test('listing completes only after no load button, stable true bottom and final probe', async () => {
+  let scans = 0;
+  const page = {
+    evaluate: async callback => callback.toString().includes('nearBottom')
+      ? { scrollTop: 900, clientHeight: 100, scrollHeight: 1000, nearBottom: true }
+      : undefined,
+    mouse: { wheel: async () => {} }
+  };
+  const result = await collectListingProducts(page, { browser: {}, catalog: { ...context, selectors: {}, capture: {
+    minimumDelayMs: 0, maximumDelayMs: 0, maxProbeRounds: 10
+  } } }, { ...context, targetCount: 1000 }, {
+    detectChallenge: async () => null,
+    extractCards: async () => { scans += 1; return range(1, 200); },
+    activateLoadMore: async () => ({ status: 'none', label: null })
+  });
+  assert.equal(result.products.length, 200);
+  assert.equal(scans, 2);
+});
+
+test('load more detector supports all known Temu button labels and emits lifecycle events', async () => {
+  for (const label of ['Try again','Try more','Load more','See more','Show more']) {
+    const events = [];
+    const button = {
+      isVisible: async () => true, isEnabled: async () => true, innerText: async () => label,
+      scrollIntoViewIfNeeded: async () => {}, click: async () => {}
+    };
+    const group = { count: async () => 1, nth: () => button };
+    const states = [{ productLinkCount:40,goodsIds:['1'],blocked:false,scrollHeight:1000 },
+      { productLinkCount:41,goodsIds:['1','2'],blocked:false,scrollHeight:1100 }];
+    const page = { getByRole: (_role,{ name }) => name.test(label) ? group : { count:async () => 0 },
+      waitForLoadState: async () => {} };
+    const result = await activateLoadMore(page,{ minimumDelayMs:0,maximumDelayMs:0,
+      readListingState:async()=>states.shift() ?? states.at(-1),progressTimeoutMs:20,progressPollMs:0,
+      onEvent:event => events.push(event.eventType) });
+    assert.equal(result.status,'completed');
+    assert.deepEqual(events,['load_more_detected','load_more_clicked','load_more_completed']);
+  }
+});
+
+test('Try again is never clicked on a stale or empty Temu page', async () => {
+  let clicked = false;
+  const button = { isVisible:async()=>true,isEnabled:async()=>true,innerText:async()=>'Try again',
+    scrollIntoViewIfNeeded:async()=>{},click:async()=>{ clicked=true; } };
+  const group = { count:async()=>1,nth:()=>button };
+  const page = { getByRole:()=>group };
+  const result = await activateLoadMore(page,{ minimumDelayMs:0,maximumDelayMs:0,
+    readListingState:async()=>({ productLinkCount:0,goodsIds:[],blocked:true,scrollHeight:1000 }) });
+  assert.equal(result.status,'none');
+  assert.equal(result.blocked,true);
+  assert.equal(clicked,false);
+});
+
+test('a click without DOM or goods_id growth is load_more_failed, not completed', async () => {
+  const events=[];
+  const state={ productLinkCount:40,goodsIds:['1'],blocked:false,scrollHeight:1000 };
+  const button={ isVisible:async()=>true,isEnabled:async()=>true,innerText:async()=>'Try again',
+    scrollIntoViewIfNeeded:async()=>{},click:async()=>{} };
+  const group={ count:async()=>1,nth:()=>button };
+  const page={ getByRole:()=>group,waitForLoadState:async()=>{} };
+  const result=await activateLoadMore(page,{ minimumDelayMs:0,maximumDelayMs:0,
+    readListingState:async()=>state,progressTimeoutMs:5,progressPollMs:0,
+    onEvent:event=>events.push(event.eventType) });
+  assert.equal(result.status,'failed');
+  assert.deepEqual(events,['load_more_detected','load_more_clicked','load_more_failed']);
+});
+
+test('listing pauses for manual Try again when automatic loading makes no progress', async () => {
+  const page={ evaluate:async callback=>callback.toString().includes('nearBottom')
+    ? { scrollTop:900,clientHeight:100,scrollHeight:1000,nearBottom:true }:undefined,
+    mouse:{ wheel:async()=>{} } };
+  await assert.rejects(()=>collectListingProducts(page,{ browser:{},catalog:{ ...context,selectors:{},capture:{
+    minimumDelayMs:0,maximumDelayMs:0,maxProbeRounds:10
+  } } },{ ...context,targetCount:100 },{
+    detectChallenge:async()=>null,extractCards:async()=>range(1,40),
+    activateLoadMore:async()=>({ status:'failed',label:'Try again',errorCode:'LOAD_MORE_NO_PROGRESS' })
+  }),error=>error.code === 'LOAD_MORE_MANUAL_REQUIRED' && error.retriable === true);
 });
 
 test('quality report counts missing fields without substituting zero', () => {

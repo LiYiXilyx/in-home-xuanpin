@@ -40,7 +40,8 @@ export function createJobService(repository, { now = () => new Date() } = {}) {
         reason: details.reason ?? 'operator_confirmation'
       });
       return repository.transitionJob(id, 'paused', {
-        checkpoint: { ...(job.checkpoint ?? {}), manualGate: { openedAt: now().toISOString(), reason: details.reason ?? 'operator_confirmation' } },
+        checkpoint: { ...(job.checkpoint ?? {}), manualGate: { openedAt: now().toISOString(),
+          reason: details.reason ?? 'operator_confirmation',message:details.message ?? null } },
         eventType: 'manual_gate_paused', level: 'warn', message: '任务已暂停，等待运营人员确认。'
       });
     },

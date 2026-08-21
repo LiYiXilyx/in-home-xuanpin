@@ -12,6 +12,7 @@ test('operator messages hide developer errors and explain recovery actions',() =
   assert.match(operatorMessage('ECONNRESET','TypeError: socket failed'),/网络|VPN/);
   assert.match(operatorMessage('CDP_UNREACHABLE','browser closed'),/Chrome/);
   assert.match(operatorMessage('CAPTCHA_OR_LOGIN','captcha'),/人工|验证/);
+  assert.match(operatorMessage('LOAD_MORE_MANUAL_REQUIRED','no progress'),/Try again|人工/);
   assert.match(operatorMessage('SEARCH_NO_RESULTS','No results'),/无结果|profile/);
   assert.match(operatorMessage('STALE_CATEGORY_PAGE','items gone'),/类目|失效/);
   assert.doesNotMatch(operatorMessage('UNKNOWN','TypeError: C:\\secret\\source.mjs failed'),/TypeError|C:\\secret/);
