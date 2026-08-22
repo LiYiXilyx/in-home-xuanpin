@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SENSITIVE_KEY = /(authorization|cookie|password|secret|session|token)/i;
+const SENSITIVE_KEY = /(authorization|cookie|password|secret|session|token|api[_-]?key|apikey|credential|bearer)/i;
 
 export function createLogger({ logDir, service = 'temu-product-research', consoleOutput = true, now = () => new Date() }) {
   fs.mkdirSync(logDir, { recursive: true });

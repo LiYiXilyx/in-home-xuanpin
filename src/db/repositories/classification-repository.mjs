@@ -31,9 +31,9 @@ export function createClassificationRepository(db) {
       transaction(db,() => {
         for (const item of classifications) {
           remove.run(item.productId,jobId,item.taxonomy);
-          const reasonsJson=JSON.stringify(item.reasons ?? []);
+          const reasonsJson=JSON.stringify(item.reasons ?? []);const evidenceJson=JSON.stringify(item.evidence ?? item.reasons ?? []);
           insert.run(item.productId,jobId,item.taxonomy,item.categoryKey,item.categoryLabel,item.confidence,item.ruleVersion,
-            item.needsReview ? 1 : 0,reasonsJson,now,item.level1,item.level2,item.level3,item.method,reasonsJson);
+            item.needsReview ? 1 : 0,evidenceJson,now,item.level1,item.level2,item.level3,item.method,reasonsJson);
         }
         db.prepare(`INSERT INTO crawl_events(job_id,event_type,level,message,payload_json,created_at)
           VALUES(?,?,?,?,?,?)`).run(jobId,'classification_completed','info','当前商品池规则分类完成。',JSON.stringify({ count:classifications.length }),now);

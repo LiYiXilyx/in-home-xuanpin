@@ -15,6 +15,17 @@ export function validateConfig(config) {
   requireObject(config.catalog, 'catalog');
   requireObject(config.export, 'export');
   requireObject(config.reviews, 'reviews');
+  requireObject(config.fineClassification, 'fineClassification');
+  requireString(config.fineClassification.rulesPath,'fineClassification.rulesPath');
+  finiteNumber(config.fineClassification.autoAcceptConfidence,'fineClassification.autoAcceptConfidence');
+  finiteNumber(config.fineClassification.reviewAcceptConfidence,'fineClassification.reviewAcceptConfidence');
+  if (!(config.fineClassification.reviewAcceptConfidence >= 0 && config.fineClassification.reviewAcceptConfidence < config.fineClassification.autoAcceptConfidence && config.fineClassification.autoAcceptConfidence <= 1)) fail('fineClassification','置信度阈值必须满足0 <= reviewAccept < autoAccept <= 1');
+  requireObject(config.fineClassification.ai,'fineClassification.ai');
+  if (typeof config.fineClassification.ai.enabled !== 'boolean') fail('fineClassification.ai.enabled','必须是布尔值');
+  for (const field of ['provider','baseUrl','model','modelVersion','apiKeyEnv']) {
+    if (typeof config.fineClassification.ai[field] !== 'string') fail(`fineClassification.ai.${field}`,'必须是字符串');
+  }
+  positiveInteger(config.fineClassification.ai.timeoutMs,'fineClassification.ai.timeoutMs');
 
   if (!Array.isArray(config.catalog.jobs) || config.catalog.jobs.length === 0) {
     fail('catalog.jobs', '至少需要一个采集任务');
@@ -50,6 +61,7 @@ export function validateConfig(config) {
     fail('browser.maximumDelayMs', '不能小于 browser.minimumDelayMs');
   }
   finiteNumber(config.reviews.negativeMaxRating, 'reviews.negativeMaxRating');
+  positiveInteger(config.reviews.maxPagesPerProduct,'reviews.maxPagesPerProduct');
   if (config.reviews.negativeMaxRating < 1 || config.reviews.negativeMaxRating > 5) {
     fail('reviews.negativeMaxRating', '必须在 1 到 5 之间');
   }

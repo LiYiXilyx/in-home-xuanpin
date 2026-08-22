@@ -215,6 +215,13 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
     return mapItem(db.prepare('SELECT * FROM crawl_job_items WHERE job_id=? AND item_key=?').get(jobId, itemKey));
   }
 
+  function checkpointJobItem(jobId,itemKey,checkpoint) {
+    const result=db.prepare(`UPDATE crawl_job_items SET checkpoint_json=? WHERE job_id=? AND item_key=? AND status='running'`)
+      .run(stringify(checkpoint),jobId,itemKey);
+    if (Number(result.changes) !== 1) throw new AppError(`运行中的任务项不存在：${itemKey}`,{ code:'JOB_ITEM_NOT_RUNNING' });
+    return mapItem(db.prepare('SELECT * FROM crawl_job_items WHERE job_id=? AND item_key=?').get(jobId,itemKey));
+  }
+
   function getControlState(id) {
     const row = db.prepare('SELECT status,pause_requested AS pauseRequested,cancel_requested AS cancelRequested,checkpoint_json AS checkpointJson FROM crawl_jobs WHERE id=?').get(id);
     if (!row) throw new AppError(`任务不存在：${id}`, { code: 'JOB_NOT_FOUND' });
@@ -234,7 +241,7 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
   return {
     createJob, getJob, listJobs, startJob, transitionJob, requestPause, requestCancel, heartbeat,
     updateCounts, updateSourceUrl, recoverInterruptedJobs, appendEvent, listEvents, upsertJobItem, listJobItems,
-    listRetriableFailedJobItems, transitionJobItem, getControlState
+    listRetriableFailedJobItems, transitionJobItem, checkpointJobItem, getControlState
   };
 }
 

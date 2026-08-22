@@ -61,8 +61,15 @@ export const DEFAULT_CONFIG = Object.freeze({
     outputDir: './outputs/week1-mvp',
     imageCacheDir: './outputs/week1-mvp/image-cache'
   },
+  fineClassification: {
+    rulesPath: './config/fine-category-rules.v1.json',
+    autoAcceptConfidence: 0.85,
+    reviewAcceptConfidence: 0.65,
+    ai: { enabled:false,provider:'openai-compatible',baseUrl:'',model:'',modelVersion:'',apiKeyEnv:'TEMU_FINE_CLASSIFIER_API_KEY',timeoutMs:30000 }
+  },
   reviews: {
     enabled: false,
+    maxPagesPerProduct: 200,
     negativeMaxRating: 3,
     pilotBatchSize: 10,
     minimumPilotSuccess: 8,

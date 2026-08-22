@@ -8,6 +8,8 @@ logs/
 config.json
 .env
 .env.*
+secrets/
+*.secret.json
 *.log
 *.db
 *.sqlite*

@@ -74,12 +74,35 @@
         "imageCacheDir": { "type": "string", "minLength": 1 }
       }
     },
+    "fineClassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rulesPath": { "type": "string", "minLength": 1 },
+        "autoAcceptConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reviewAcceptConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ai": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "provider": { "type": "string" },
+            "baseUrl": { "type": "string" },
+            "model": { "type": "string" },
+            "modelVersion": { "type": "string" },
+            "apiKeyEnv": { "type": "string", "const": "TEMU_FINE_CLASSIFIER_API_KEY" },
+            "timeoutMs": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
     "reviews": {
       "type": "object",
       "additionalProperties": true,
       "required": ["enabled"],
       "properties": {
         "enabled": { "type": "boolean" },
+        "maxPagesPerProduct": { "type": "integer", "minimum": 1 },
         "negativeMaxRating": { "type": "number", "minimum": 1, "maximum": 5 }
       }
     }

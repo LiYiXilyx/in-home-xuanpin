@@ -14,6 +14,11 @@ test('page health detects READY and known empty/error pages',() => {
   assert.equal(evaluatePageHealth({ ...base,url:'https://www.temu.com/login.html',bodyText:'Sign in / Register',loginFormVisible:true,productLinkCount:0 },expected).code,'CAPTCHA_OR_LOGIN');
 });
 
+test('public Orders & Account navigation is not treated as proof of login',() => {
+  const result=evaluatePageHealth({ ...base,bodyText:'Orders & Account Germany EUR € Motorcycles & Powersports Accessories Top Sales' },expected);
+  assert.equal(result.checks.LOGIN_STATUS,'UNKNOWN');
+});
+
 test('profile warning requires healthy home plus three distinct empty searches',() => {
   const observations=[{ homeHealthy:true,code:'CATEGORY_NOT_CONFIRMED' },...['phone case','shoes','motorcycle accessories'].map(query => ({ code:'SEARCH_NO_RESULTS',query }))];
   assert.match(profileHealthWarning(observations),/profile|独立 Chrome/);

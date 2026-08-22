@@ -40,7 +40,7 @@ export function evaluatePageHealth(evidence,expected={}) {
   const text=`${evidence.title ?? ''} ${evidence.bodyText ?? ''}`;
   const selected=`${evidence.selectedLabels?.join(' ') ?? ''} ${text}`;
   const temuPage=isTemuUrl(evidence.url);
-  const loggedInEvidence=/Orders\s*&\s*Account|Hello\s*[,，]/i.test(text);
+  const loggedInEvidence=/Hello\s*[,，]/i.test(text);
   const challenge=classifyPageSignals({
     url:evidence.url,text,frameUrls:evidence.frameUrls ?? [],loginFormVisible:Boolean(evidence.loginFormVisible),loggedInEvidence
   });

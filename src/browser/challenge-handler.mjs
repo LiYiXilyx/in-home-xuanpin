@@ -24,7 +24,9 @@ export async function detectChallenge(page) {
       .first().isVisible().catch(() => false);
     return classifyPageSignals({
       url: page.url(), text, frameUrls: page.frames().map(frame => frame.url()), loginFormVisible,
-      loggedInEvidence: /Orders\s*&\s*Account|Hello\s*[,，]/i.test(text)
+      // "Orders & Account" is also rendered for signed-out visitors and is
+      // therefore not proof of an authenticated Temu session.
+      loggedInEvidence: /Hello\s*[,，]/i.test(text)
     });
   } catch (error) {
     if (/Target page, context or browser has been closed/i.test(error?.message ?? '')) {

@@ -19,12 +19,27 @@ export async function loadConfig(configPath = 'config.json') {
     throw error;
   }
   const structured = deepMerge(DEFAULT_CONFIG, normalizeInput(raw));
+  applyFineClassifierEnvironment(structured);
   coerceNumbers(structured);
   const baseDir = path.dirname(absolutePath);
   for (const [section, field] of PATH_FIELDS) structured[section][field] = path.resolve(baseDir, structured[section][field]);
   await applyBrowserRuntime(structured,baseDir);
   validateConfig(structured);
   return exposeLegacyRuntimeShape(structured, absolutePath);
+}
+
+function applyFineClassifierEnvironment(config) {
+  const ai=config.fineClassification.ai;
+  if (process.env.TEMU_FINE_CLASSIFIER_ENABLED !== undefined) ai.enabled=parseBoolean(process.env.TEMU_FINE_CLASSIFIER_ENABLED);
+  if (process.env.TEMU_FINE_CLASSIFIER_PROVIDER) ai.provider=process.env.TEMU_FINE_CLASSIFIER_PROVIDER;
+  if (process.env.TEMU_FINE_CLASSIFIER_MODEL) ai.model=process.env.TEMU_FINE_CLASSIFIER_MODEL;
+  if (process.env.TEMU_FINE_CLASSIFIER_BASE_URL) ai.baseUrl=process.env.TEMU_FINE_CLASSIFIER_BASE_URL;
+  // The secret is deliberately read only by the provider at call time.
+  ai.apiKeyEnv='TEMU_FINE_CLASSIFIER_API_KEY';
+}
+
+function parseBoolean(value) {
+  return ['1','true','yes','on'].includes(String(value).trim().toLowerCase());
 }
 
 async function applyBrowserRuntime(config,baseDir) {
@@ -81,8 +96,9 @@ function coerceNumbers(config) {
     [config.browser, 'manualGateTimeoutMs'], [config.browser, 'manualGatePollMs'],
     [config.browser, 'heartbeatIntervalMs'], [config.browser, 'heartbeatTimeoutMs'],
     [config.browser, 'maxStaleRounds'], [config.browser, 'maxReviewPages'],
-    [config.reviews, 'negativeMaxRating'], [config.reviews, 'pilotBatchSize'],
-    [config.reviews, 'minimumPilotSuccess'], [config.reviews, 'fastGrowthRatio']
+    [config.reviews, 'negativeMaxRating'], [config.reviews, 'maxPagesPerProduct'], [config.reviews, 'pilotBatchSize'],
+    [config.reviews, 'minimumPilotSuccess'], [config.reviews, 'fastGrowthRatio'],
+    [config.fineClassification.ai, 'timeoutMs']
   ];
   for (const [owner, field] of fields) owner[field] = Number(owner[field]);
 }
