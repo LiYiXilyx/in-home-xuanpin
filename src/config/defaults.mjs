@@ -74,7 +74,9 @@ export const DEFAULT_CONFIG = Object.freeze({
     pilotBatchSize: 10,
     minimumPilotSuccess: 8,
     pilotFullHistory: true,
-    fastGrowthRatio: 1.5
+    fastGrowthRatio: 1.5,
+    sessionControlGoodsIds: [],
+    sessionRecoveryMinimumAvailable: 2
   }
 });
 

@@ -16,16 +16,16 @@ test('all migrations apply once and a repeated run has no side effects', t => {
   const first = migrateDatabase({ databasePath });
   const sizeAfterFirst = fs.statSync(databasePath).size;
   const second = migrateDatabase({ databasePath });
-  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql']);
+  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql']);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 12);
+  assert.equal(second.skipped.length, 13);
   assert.equal(fs.statSync(databasePath).size, sizeAfterFirst);
 
   const db = openDatabase(databasePath);
   try {
     const objects = db.prepare("SELECT name,type FROM sqlite_master WHERE type IN ('table','view')").all();
     const names = new Set(objects.map(item => item.name));
-    for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'market_analysis_runs', 'category_metrics', 'fine_classification_attempts', 'reviews', 'review_capture_coverage', 'v_current_products']) {
+    for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'market_analysis_runs', 'category_metrics', 'fine_classification_attempts', 'reviews', 'review_capture_coverage', 'review_session_epochs', 'review_session_control_checks', 'v_current_products']) {
       assert.ok(names.has(name), `${name} should exist`);
     }
     assert.ok(db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'source_url'));

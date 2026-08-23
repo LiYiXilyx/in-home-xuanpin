@@ -37,6 +37,11 @@
         <button id="cancel" class="danger">取消</button>
         <button id="retry">重试失败</button>
       </div>
+      <div class="control-group" id="sessionRecoveryControls" hidden>
+        <span class="group-title">Session Recovery Gate</span>
+        <button id="validateSessionRecovery" class="primary">页面已恢复，重新验证</button>
+        <button id="resumeReviewCapture">继续评论采集</button>
+      </div>
       <div class="control-group">
         <span class="group-title">结果</span>
         <button id="export">导出 Excel</button>
@@ -87,6 +92,7 @@
           <div><dt>字段质量</dt><dd id="qualitySummary">暂无质量记录</dd></div>
           <div><dt>最新 Excel</dt><dd id="latestExcel">尚未生成</dd></div>
           <div><dt>最近错误</dt><dd id="recentError">无</dd></div>
+          <div><dt>Session 状态</dt><dd id="sessionStatus">无待恢复关卡</dd></div>
         </dl>
         <div class="history-title"><h3>历史任务</h3><span>状态来自 v2 SQLite</span></div>
         <div id="jobHistory" class="history"></div>

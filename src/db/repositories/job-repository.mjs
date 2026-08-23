@@ -3,7 +3,7 @@ import { createId } from '../../shared/ids.mjs';
 import { transaction } from '../client.mjs';
 
 export const JOB_STATUSES = Object.freeze([
-  'pending', 'running', 'paused', 'interrupted', 'completed', 'completed_with_errors', 'failed', 'cancelled'
+  'pending', 'running', 'paused', 'paused_manual_recovery', 'interrupted', 'completed', 'completed_with_errors', 'failed', 'cancelled'
 ]);
 
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'cancelled']);
@@ -14,8 +14,9 @@ const RETRIABLE_ITEM_CODES = new Set([
 const BROWSER_JOB_TYPES = new Set(['catalog', 'product_detail', 'reviews']);
 const TRANSITIONS = new Map([
   ['pending', new Set(['running', 'cancelled'])],
-  ['running', new Set(['paused', 'interrupted', 'completed', 'completed_with_errors', 'failed', 'cancelled'])],
+  ['running', new Set(['paused', 'paused_manual_recovery', 'interrupted', 'completed', 'completed_with_errors', 'failed', 'cancelled'])],
   ['paused', new Set(['running', 'cancelled'])],
+  ['paused_manual_recovery', new Set(['paused_manual_recovery', 'running', 'cancelled'])],
   ['interrupted', new Set(['running', 'failed', 'cancelled'])],
   ['failed', new Set(['running', 'cancelled'])],
   ['completed', new Set()],
@@ -55,7 +56,7 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
         });
       }
       const timestamp = now();
-      const incrementResume = ['paused', 'interrupted', 'failed', 'completed_with_errors'].includes(job.status) ? 1 : 0;
+      const incrementResume = ['paused', 'paused_manual_recovery', 'interrupted', 'failed', 'completed_with_errors'].includes(job.status) ? 1 : 0;
       db.prepare(`UPDATE crawl_jobs SET status='running',pause_requested=0,cancel_requested=0,
         started_at=COALESCE(started_at,?),heartbeat_at=?,updated_at=?,finished_at=NULL,
         checkpoint_json=COALESCE(?,checkpoint_json),
@@ -101,7 +102,7 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
     const job = requireJob(id);
     if (TERMINAL_STATUSES.has(job.status)) throw invalidState(job.status, 'request_cancel');
     const timestamp = now();
-    if (job.status === 'pending' || job.status === 'paused' || job.status === 'interrupted' || job.status === 'failed') {
+    if (job.status === 'pending' || job.status === 'paused' || job.status === 'paused_manual_recovery' || job.status === 'interrupted' || job.status === 'failed') {
       return transitionJob(id, 'cancelled', { eventType: 'job_cancelled', message: '任务已取消。' });
     }
     db.prepare('UPDATE crawl_jobs SET cancel_requested=1,updated_at=? WHERE id=?').run(timestamp, id);
@@ -304,7 +305,7 @@ function levelForStatus(status) {
 }
 function statusMessage(status) {
   return ({
-    paused: '任务已在安全边界暂停。', interrupted: '任务已中断，可从断点恢复。',
+    paused: '任务已在安全边界暂停。', paused_manual_recovery: '任务等待人工恢复采集页面。', interrupted: '任务已中断，可从断点恢复。',
     completed: '任务已完成。', completed_with_errors: '任务完成，但存在失败项。',
     failed: '任务执行失败。', cancelled: '任务已取消。'
   })[status] ?? `任务状态已更新为 ${status}。`;

@@ -8,7 +8,7 @@ import { migrateDatabase } from '../../src/db/migrate.mjs';
 import { createJobRepository } from '../../src/db/repositories/job-repository.mjs';
 import { createReviewRepository } from '../../src/db/repositories/review-repository.mjs';
 import { createJobService } from '../../src/jobs/job-service.mjs';
-import { runReviewCaptureJob } from '../../src/jobs/review-job-runner.mjs';
+import { runReviewCaptureJob,sessionCircuitOpen,validateControlProducts } from '../../src/jobs/review-job-runner.mjs';
 import { reviewCaptureQa } from '../../src/jobs/review-job-runner.mjs';
 import { AppError } from '../../src/shared/errors.mjs';
 
@@ -85,15 +85,63 @@ test('Day9 QA never passes a finished batch containing failed or blocked coverag
   assert.equal(result.captureFinished,true);assert.equal(result.actionableFailures,1);assert.equal(result.pass,false);
 });
 
-function createRunnerFixture(t) {
+test('Day9.2 circuit breaker stops new product visits and preserves checkpoint for manual recovery',async t => {
+  const fixture=createRunnerFixture(t,6);let calls=[];
+  const capture=async (_page,target,_config,hooks) => {
+    calls.push(target.goodsId);
+    await hooks.onCheckpoint({ pageIndex:1,reviewsCaptured:1,newestCapturedReviewDate:'2026-08-22',oldestCapturedReviewDate:'2026-08-22' });
+    if (['124','125'].includes(target.goodsId)) throw new AppError('sold out only in external session',{ code:'PRODUCT_NOT_FOUND',retriable:true });
+    return completedResult();
+  };
+  await assert.rejects(() => runReviewCaptureJob(fixture.config,{ jobId:fixture.jobId,dependencies:fakeDependencies(capture) }),error => error.code === 'JOB_PAUSED');
+  assert.deepEqual(calls,['123','124','125']);
+  const db=openDatabase(fixture.databasePath,{ readOnly:true });
+  try {
+    const jobs=createJobRepository(db);const reviews=createReviewRepository(db);const job=jobs.getJob(fixture.jobId);
+    assert.equal(job.status,'paused_manual_recovery');assert.equal(job.checkpoint.manualGate.reason,'SESSION_CONTEXT_PROBLEM');
+    const coverage=reviews.listCoverage(fixture.jobId);assert.equal(coverage[0].taskStatus,'completed');assert.equal(coverage[1].stopReason,'SESSION_CONTEXT_PROBLEM');assert.equal(coverage[2].stopReason,'SESSION_CONTEXT_PROBLEM');assert.equal(coverage[3].taskStatus,'pending');
+    assert.equal(reviews.countReviews(),0);assert.equal(db.prepare('SELECT COUNT(*) AS count FROM review_session_epochs').get().count,1);
+  } finally { db.close(); }
+  assert.equal(sessionCircuitOpen([{ code:'SESSION_CONTEXT_PROBLEM' },{ code:'SESSION_CONTEXT_PROBLEM' }]),true);
+  assert.equal(sessionCircuitOpen([{ code:'SESSION_CONTEXT_PROBLEM' },{ code:'OTHER' },{ code:'DETAIL_AVAILABILITY_UNVERIFIED' },{ code:'OTHER' },{ code:'DETAIL_AVAILABILITY_MISMATCH' }]),true);
+});
+
+test('Day9.2 failed validation remains paused, successful validation resumes only blocked and pending products',async t => {
+  const fixture=createRunnerFixture(t,4);const calls=[];let unhealthy=true;
+  const capture=async (_page,target,_config,hooks) => { calls.push(target.goodsId);await hooks.onCheckpoint({ pageIndex:1,reviewsCaptured:0,newestCapturedReviewDate:null,oldestCapturedReviewDate:null });if (unhealthy && ['124','125'].includes(target.goodsId)) throw new AppError('external sold out',{ code:'PRODUCT_NOT_FOUND',retriable:true });return completedResult(); };
+  await assert.rejects(() => runReviewCaptureJob(fixture.config,{ jobId:fixture.jobId,dependencies:fakeDependencies(capture) }),error => error.code === 'JOB_PAUSED');
+  let db=openDatabase(fixture.databasePath);let jobs=createJobRepository(db);let service=createJobService(jobs);let reviews=createReviewRepository(db);
+  const epoch=reviews.latestSessionEpoch(fixture.jobId);
+  service.recordSessionRecoveryValidation(fixture.jobId,{ passed:false,availableCount:0,required:2 });
+  assert.equal(jobs.getJob(fixture.jobId).status,'paused_manual_recovery');
+  reviews.saveControlChecks(epoch.sessionEpochId,fixture.jobId,[{ productId:1,goodsId:'123',sourceUrl:'https://test/123',status:'available' },{ productId:2,goodsId:'124',sourceUrl:'https://test/124',status:'available' },{ productId:3,goodsId:'125',sourceUrl:'https://test/125',status:'unavailable' }]);
+  reviews.markSessionRecovered(epoch.sessionEpochId);service.recordSessionRecoveryValidation(fixture.jobId,{ passed:true,availableCount:2,required:2 });
+  assert.equal(reviews.listControlChecks(fixture.jobId).length,3);db.close();
+  unhealthy=false;const resumed=await runReviewCaptureJob(fixture.config,{ jobId:fixture.jobId,dependencies:fakeDependencies(capture) });
+  assert.equal(resumed.job.status,'completed');assert.deepEqual(calls,['123','124','125','124','125','126']);
+  db=openDatabase(fixture.databasePath,{ readOnly:true });try { const coverage=createReviewRepository(db).listCoverage(fixture.jobId);assert.ok(coverage.every(row => row.taskStatus === 'completed'));assert.equal(createReviewRepository(db).latestSessionEpoch(fixture.jobId).recoveryCount,1); } finally { db.close(); }
+});
+
+test('Day9.2 control products require two available details before recovery can continue',async () => {
+  const controls=[{ productId:1,goodsId:'a',sourceUrl:'https://test/a'},{ productId:2,goodsId:'b',sourceUrl:'https://test/b'},{ productId:3,goodsId:'c',sourceUrl:'https://test/c'}];let index=0;
+  const statuses=['available','available','unavailable'];
+  const context={ newPage:async () => ({ goto:async () => {},waitForTimeout:async () => {},evaluate:async () => ({ body:statuses[index++] === 'available' ? 'ok':'This item is sold out',purchaseAction:index <= 2 }),close:async () => {} }) };
+  const checks=await validateControlProducts(context,controls);
+  assert.equal(checks.filter(check => check.status === 'available').length,2);
+  assert.equal(checks.filter(check => check.status === 'available').length >= 2,true);
+  const unavailableContext={ newPage:async () => ({ goto:async () => {},waitForTimeout:async () => {},evaluate:async () => ({ body:'This item is sold out',purchaseAction:false }),close:async () => {} }) };
+  const failed=await validateControlProducts(unavailableContext,controls);
+  assert.equal(failed.filter(check => check.status === 'available').length >= 2,false);
+});
+
+function createRunnerFixture(t,count=1) {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-review-runner-'));t.after(() => fs.rmSync(directory,{ recursive:true,force:true }));
   const databasePath=path.join(directory,'v2.db');migrateDatabase({ databasePath });const db=openDatabase(databasePath);
-  db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,title,first_seen_at,last_seen_at)
-    VALUES('temu','123','https://www.temu.com/goods.html?goods_id=123','test','2026-08-01','2026-08-22')`).run();
-  const productId=Number(db.prepare("SELECT id FROM products WHERE external_product_id='123'").get().id);const jobs=createJobRepository(db);
-  const job=jobs.createJob({ jobType:'reviews',targetCount:1,config:{ runDate:'2026-08-22T00:00:00.000Z' } });
-  jobs.upsertJobItem(job.id,{ sequenceNo:1,itemKey:'123',productId,productUrl:'https://www.temu.com/goods.html?goods_id=123',checkpoint:{ reviewCount:10 } });
-  createReviewRepository(db).initializeCoverage(job.id,[{ productId,goodsId:'123' }],'2026-07-23');db.close();
+  const jobs=createJobRepository(db);const job=jobs.createJob({ jobType:'reviews',targetCount:count,config:{ runDate:'2026-08-22T00:00:00.000Z' } });const targets=[];
+  for (let index=0;index<count;index+=1) { const goodsId=String(123+index);db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,title,first_seen_at,last_seen_at)
+    VALUES('temu',?,?,'test','2026-08-01','2026-08-22')`).run(goodsId,`https://www.temu.com/goods.html?goods_id=${goodsId}`);
+    const productId=Number(db.prepare('SELECT id FROM products WHERE external_product_id=?').get(goodsId).id);jobs.upsertJobItem(job.id,{ sequenceNo:index+1,itemKey:goodsId,productId,productUrl:`https://www.temu.com/goods.html?goods_id=${goodsId}`,checkpoint:{ reviewCount:10 } });targets.push({ productId,goodsId }); }
+  createReviewRepository(db).initializeCoverage(job.id,targets,'2026-07-23');db.close();
   return { databasePath,jobId:job.id,config:{ app:{ databasePath },browser:{ mode:'external_cdp' },catalog:{ siteCountry:'DE',language:'en',currency:'EUR' },reviews:{ maxPagesPerProduct:200 } } };
 }
 function fakeDependencies(captureRecentReviews,health={ status:'READY',code:'READY',checks:{ PAGE_HEALTH:'READY' } }) { const page={ isClosed:() => false,close:async () => {} };return { captureRecentReviews,validateSessionHealth:async () => health,openBrowserSession:async () => ({ context:{ newPage:async () => page },external:true }),closeBrowserSession:async () => {} }; }

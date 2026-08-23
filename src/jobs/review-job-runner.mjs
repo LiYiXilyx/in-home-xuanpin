@@ -13,6 +13,7 @@ import { findCurrentOperatorTemuPage } from '../browser/operator-page.mjs';
 import { inspectCurrentPageHealth } from '../modules/catalog/page-health.mjs';
 
 const SESSION_HEALTH_CODES=new Set(['STALE_CATEGORY_PAGE','SEARCH_NO_RESULTS','LISTING_NOT_FOUND','NETWORK_ERROR','CAPTCHA_OR_LOGIN','ACCESS_RESTRICTED']);
+export const SESSION_CIRCUIT_CODES=new Set(['DETAIL_AVAILABILITY_MISMATCH','DETAIL_AVAILABILITY_UNVERIFIED','SESSION_CONTEXT_PROBLEM']);
 
 export async function prepareReviewCaptureJob(config,{ targetCount=10,jobId=null,now=() => new Date() }={}) {
   const db=openDatabase(config.app.databasePath);
@@ -49,6 +50,10 @@ export async function runReviewCaptureJob(config,{ jobId,dependencies={} }={}) {
   try {
     let job=jobs.getJob(jobId);if (!job || job.jobType !== 'reviews') throw new Error(`无效Day9评论任务：${jobId}`);
     if (job.status === 'paused' && job.checkpoint?.manualGate) service.resolveManualGate(jobId);
+    else if (job.status === 'paused_manual_recovery') {
+      if (!job.checkpoint?.manualGate?.validation?.passed) throw new AppError('Session Recovery Validation 尚未通过。',{ code:'SESSION_RECOVERY_NOT_VALIDATED',retriable:true });
+      service.resolveSessionRecoveryGate(jobId);
+    }
     else if (['paused','interrupted','failed','completed_with_errors'].includes(job.status)) service.resume(jobId);
     else if (job.status === 'pending') service.start(jobId);
     else if (job.status !== 'running') throw new Error(`评论任务状态 ${job.status} 不能执行。`);
@@ -59,7 +64,8 @@ export async function runReviewCaptureJob(config,{ jobId,dependencies={} }={}) {
       if (health.status !== 'READY') {
         const changed=reviews.markSessionBlocked(jobId,{ stopReason:health.code,message:`Day9采集前页面健康检查未通过：${health.code}` });
         jobs.appendEvent(jobId,'review_session_not_ready','warn','Day9已阻止采集：Temu列表页未达到READY。',{ code:health.code,changed,checks:health.checks });
-        service.openManualGate(jobId,{ reason:health.code,message:'Temu列表页异常。请从首页重新进入类目，商品卡片恢复且页面验证为READY后再继续。' });
+        if (SESSION_CIRCUIT_CODES.has(health.code)) await openSessionRecoveryCircuit({ jobs,service,reviews,jobId,reason:health.code,blockedProductIds:[] });
+        else service.openManualGate(jobId,{ reason:health.code,message:'Temu列表页异常。请从首页重新进入类目，商品卡片恢复且页面验证为READY后再继续。' });
         throw new AppError(`Temu页面未达到READY：${health.code}`,{ code:'JOB_PAUSED',retriable:true,details:{ healthCode:health.code } });
       }
       detailPage=await session.context.newPage();
@@ -71,7 +77,8 @@ export async function runReviewCaptureJob(config,{ jobId,dependencies={} }={}) {
     }
 
     const items=jobs.listJobItems(jobId);let processed=0,success=0,failed=0,totalInserted=0,totalDeduplicated=0;
-    let consecutiveProductNotFound=[];
+    let sessionSignals=Array.isArray(job.checkpoint?.sessionSignals) ? job.checkpoint.sessionSignals : [];
+    let sessionEpoch=reviews.startSessionEpoch(jobId,{ recoveryCount:reviews.latestSessionEpoch(jobId)?.recoveryCount ?? 0 });
     for (const item of items) {
       if (['completed','skipped'].includes(item.status)) { processed+=1;success+=1;continue; }
       const priorCoverage=reviews.getCoverage(jobId,item.productId);
@@ -106,24 +113,25 @@ export async function runReviewCaptureJob(config,{ jobId,dependencies={} }={}) {
             newestCapturedReviewDate:coverage.newestCapturedReviewDate,oldestCapturedReviewDate:coverage.oldestCapturedReviewDate,checkpoint:coverage.checkpoint });
           jobs.transitionJobItem(jobId,item.itemKey,'skipped',{ checkpoint:coverage.checkpoint,errorCode:'JOB_CANCELLED',errorMessage:error.message });throw error;
         }
-        const result={ ...mapped,reviewsCaptured:coverage.reviewsCaptured,pagesScanned:coverage.pagesScanned,
+        const sessionProblem=error?.code === 'PRODUCT_NOT_FOUND' || SESSION_CIRCUIT_CODES.has(error?.code);
+        const aligned=sessionProblem ? { taskStatus:'blocked',crawlCompleteness:'blocked',stopReason:'SESSION_CONTEXT_PROBLEM',retriable:true } : mapped;
+        const result={ ...aligned,reviewsCaptured:coverage.reviewsCaptured,pagesScanned:coverage.pagesScanned,
           newestCapturedReviewDate:coverage.newestCapturedReviewDate,oldestCapturedReviewDate:coverage.oldestCapturedReviewDate,
-          checkpoint:coverage.checkpoint,errorCode:error.code ?? mapped.stopReason,errorMessage:error.message };
+          checkpoint:coverage.checkpoint,errorCode:sessionProblem ? 'SESSION_CONTEXT_PROBLEM' : (error.code ?? mapped.stopReason),errorMessage:error.message };
         reviews.finishProduct(jobId,item.productId,result);reviews.recordError({ jobId,productId:item.productId,errorCode:result.errorCode,message:error.message,retriable:mapped.retriable,details:error.details });
         jobs.transitionJobItem(jobId,item.itemKey,'failed',{ checkpoint:coverage.checkpoint,errorCode:result.errorCode,errorMessage:error.message });failed+=1;
         if (['CAPTCHA','LOGIN_REQUIRED'].includes(result.stopReason)) { service.openManualGate(jobId,{ reason:result.stopReason,message:'Day9评论页需要人工完成登录或验证码。' });throw new AppError('评论任务已进入人工关卡。',{ code:'JOB_PAUSED',retriable:true }); }
         if (result.stopReason === 'BROWSER_CLOSED') { service.interrupt(jobId,{ phase:'reviews',itemKey:item.itemKey,...coverage.checkpoint });throw new AppError('浏览器关闭，评论任务已保存断点。',{ code:'JOB_INTERRUPTED',retriable:true }); }
-        if (result.stopReason === 'PRODUCT_NOT_FOUND') consecutiveProductNotFound.push(item.productId);
-        else consecutiveProductNotFound=[];
-        if (consecutiveProductNotFound.length >= 3) {
-          const health=await (dependencies.validateSessionHealth ?? validateReviewSessionHealth)(session,config);
-          if (health.status !== 'READY') {
-            const changed=reviews.markSessionBlocked(jobId,{ stopReason:health.code,message:`连续商品不可用后复检发现会话异常：${health.code}`,productIds:consecutiveProductNotFound });
-            jobs.appendEvent(jobId,'review_session_circuit_open','warn','连续详情页异常触发页面健康熔断，结果不作为真实下架依据。',{ code:health.code,changed,consecutiveFailures:consecutiveProductNotFound.length });
-            service.openManualGate(jobId,{ reason:health.code,message:'连续详情页异常且列表页未达到READY，任务已暂停等待人工恢复。' });
-            throw new AppError('Day9页面健康熔断已触发。',{ code:'JOB_PAUSED',retriable:true,details:{ healthCode:health.code } });
+        if (sessionProblem) {
+          sessionSignals=appendSessionSignal(sessionSignals,{ productId:item.productId,goodsId:item.itemKey,code:result.stopReason,at:new Date().toISOString() });
+          control.checkpointBoundary(jobId,{ ...(jobs.getJob(jobId).checkpoint ?? {}),sessionSignals,phase:'session_signal',itemKey:item.itemKey });
+          if (sessionCircuitOpen(sessionSignals)) {
+            reviews.markSessionUnhealthy(sessionEpoch.sessionEpochId,'SESSION_CONTEXT_PROBLEM');
+            await openSessionRecoveryCircuit({ jobs,service,reviews,jobId,reason:'SESSION_CONTEXT_PROBLEM',blockedProductIds:[item.productId],epochId:sessionEpoch.sessionEpochId,signals:sessionSignals });
+            throw new AppError('Day9会话熔断已触发，等待人工恢复。',{ code:'JOB_PAUSED',retriable:true });
           }
-          consecutiveProductNotFound=[];
+        } else {
+          sessionSignals=[];reviews.markSessionHealthy(sessionEpoch.sessionEpochId);
         }
       }
       processed+=1;
@@ -142,6 +150,74 @@ export async function runReviewCaptureJob(config,{ jobId,dependencies={} }={}) {
     if (detailPage && !detailPage.isClosed()) await detailPage.close().catch(() => {});
     await (dependencies.closeBrowserSession ?? closeBrowserSession)(session,config).catch(() => {});db.close();
   }
+}
+
+function appendSessionSignal(signals,signal) { return [...signals,signal].slice(-5); }
+export function sessionCircuitOpen(signals) {
+  const recent=signals.slice(-5);
+  let tail=0;for (let i=recent.length-1;i>=0 && SESSION_CIRCUIT_CODES.has(recent[i].code);i-=1) tail+=1;
+  return tail >= 2 || recent.filter(signal => SESSION_CIRCUIT_CODES.has(signal.code)).length >= 3;
+}
+async function openSessionRecoveryCircuit({ jobs,service,reviews,jobId,reason,blockedProductIds,epochId=null,signals=[] }) {
+  const changed=reviews.markSessionBlocked(jobId,{ stopReason:'SESSION_CONTEXT_PROBLEM',errorCode:'SESSION_CONTEXT_PROBLEM',message:'External Chrome 商品上下文异常；不是商品真实下架。',productIds:blockedProductIds });
+  jobs.appendEvent(jobId,'review_session_circuit_open','warn','会话熔断已打开，剩余商品保持 pending，不再访问。',{ reason,changed,blockedProductIds,signals,epochId });
+  service.openSessionRecoveryGate(jobId,{ epochId, message:'External Chrome 当前商品上下文异常。请人工回 Temu 首页或目标类目，确认 Germany / English / EUR，重新进入 Motorcycle Accessories / Top Sales 并打开一个正常商品；如有验证码或登录请人工完成。' });
+}
+
+export async function validateSessionRecovery(config,{ jobId,dependencies={} }={}) {
+  const db=openDatabase(config.app.databasePath);let session=null;
+  const jobs=createJobRepository(db);const reviews=createReviewRepository(db);const service=createJobService(jobs);
+  const required=Number(config.reviews?.sessionRecoveryMinimumAvailable ?? 2);
+  try {
+    const job=jobs.getJob(jobId);if (!job || job.jobType !== 'reviews') throw new Error(`无效Day9评论任务：${jobId}`);
+    if (job.status !== 'paused_manual_recovery') throw new AppError('任务当前不在会话恢复关卡。',{ code:'MANUAL_GATE_NOT_WAITING' });
+    session=await (dependencies.openBrowserSession ?? openBrowserSession)(config,dependencies);
+    const listingPage=await findCurrentOperatorTemuPage(session.context);
+    if (!listingPage) return recordRecoveryValidation(service,reviews,job,{ passed:false,availableCount:0,required,checks:{ TEMU_PAGE:false } });
+    const listingHealth=await inspectCurrentPageHealth(listingPage,config,config.catalog.jobs?.[0]);
+    if (listingHealth.status !== 'READY') return recordRecoveryValidation(service,reviews,job,{ passed:false,availableCount:0,required,checks:listingHealth.checks,code:listingHealth.code });
+    const controls=selectControlProducts(jobs.listJobItems(jobId),config);
+    const checks=await validateControlProducts(session.context,controls);
+    const availableCount=checks.filter(check => check.status === 'available').length;
+    const passed=availableCount >= required;
+    const epochId=job.checkpoint?.manualGate?.epochId ?? reviews.latestSessionEpoch(jobId)?.sessionEpochId;
+    if (epochId) {
+      reviews.saveControlChecks(epochId,jobId,checks);
+      if (passed) reviews.markSessionRecovered(epochId); else reviews.markSessionUnhealthy(epochId,'SESSION_CONTEXT_PROBLEM');
+    }
+    return recordRecoveryValidation(service,reviews,job,{ passed,availableCount,required:2,checks:listingHealth.checks,controlChecks:checks,epochId });
+  } catch (error) {
+    const job=jobs.getJob(jobId);
+    if (job?.status === 'paused_manual_recovery') return recordRecoveryValidation(service,reviews,job,{ passed:false,availableCount:0,required,code:error.code ?? 'CDP_UNREACHABLE',checks:{} });
+    throw error;
+  } finally { await (dependencies.closeBrowserSession ?? closeBrowserSession)(session,config).catch(() => {});db.close(); }
+}
+
+function recordRecoveryValidation(service,reviews,job,validation) {
+  const result={ ...validation,validatedAt:new Date().toISOString() };
+  service.recordSessionRecoveryValidation(job.id,result);
+  return result;
+}
+function selectControlProducts(items,config) {
+  const configured=new Set((config.reviews?.sessionControlGoodsIds ?? []).map(String));
+  const chosen=[];
+  for (const item of items) if (configured.has(String(item.itemKey))) chosen.push(item);
+  for (const item of items) if (!chosen.includes(item) && chosen.length<3) chosen.push(item);
+  return chosen.slice(0,3).map(item => ({ productId:item.productId,goodsId:item.itemKey,sourceUrl:item.productUrl }));
+}
+export async function validateControlProducts(context,controls) {
+  const results=[];
+  for (const control of controls) {
+    const page=await context.newPage();
+    try {
+      await page.goto(control.sourceUrl,{ waitUntil:'domcontentloaded',timeout:30_000 });
+      await page.waitForTimeout?.(300);
+      const detail=await page.evaluate(() => ({ body:document.body?.innerText ?? '',purchaseAction:[...document.querySelectorAll('button,[role="button"]')].some(node => /^(?:add to (?:cart|bag)|buy now)$/i.test((node.textContent ?? '').trim())) })).catch(() => ({ body:'',purchaseAction:false }));
+      results.push({ ...control,status:classifyDetailAvailability(detail.body,{ purchaseAction:detail.purchaseAction }),details:{ purchaseAction:detail.purchaseAction } });
+    } catch (error) { results.push({ ...control,status:'unknown',details:{ code:error?.code ?? 'PROVIDER_ERROR' } }); }
+    finally { await page.close().catch(() => {}); }
+  }
+  return results;
 }
 
 export async function validateReviewSessionHealth(session,config) {

@@ -1,4 +1,5 @@
 import { transaction } from '../client.mjs';
+import { createId } from '../../shared/ids.mjs';
 
 export function createReviewRepository(db,{ now=() => new Date().toISOString() }={}) {
   const findByReviewId=db.prepare("SELECT id FROM reviews WHERE goods_id=? AND review_id=? AND review_id<>''");
@@ -80,6 +81,35 @@ export function createReviewRepository(db,{ now=() => new Date().toISOString() }
     return Number(result.changes);
   }
 
+  function startSessionEpoch(jobId,{ recoveryCount=0 }={}) {
+    const timestamp=now(),sessionEpochId=createId('session_epoch');
+    db.prepare(`INSERT INTO review_session_epochs(session_epoch_id,job_id,started_at,last_healthy_at,recovery_count,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,'healthy',?,?)`).run(sessionEpochId,jobId,timestamp,timestamp,recoveryCount,timestamp,timestamp);
+    return getSessionEpoch(sessionEpochId);
+  }
+  function markSessionHealthy(sessionEpochId) {
+    db.prepare(`UPDATE review_session_epochs SET last_healthy_at=?,status='healthy',updated_at=? WHERE session_epoch_id=?`)
+      .run(now(),now(),sessionEpochId);return getSessionEpoch(sessionEpochId);
+  }
+  function markSessionUnhealthy(sessionEpochId,reason) {
+    db.prepare(`UPDATE review_session_epochs SET unhealthy_at=?,unhealthy_reason=?,status='unhealthy',updated_at=? WHERE session_epoch_id=?`)
+      .run(now(),reason,now(),sessionEpochId);return getSessionEpoch(sessionEpochId);
+  }
+  function markSessionRecovered(sessionEpochId) {
+    db.prepare(`UPDATE review_session_epochs SET recovered_at=?,last_healthy_at=?,recovery_count=recovery_count+1,status='recovered',updated_at=? WHERE session_epoch_id=?`)
+      .run(now(),now(),now(),sessionEpochId);return getSessionEpoch(sessionEpochId);
+  }
+  function getSessionEpoch(sessionEpochId) { return mapEpoch(db.prepare('SELECT * FROM review_session_epochs WHERE session_epoch_id=?').get(sessionEpochId)); }
+  function latestSessionEpoch(jobId) { return mapEpoch(db.prepare('SELECT * FROM review_session_epochs WHERE job_id=? ORDER BY started_at DESC LIMIT 1').get(jobId)); }
+  function saveControlChecks(sessionEpochId,jobId,checks,{ phase='recovery_validation' }={}) {
+    const timestamp=now();
+    transaction(db,() => { const statement=db.prepare(`INSERT INTO review_session_control_checks(session_epoch_id,job_id,product_id,goods_id,source_url,check_phase,detail_status,checked_at,details_json)
+      VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(session_epoch_id,product_id,check_phase) DO UPDATE SET detail_status=excluded.detail_status,checked_at=excluded.checked_at,details_json=excluded.details_json`);
+      for (const check of checks) statement.run(sessionEpochId,jobId,check.productId,check.goodsId,check.sourceUrl,phase,check.status ?? 'unknown',timestamp,JSON.stringify(check.details ?? {}));
+    });
+  }
+  function listControlChecks(jobId) { return db.prepare(`SELECT * FROM review_session_control_checks WHERE job_id=? ORDER BY checked_at,id`).all(jobId).map(row => ({ sessionEpochId:row.session_epoch_id,productId:Number(row.product_id),goodsId:row.goods_id,sourceUrl:row.source_url,phase:row.check_phase,status:row.detail_status,checkedAt:row.checked_at,details:parse(row.details_json) })); }
+
   function getCoverage(jobId,productId) { return mapCoverage(db.prepare('SELECT * FROM review_capture_coverage WHERE job_id=? AND product_id=?').get(jobId,productId)); }
   function listCoverage(jobId) { return db.prepare('SELECT * FROM review_capture_coverage WHERE job_id=? ORDER BY id').all(jobId).map(mapCoverage); }
   function countReviews(jobId=null) { const row=jobId ? db.prepare('SELECT COUNT(*) count FROM reviews WHERE capture_job_id=?').get(jobId):db.prepare('SELECT COUNT(*) count FROM reviews').get();return Number(row.count); }
@@ -95,7 +125,7 @@ export function createReviewRepository(db,{ now=() => new Date().toISOString() }
       partialWithoutReason:scalar("SELECT COUNT(*) count FROM review_capture_coverage WHERE job_id=? AND crawl_completeness='partial' AND stop_reason IS NULL")
     };
   }
-  return { initializeCoverage,startProduct,savePage,saveReviews,finishProduct,recordError,markSessionBlocked,getCoverage,listCoverage,countReviews,qa };
+  return { initializeCoverage,startProduct,savePage,saveReviews,finishProduct,recordError,markSessionBlocked,startSessionEpoch,markSessionHealthy,markSessionUnhealthy,markSessionRecovered,getSessionEpoch,latestSessionEpoch,saveControlChecks,listControlChecks,getCoverage,listCoverage,countReviews,qa };
 }
 
 function mapCoverage(row) { return row ? {
@@ -106,3 +136,4 @@ function mapCoverage(row) { return row ? {
   errorCode:row.error_code,errorMessage:row.error_message,createdAt:row.created_at,updatedAt:row.updated_at,finishedAt:row.finished_at
 }:null; }
 function parse(value) { try { return value ? JSON.parse(value):{}; } catch { return {}; } }
+function mapEpoch(row) { return row ? { sessionEpochId:row.session_epoch_id,jobId:row.job_id,startedAt:row.started_at,lastHealthyAt:row.last_healthy_at,unhealthyAt:row.unhealthy_at,recoveredAt:row.recovered_at,unhealthyReason:row.unhealthy_reason,recoveryCount:Number(row.recovery_count),status:row.status } : null; }

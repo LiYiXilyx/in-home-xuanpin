@@ -10,7 +10,7 @@ const elements={
   imageCount:$('#imageCount'),checkpoint:$('#checkpoint'),activeProducts:$('#activeProducts'),qualitySummary:$('#qualitySummary'),
   latestExcel:$('#latestExcel'),recentError:$('#recentError'),updatedAt:$('#updatedAt'),jobHistory:$('#jobHistory'),
   events:$('#events'),eventCount:$('#eventCount'),pause:$('#pause'),resume:$('#resume'),cancel:$('#cancel'),
-  retry:$('#retry'),export:$('#export'),openExcel:$('#openExcel'),clearExcel:$('#clearExcel'),openFolder:$('#openFolder'),toast:$('#toast')
+  retry:$('#retry'),sessionRecoveryControls:$('#sessionRecoveryControls'),validateSessionRecovery:$('#validateSessionRecovery'),resumeReviewCapture:$('#resumeReviewCapture'),sessionStatus:$('#sessionStatus'),export:$('#export'),openExcel:$('#openExcel'),clearExcel:$('#clearExcel'),openFolder:$('#openFolder'),toast:$('#toast')
 };
 const startButtons=[...document.querySelectorAll('[data-start]')];
 let state=null,toastTimer;
@@ -24,7 +24,7 @@ async function api(url,options={}) {
 function number(value) { return new Intl.NumberFormat('zh-CN').format(Number(value ?? 0)); }
 function time(value) { return value ? new Intl.DateTimeFormat('zh-CN',{ month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit' }).format(new Date(value)) : '—'; }
 function toast(message) { elements.toast.textContent=message; elements.toast.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(() => elements.toast.classList.remove('show'),3000); }
-function statusLabel(status) { return ({ pending:'等待开始',running:'运行中',paused:'已暂停',interrupted:'异常中断',completed:'已完成',completed_with_errors:'完成但有错误',failed:'失败',cancelled:'已取消' })[status] ?? '空闲'; }
+function statusLabel(status) { return ({ pending:'等待开始',running:'运行中',paused:'已暂停',paused_manual_recovery:'等待人工恢复',interrupted:'异常中断',completed:'已完成',completed_with_errors:'完成但有错误',failed:'失败',cancelled:'已取消' })[status] ?? '空闲'; }
 
 function render(payload) {
   state=payload;
@@ -53,6 +53,7 @@ function render(payload) {
   elements.qualitySummary.textContent=qualityText(payload.quality);
   elements.latestExcel.textContent=payload.latestExcel.exists ? `${payload.latestExcel.name} · ${time(payload.latestExcel.modifiedAt)}` : '尚未生成';
   elements.recentError.textContent=payload.recentErrors[0]?.message ?? '无';
+  elements.sessionStatus.textContent=job?.status === 'paused_manual_recovery' ? (job.sessionRecoveryValidated ? 'SESSION_RECOVERED · 可继续评论采集':'SESSION_CONTEXT_PROBLEM · 等待人工恢复'):'无待恢复关卡';
   elements.updatedAt.textContent=`更新于 ${time(new Date())}`;
   renderHistory(payload.jobs);
   renderEvents(payload.events);
@@ -145,12 +146,16 @@ function renderEvents(events) {
 }
 function renderControls(job,payload) {
   const status=job?.status;
-  const active=['pending','running','paused','interrupted'].includes(status);
+  const active=['pending','running','paused','paused_manual_recovery','interrupted'].includes(status);
   startButtons.forEach(button => button.disabled=active || !payload.browser.connected || payload.browser.pageHealth?.status !== 'READY');
   elements.validatePage.disabled=!payload.browser.connected;
   elements.pause.disabled=status !== 'running' || job?.pauseRequested;
   elements.resume.disabled=!['paused','interrupted'].includes(status);
-  elements.cancel.disabled=!['pending','running','paused','interrupted','failed'].includes(status);
+  elements.cancel.disabled=!['pending','running','paused','paused_manual_recovery','interrupted','failed'].includes(status);
+  const sessionGate=status === 'paused_manual_recovery' && job?.jobType === 'reviews';
+  elements.sessionRecoveryControls.hidden=!sessionGate;
+  elements.validateSessionRecovery.disabled=!sessionGate;
+  elements.resumeReviewCapture.disabled=!sessionGate || !job?.sessionRecoveryValidated;
   elements.retry.disabled=!['failed','interrupted','completed_with_errors'].includes(status);
   elements.export.disabled=payload.activeProducts === 0;
   elements.openExcel.disabled=!payload.latestExcel.exists;
@@ -166,6 +171,7 @@ function renderNotice(job,payload) {
   if (job?.pauseRequested) message='暂停请求已收到，任务会在下一个安全批次边界保存 checkpoint 后暂停。';
   if (job?.cancelRequested) message='取消请求已收到，任务会在下一个安全点停止，已成功数据会保留。';
   if (job?.status === 'paused') message='任务已安全暂停。页面准备好后点击“继续”，将按原 job_id 从 checkpoint 恢复。';
+  if (job?.status === 'paused_manual_recovery') { message='External Chrome 当前商品上下文异常。请人工：1. 回 Temu 首页或目标类目；2. 确认 Germany / English / EUR；3. 重新进入 Motorcycle Accessories / Top Sales；4. 人工打开一个正常商品；5. 如有验证码或登录，请人工完成。然后点击“页面已恢复，重新验证”。';kind='warn'; }
   if (job?.waitingForInput) {
     message=job.manualGateMessage ?? 'Temu 需要人工处理。请在采集 Chrome 中完成操作后点击“继续”。';
     kind='warn';
@@ -192,6 +198,8 @@ elements.pause.addEventListener('click',() => action(`/api/jobs/${state.currentJ
 elements.resume.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/resume`,'正在从 checkpoint 继续'));
 elements.cancel.addEventListener('click',() => { if (confirm('确认取消当前任务？已成功数据和历史会保留。')) action(`/api/jobs/${state.currentJob.id}/cancel`,'取消请求已提交'); });
 elements.retry.addEventListener('click',() => action(`/api/jobs/${state.currentJob.id}/retry`,'正在重试可恢复失败项'));
+elements.validateSessionRecovery.addEventListener('click',() => action(`/api/reviews/${state.currentJob.id}/validate-session-recovery`,'正在验证 External Chrome 页面与 3 个 Control Products…'));
+elements.resumeReviewCapture.addEventListener('click',() => action(`/api/reviews/${state.currentJob.id}/resume`,'Session 已恢复，正在从 checkpoint 继续评论采集…'));
 elements.export.addEventListener('click',() => action('/api/export','正在从数据库导出 Excel…'));
 elements.openExcel.addEventListener('click',() => action('/api/open/excel','正在打开最新 Excel…'));
 elements.clearExcel.addEventListener('click',() => {

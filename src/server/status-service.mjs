@@ -38,7 +38,7 @@ export function createStatusService({ db, jobRepository, config, browserStatus, 
 }
 
 function selectCurrentJob(jobs) {
-  return jobs.find(job => ['running','paused','interrupted','pending'].includes(job.status))
+  return jobs.find(job => ['running','paused','paused_manual_recovery','interrupted','pending'].includes(job.status))
     ?? [...jobs].sort((left,right) => Date.parse(right.updatedAt ?? 0)-Date.parse(left.updatedAt ?? 0))[0]
     ?? null;
 }
@@ -50,9 +50,11 @@ function publicJob(job) {
     discovered:Math.max(Number(job.discoveredCount ?? 0),checkpointCount),stored:job.storedCount,processed:job.processedItems,
     success:job.successItems,failed:job.failedItems,resumeCount:job.resumeCount,
     pauseRequested:job.pauseRequested,cancelRequested:job.cancelRequested,
-    waitingForInput:job.status === 'paused' && Boolean(job.checkpoint?.manualGate),
+    waitingForInput:['paused','paused_manual_recovery'].includes(job.status) && Boolean(job.checkpoint?.manualGate),
     manualGateReason:job.checkpoint?.manualGate?.reason ?? null,
     manualGateMessage:job.checkpoint?.manualGate ? operatorMessage(job.checkpoint.manualGate.reason,job.checkpoint.manualGate.message) : null,
+    sessionRecoveryValidated:Boolean(job.checkpoint?.manualGate?.validation?.passed),
+    sessionRecoveryValidation:job.checkpoint?.manualGate?.validation ?? null,
     requestedAt:job.requestedAt,startedAt:job.startedAt,updatedAt:job.updatedAt,finishedAt:job.finishedAt,
     lastErrorCode:job.lastErrorCode,lastError:job.lastErrorCode || job.lastErrorMessage ? operatorMessage(job.lastErrorCode,job.lastErrorMessage) : null
   };
@@ -105,6 +107,7 @@ export function operatorMessage(code,message='') {
   if (/LOAD_MORE_MANUAL_REQUIRED/.test(normalized)) return '自动加载没有产生新商品。请在采集 Chrome 页面底部人工点击“Try again”，确认新商品出现后回运营台点击“继续”。';
   if (/SEARCH_NO_RESULTS/.test(normalized)) return '当前独立 Chrome 搜索无结果；若多个普通搜索词都无结果，建议新建采集 Chrome 并重新登录。';
   if (/STALE_CATEGORY_PAGE/.test(normalized)) return '当前 Temu 类目页面已失效，请从独立 Chrome 首页重新进入目标类目。';
+  if (/SESSION_CONTEXT_PROBLEM|DETAIL_AVAILABILITY/.test(normalized)) return 'External Chrome 当前商品上下文异常。请人工回首页或目标类目，确认 Germany / English / EUR，重新进入 Motorcycle Accessories / Top Sales，打开一个正常商品后执行“页面已恢复，重新验证”。';
   if (/WRONG_SITE/.test(normalized)) return '当前页面不是 Temu，请在采集 Chrome 中打开正确页面。';
   if (/CATEGORY/.test(normalized)) return '当前页面不是摩托配件类目，请进入正确类目后重试。';
   if (/SORT|TOP_SALES/.test(normalized)) return '当前页面未确认 Top Sales，请选择 Top Sales 后重试。';
