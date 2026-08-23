@@ -20,7 +20,7 @@ export function mapCaptureFailure(error,coverage={}) {
   const code=String(error?.code ?? 'PAGE_CHANGED').toUpperCase();
   const hasData=Number(coverage.reviewsCaptured ?? 0)>0;
   if (['CAPTCHA','LOGIN_REQUIRED'].includes(code)) return { taskStatus:'blocked',crawlCompleteness:'blocked',stopReason:code,retriable:true };
-  if (['SESSION_UNHEALTHY','STALE_CATEGORY_PAGE','SEARCH_NO_RESULTS','LISTING_NOT_FOUND','DETAIL_AVAILABILITY_MISMATCH','DETAIL_AVAILABILITY_UNVERIFIED'].includes(code)) return { taskStatus:'blocked',crawlCompleteness:'blocked',stopReason:code,retriable:true };
+  if (['SESSION_UNHEALTHY','SESSION_CONTEXT_PROBLEM','STALE_CATEGORY_PAGE','SEARCH_NO_RESULTS','LISTING_NOT_FOUND','DETAIL_AVAILABILITY_MISMATCH','DETAIL_AVAILABILITY_UNVERIFIED'].includes(code)) return { taskStatus:'blocked',crawlCompleteness:'blocked',stopReason:code,retriable:true };
   if (code === 'BROWSER_CLOSED') return { taskStatus:hasData ? 'completed_partial':'failed',crawlCompleteness:hasData ? 'partial':'failed',stopReason:'BROWSER_CLOSED',retriable:true };
   if (code === 'NETWORK_ERROR') return { taskStatus:hasData ? 'completed_partial':'failed',crawlCompleteness:hasData ? 'partial':'failed',stopReason:'NETWORK_ERROR',retriable:true };
   if (code === 'REVIEW_SECTION_MISSING') return { taskStatus:hasData ? 'completed_partial':'failed',crawlCompleteness:hasData ? 'partial':'failed',stopReason:'REVIEW_SECTION_MISSING',retriable:true };

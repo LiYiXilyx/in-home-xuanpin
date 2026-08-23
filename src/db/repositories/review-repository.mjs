@@ -69,12 +69,12 @@ export function createReviewRepository(db,{ now=() => new Date().toISOString() }
       VALUES(?,?,?,?,?,?,?,?)`).run(jobId,productId,stage,errorCode,message,retriable ? 1:0,JSON.stringify(details ?? {}),now());
   }
 
-  function markSessionBlocked(jobId,{ stopReason='SESSION_UNHEALTHY',message='Temu列表页未通过页面健康检查。',productIds=null }={}) {
+  function markSessionBlocked(jobId,{ stopReason='SESSION_UNHEALTHY',errorCode='SESSION_UNHEALTHY',message='Temu列表页未通过页面健康检查。',productIds=null }={}) {
     const timestamp=now();
     const filter=Array.isArray(productIds) && productIds.length
       ? ` AND product_id IN (${productIds.map(() => '?').join(',')})`
       : " AND (task_status='pending' OR stop_reason='PRODUCT_NOT_FOUND')";
-    const values=[stopReason,'SESSION_UNHEALTHY',message,timestamp,timestamp,jobId,...(productIds ?? [])];
+    const values=[stopReason,errorCode,message,timestamp,timestamp,jobId,...(productIds ?? [])];
     const result=db.prepare(`UPDATE review_capture_coverage SET task_status='blocked',crawl_completeness='blocked',
       stop_reason=?,error_code=?,error_message=?,updated_at=?,finished_at=? WHERE job_id=?${filter}`).run(...values);
     return Number(result.changes);

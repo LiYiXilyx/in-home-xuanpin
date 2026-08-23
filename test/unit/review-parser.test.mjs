@@ -25,7 +25,8 @@ test('goods id verification and ISO date validation are strict',() => {
 
 test('detail availability distinguishes a real product page from stale listing cards',() => {
   assert.equal(classifyDetailAvailability('This item is sold out. Check out similar items.'),'unavailable');
-  assert.equal(classifyDetailAvailability('Customer reviews\nAdd to cart'),'available');
+  assert.equal(classifyDetailAvailability('Customer reviews\nAdd to cart'),'unknown');
+  assert.equal(classifyDetailAvailability('Customer reviews',{ purchaseAction:true }),'available');
   assert.equal(classifyDetailAvailability('Temu navigation only'),'unknown');
 });
 

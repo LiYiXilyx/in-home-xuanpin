@@ -162,10 +162,16 @@ export async function validateListingDetailAvailability(listingPage,context,conf
       await page.goto(url,{ waitUntil:'domcontentloaded',timeout:30_000 });
       await page.waitForFunction(() => {
         const text=document.body?.innerText ?? '';
-        return /This item is sold out|items? (?:are|is) gone|Add to cart|Buy now|Customer reviews|Product reviews/i.test(text);
-      },null,{ timeout:8_000 }).catch(() => {});
-      const body=await page.locator('body').innerText({ timeout:5_000 }).catch(() => '');
-      const availability=classifyDetailAvailability(body);checked.push(availability);
+        const purchase=[...document.querySelectorAll('button,[role="button"]')].some(node =>
+          /^(?:add to (?:cart|bag)|buy now)$/i.test((node.textContent ?? '').trim()));
+        return /This item is sold out|items? (?:are|is) gone|currently unavailable|商品不存在|商品已下架|商品已售罄/i.test(text) || purchase;
+      },null,{ timeout:12_000 }).catch(() => {});
+      const detail=await page.evaluate(() => ({
+        body:document.body?.innerText ?? '',
+        purchaseAction:[...document.querySelectorAll('button,[role="button"]')].some(node =>
+          /^(?:add to (?:cart|bag)|buy now)$/i.test((node.textContent ?? '').trim()))
+      })).catch(() => ({ body:'',purchaseAction:false }));
+      const availability=classifyDetailAvailability(detail.body,{ purchaseAction:detail.purchaseAction });checked.push(availability);
       if (availability === 'available') return { ...health,detailAvailability:{ status:'available',checked } };
     } finally { await page.close().catch(() => {}); }
   }
@@ -176,10 +182,10 @@ export async function validateListingDetailAvailability(listingPage,context,conf
     detailAvailability:{ status:'unavailable',checked } };
 }
 
-export function classifyDetailAvailability(body) {
+export function classifyDetailAvailability(body,{ purchaseAction=false }={}) {
   const text=String(body ?? '');
   if (/This item is sold out|items? (?:are|is) gone|currently unavailable|商品不存在|商品已下架|商品已售罄/i.test(text)) return 'unavailable';
-  if (/Add to cart|Buy now|Customer reviews|Product reviews/i.test(text)) return 'available';
+  if (purchaseAction) return 'available';
   return 'unknown';
 }
 
