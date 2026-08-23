@@ -5,6 +5,14 @@ export function createRouter({ statusService,browserController,jobController,rev
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/browser-extension/')) return extensionCors(response,204);
+      if (request.method === 'GET' && url.pathname === '/api/browser-extension/context') {
+        return json(response,200,{ ok:true,context:reviewController.extensionContext(url.searchParams.get('goods_id')) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/browser-extension/capture-page') {
+        const body=await readJson(request,1_000_000);
+        return json(response,200,{ ok:true,result:reviewController.captureExtensionPage(body) },EXTENSION_CORS_HEADERS);
+      }
       if (request.method === 'GET' && url.pathname === '/api/status') return json(response,200,await statusService.snapshot());
       if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{ ok:true,environment:environment.name,testMode:environment.testMode });
       if (request.method === 'POST' && url.pathname === '/api/browser/open') return json(response,200,{ ok:true,...await browserController.open() });
@@ -39,16 +47,19 @@ export function createRouter({ statusService,browserController,jobController,rev
       return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });
     } catch (error) {
       logError(error?.stack ?? error);
-      return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } });
+      const headers=url.pathname.startsWith('/api/browser-extension/') ? EXTENSION_CORS_HEADERS:undefined;
+      return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } },headers);
     }
   };
 }
 
-async function readJson(request) {
+async function readJson(request,maxBytes=16_384) {
   let body='';
-  for await (const chunk of request) { body += chunk; if (body.length > 16_384) throw Object.assign(new Error('请求内容过大。'),{ code:'REQUEST_TOO_LARGE' }); }
+  for await (const chunk of request) { body += chunk; if (body.length > maxBytes) throw Object.assign(new Error('请求内容过大。'),{ code:'REQUEST_TOO_LARGE' }); }
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if (code === 'JOB_NOT_FOUND') return 404; if (code === 'BROWSER_JOB_CONFLICT') return 409; return 400; }
-function json(response,status,data) { response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' }); response.end(JSON.stringify(data)); }
+function statusFor(code) { if (code === 'JOB_NOT_FOUND') return 404; if (code === 'BROWSER_JOB_CONFLICT' || code === 'REVIEW_TASK_MISMATCH') return 409; return 400; }
+const EXTENSION_CORS_HEADERS=Object.freeze({ 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
+function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }
+function json(response,status,data,extraHeaders={}) { response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extraHeaders }); response.end(JSON.stringify(data)); }

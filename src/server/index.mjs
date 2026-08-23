@@ -5,6 +5,7 @@ import { loadConfig } from '../config/load.mjs';
 import { migrateDatabase } from '../db/migrate.mjs';
 import { openDatabase } from '../db/client.mjs';
 import { createJobRepository } from '../db/repositories/job-repository.mjs';
+import { createReviewRepository } from '../db/repositories/review-repository.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
 import { createBrowserController } from './controllers/browser-controller.mjs';
 import { createJobController } from './controllers/job-controller.mjs';
@@ -22,13 +23,14 @@ export async function createOperationsServer(options={}) {
   migrateDatabase({ databasePath:config.app.databasePath });
   const db=openDatabase(config.app.databasePath);
   const repository=createJobRepository(db);
+  const reviewRepository=createReviewRepository(db);
   const service=createJobService(repository);
   service.recoverInterrupted({ staleAfterMs:Number(config.browser.heartbeatTimeoutMs ?? 30_000) });
   const browserController=createBrowserController(config,options.browserDependencies);
   const exportController=createExportController({ config,repository,service,openTarget:options.openTarget,exportWorkbook:options.exportWorkbook });
   const testController=createTestController({ config,db,service,exportController });
   const jobController=createJobController({ config,repository,service,projectDir,runProcess:options.runProcess });
-  const reviewController=createReviewController({ config,repository,service,projectDir,runProcess:options.runProcess });
+  const reviewController=createReviewController({ config,db,repository,reviewRepository,service,projectDir,runProcess:options.runProcess });
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));

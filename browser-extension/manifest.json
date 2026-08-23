@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Temu 当前商品评论采集",
+  "version": "0.1.0",
+  "description": "仅采集用户当前打开且已匹配运营台 Day9 任务的 Temu 商品页评论。",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://www.temu.com/*",
+    "http://127.0.0.1:37821/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "采集当前商品评论",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
