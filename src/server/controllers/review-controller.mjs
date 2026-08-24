@@ -38,7 +38,12 @@ export function createReviewController({ config,db,repository,reviewRepository,s
       if (!ACTIVE_REVIEW_STATUSES.has(context.jobStatus)) throw new AppError('当前 Day9 评论任务已结束，不能接收页面评论。',{ code:'JOB_INVALID_TRANSITION' });
       const sourceUrl=validateTemuProductUrl(input.sourceUrl,goodsId);
       if (!Array.isArray(input.cards) || input.cards.length > 200) throw new AppError('评论页面数据格式无效或超过单页 200 条限制。',{ code:'INVALID_REVIEW_BATCH' });
-      const coverage=db.prepare('SELECT product_id AS productId FROM review_capture_coverage WHERE job_id=? AND goods_id=?').get(context.jobId,goodsId);
+      if (input.cards.length === 0) throw new AppError('当前页面没有可采集的评论。请打开商品评论区域后重试。',{ code:'REVIEW_CARDS_NOT_VISIBLE' });
+      let coverage=db.prepare('SELECT product_id AS productId,task_status AS taskStatus FROM review_capture_coverage WHERE job_id=? AND goods_id=?').get(context.jobId,goodsId);
+      if (!coverage) throw new AppError('当前商品没有评论采集覆盖记录。',{ code:'REVIEW_TASK_MISMATCH' });
+      const item=repository.listJobItems(context.jobId).find(candidate => Number(candidate.productId) === Number(coverage.productId));
+      if (coverage.taskStatus === 'pending') coverage=reviewRepository.startProduct(context.jobId,coverage.productId);
+      if (item?.status === 'pending') repository.transitionJobItem(context.jobId,item.itemKey,'running',{ checkpoint:{ source:'browser_extension',goodsId } });
       const parsed=input.cards.map(card => parseReviewCard(card,{ productId:coverage.productId,goodsId,sourceUrl }))
         .filter(result => result.valid && result.review.reviewDate >= context.cutoffDate);
       const invalidCount=input.cards.length-parsed.length;
@@ -46,10 +51,18 @@ export function createReviewController({ config,db,repository,reviewRepository,s
       const totals=db.prepare('SELECT COUNT(*) AS count,MIN(review_date) AS oldest,MAX(review_date) AS newest FROM reviews WHERE capture_job_id=? AND product_id=?')
         .get(context.jobId,coverage.productId);
       const pageIndex=Math.max(1,Number(input.pageIndex ?? context.pagesScanned+1));
+      const checkpoint={ source:'browser_extension',goodsId,pageIndex,cutoffDate:context.cutoffDate,reviewsCaptured:Number(totals.count) };
       reviewRepository.savePage(context.jobId,coverage.productId,{ pageIndex,reviewsCaptured:Number(totals.count),
-        newestReviewDate:totals.newest,oldestReviewDate:totals.oldest,checkpoint:{ source:'browser_extension',pageIndex,cutoffDate:context.cutoffDate } });
+        newestReviewDate:totals.newest,oldestReviewDate:totals.oldest,checkpoint });
+      if (item && repository.listJobItems(context.jobId).find(candidate => candidate.itemKey === item.itemKey)?.status === 'running') {
+        repository.checkpointJobItem(context.jobId,item.itemKey,checkpoint);
+      }
+      const job=repository.getJob(context.jobId);
+      const storedCount=Number(db.prepare('SELECT COUNT(*) AS count FROM reviews WHERE capture_job_id=?').get(context.jobId).count);
+      repository.updateCounts(context.jobId,{ totalItems:Number(job.totalItems ?? job.targetCount ?? 0),processedItems:Number(job.processedItems ?? 0),
+        successItems:Number(job.successItems ?? 0),failedItems:Number(job.failedItems ?? 0),discoveredCount:Number(job.discoveredCount ?? job.targetCount ?? 0),storedCount,errorCount:Number(job.errorCount ?? 0) });
       repository.appendEvent(context.jobId,'browser_extension_page_saved','info','浏览器扩展已保存当前商品页评论。',{
-        goodsId,pageIndex,received:input.cards.length,valid:parsed.length,invalid:invalidCount,inserted:saved.inserted,deduplicated:saved.deduplicated
+        goodsId,pageIndex,received:input.cards.length,valid:parsed.length,invalid:invalidCount,inserted:saved.inserted,deduplicated:saved.deduplicated,storedCount
       });
       return { goodsId,jobId:context.jobId,cutoffDate:context.cutoffDate,received:input.cards.length,valid:parsed.length,invalid:invalidCount,...saved };
     }

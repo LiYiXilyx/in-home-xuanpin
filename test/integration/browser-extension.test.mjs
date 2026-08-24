@@ -34,8 +34,15 @@ test('Day9.5 localhost API matches the current task and saves through the existi
   }] };
   response=await fetch(`${address.url}/api/browser-extension/capture-page`,{ method:'POST',headers:{ 'Content-Type':'application/json',Origin:'chrome-extension://fixture' },body:JSON.stringify(payload) });
   assert.equal(response.status,200);body=await response.json();assert.equal(body.result.inserted,1);assert.equal(body.result.valid,1);
+  assert.equal(app.repository.getJob(job.id).storedCount,1);
+  assert.equal(app.repository.listJobItems(job.id)[0].status,'running');
+  assert.equal(createReviewRepository(app.db).getCoverage(job.id,productId).taskStatus,'running');
   response=await fetch(`${address.url}/api/browser-extension/capture-page`,{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify(payload) });
   body=await response.json();assert.equal(body.result.inserted,0);assert.equal(body.result.deduplicated,1);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count,1);
+
+  response=await fetch(`${address.url}/api/browser-extension/capture-page`,{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ ...payload,pageIndex:2,cards:[] }) });
+  body=await response.json();assert.equal(response.status,400);assert.equal(body.error.code,'REVIEW_CARDS_NOT_VISIBLE');
   assert.equal(app.db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count,1);
 
   response=await fetch(`${address.url}/api/browser-extension/context?goods_id=999999`);body=await response.json();assert.equal(body.context.matched,false);

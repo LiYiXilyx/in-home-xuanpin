@@ -21,3 +21,13 @@ test('extension does not request or access browser secrets',() => {
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);
 });
+
+test('extension prompts the operator instead of submitting an empty review page',() => {
+  const script=fs.readFileSync(path.join(root,'browser-extension/content-script.js'),'utf8');
+  assert.match(script,/openVisibleReviews/);
+  assert.match(script,/hasReviewGuidelineDialog/);
+  assert.match(script,/collectDateBasedReviewCards/);
+  assert.match(script,/inferRatingText/);
+  assert.match(script,/未发现已显示的具体评论/);
+  assert.match(script,/See all \/ View all reviews/);
+});
