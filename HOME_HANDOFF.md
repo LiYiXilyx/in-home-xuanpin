@@ -15,6 +15,7 @@
 
 - Source: `data/temu_research_v2.db`
 - Consistent backup: `backups/day4-company-to-home-20260826-182721/temu_research_v2.db`
+- Portable handoff copy: `F:\temu选品\home-handoff\day4-company-to-home-20260826-182721\temu_research_v2.db`
 - Backup SHA-256: `66F7A46E36B0CC4C3F40EC00F09A61419E4C10755E995BE89B5E3BC5E8174192`
 - Backup integrity: `PRAGMA integrity_check = ok`
 - Products: `1669`
@@ -32,6 +33,7 @@ The earlier expected value `017` was the pre-Day4 maximum. Day4 requires and app
 - Campaign ID: `catalog_campaign_be0bb901472d4a6ca9bf05ca5e16eafa`
 - Queue ID: `catalog_rpa_2561f6dba10747c5a1f9b8863fad3634`
 - Excel: `backups/day4-company-to-home-20260826-182721/catalog-refresh-1000.xlsx`
+- Portable Excel: `F:\temu选品\home-handoff\day4-company-to-home-20260826-182721\catalog-refresh-1000.xlsx`
 - Excel QA: `backups/day4-company-to-home-20260826-182721/catalog-refresh-1000-qa.json`
 
 The SQLite database is authoritative. The workbook is a handoff/report artifact only.
