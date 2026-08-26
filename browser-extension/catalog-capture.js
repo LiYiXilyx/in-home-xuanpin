@@ -70,5 +70,6 @@
   }
 
   globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,splitCards,aggregateResults,MAX_CARDS_PER_BATCH });
-  installButton();
+  const visibleCards=globalThis.TemuCatalogParser?.parseDocument(document,{ baseUrl:location.href }) ?? [];
+  if (visibleCards.length) installButton();
 })();

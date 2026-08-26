@@ -2,6 +2,7 @@
 
 const BUTTON_ID='temu-current-review-capture-button';
 let captureRunning=false;
+let safetySignalReported=false;
 
 function currentPage() {
   const goodsId=extractGoodsId(location.href);
@@ -88,6 +89,25 @@ function installCaptureButton() {
   document.documentElement.append(button);
 }
 
+async function reportStrongReviewSafetySignal() {
+  if (location.hostname !== 'www.temu.com' || safetySignalReported) return;
+  const bodyText=(document.body?.innerText ?? '').slice(0,12000);let code=null;
+  if (/Oops! The items are gone\.|Try again to find items/i.test(bodyText)) code='ITEMS_GONE';
+  else if (/bgn_verification|captcha|verify you are human|security verification/i.test(`${location.href}\n${bodyText}`)) code='CAPTCHA';
+  else if (/\/login\.html/i.test(location.pathname)) code='LOGIN_REQUIRED';
+  if (!code) return;
+  safetySignalReported=true;
+  try {
+    const current=await sendRuntimeMessage({ type:'GET_REVIEW_QUEUE_CURRENT' });const item=current?.result?.item;
+    if (!item || !['opening','waiting_operator','capturing'].includes(item.status)) return;
+    const reported=await sendRuntimeMessage({ type:'REPORT_REVIEW_SAFETY',payload:{ queueId:item.id,goodsId:item.goodsId,code,
+      evidence:{ url:location.href,pageTitle:document.title,source:'business_extension' } } });
+    if (reported?.ok !== false) {
+      showOperatorNotice('Review 导航已安全熔断：等待冷却并完成人工恢复检查。',true);
+    }
+  } catch { safetySignalReported=false; }
+}
+
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
   if (message?.type === 'GET_CURRENT_PAGE') {
     sendResponse(currentPage());
@@ -104,4 +124,5 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
   return true;
 });
 
-installCaptureButton();
+if (currentPage().isTemuProductPage) installCaptureButton();
+setTimeout(reportStrongReviewSafetySignal,1500);

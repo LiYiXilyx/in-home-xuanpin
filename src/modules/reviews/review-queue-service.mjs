@@ -1,7 +1,9 @@
 import { AppError } from '../../shared/errors.mjs';
 import { resolveFreshNavigation,verifyFreshDetail } from './fresh-navigation-resolver.mjs';
+import { createReviewNavigationSafety } from './review-navigation-safety.mjs';
 
-export function createReviewQueueService({ db,jobRepository,queueRepository,navigationRepository }) {
+export function createReviewQueueService({ db,jobRepository,queueRepository,navigationRepository,config={},now }) {
+  const safety=createReviewNavigationSafety({ jobRepository,config,now });
   function enqueue({ jobId,goodsIds }) {
     const job=requireReviewJob(jobRepository,jobId);
     const ids=[...new Set((goodsIds ?? []).map(value => String(value).trim()).filter(value => /^\d+$/.test(value)))];
@@ -19,14 +21,20 @@ export function createReviewQueueService({ db,jobRepository,queueRepository,navi
 
   function claimNext({ jobId }) {
     requireReviewJob(jobRepository,jobId);
+    safety.beforeClaim(jobId);
     const item=queueRepository.claimNext(jobId);
-    if (item) jobRepository.appendEvent(jobId,'review_queue_item_opening','info','影刀已领取下一件商品。',{ queueId:item.id,goodsId:item.goodsId });
+    if (item) {
+      safety.recordClaim(jobId,{ queueId:item.id,goodsId:item.goodsId });
+      jobRepository.appendEvent(jobId,'review_queue_item_opening','info','影刀已领取下一件商品。',{ queueId:item.id,goodsId:item.goodsId });
+    }
     return { jobId,item:claimItem(item),counts:queueRepository.counts(jobId) };
   }
 
   function resolveNavigation({ id,goodsId,sourcePageUrl,currentCategoryCards=[],siteSearchCards=[],allowFallback=false }) {
     const item=requireQueueItem(queueRepository,id,goodsId);
     if (!['opening','pending'].includes(item.status)) throw new AppError('当前队列项不在导航解析阶段。',{ code:'REVIEW_QUEUE_INVALID_TRANSITION' });
+    safety.beforeNavigation(item.jobId,{ queueId:item.id,goodsId:item.goodsId,
+      method:siteSearchCards.length ? 'SITE_SEARCH_CARD':'CURRENT_CATEGORY_CARD' });
     const product=db.prepare(`SELECT source_url AS historicalSourceUrl,canonical_url AS canonicalUrl
       FROM products WHERE id=? AND platform='temu'`).get(item.productId);
     const resolution=resolveFreshNavigation({ goodsId:item.goodsId,currentCategoryCards,siteSearchCards,
@@ -83,6 +91,27 @@ export function createReviewQueueService({ db,jobRepository,queueRepository,navi
     return updated;
   }
 
+  function signalSafety({ id,goodsId,code,evidence }) {
+    const item=requireQueueItem(queueRepository,id,goodsId);
+    const result=safety.signal(item.jobId,{ queueId:item.id,goodsId:item.goodsId,code,evidence });
+    queueRepository.transition(item.id,item.status,{ checkpoint:{ safetyGate:{ opened:true,reason:result.state.reason,
+      openedAt:result.state.openedAt,cooldownUntil:result.state.cooldownUntil,manualRecoveryRequired:true } } });
+    return { jobId:item.jobId,item:publicQueueItem(queueRepository.get(item.id)),...result };
+  }
+
+  function safetyStatus({ jobId }) { return { jobId,...safety.status(jobId) }; }
+  function recoverSafety({ jobId,operatorConfirmed,health,overrideCooldown,overrideReason }) {
+    const result=safety.recover(jobId,{ operatorConfirmed,health,overrideCooldown,overrideReason });
+    for (const item of queueRepository.list(jobId)) {
+      if (item.checkpoint?.safetyGate) queueRepository.transition(item.id,item.status,{ checkpoint:{ safetyGate:null } });
+    }
+    return { jobId,...result };
+  }
+  function current() {
+    const item=queueRepository.current();
+    return { item:publicQueueItem(item),safety:item ? safety.status(item.jobId):null };
+  }
+
   function list({ jobId }) { requireReviewJob(jobRepository,jobId);return { jobId,items:queueRepository.list(jobId).map(publicQueueItem),counts:queueRepository.counts(jobId),navigationResolutions:navigationRepository.list(jobId) }; }
   function get({ id }) {
     const item=queueRepository.get(String(id ?? ''));
@@ -90,7 +119,7 @@ export function createReviewQueueService({ db,jobRepository,queueRepository,navi
     requireReviewJob(jobRepository,item.jobId);
     return { item:publicQueueItem(item),navigationResolution:navigationRepository.latest(item.jobId,item.goodsId),terminal:['completed','failed'].includes(item.status) };
   }
-  return { enqueue,claimNext,resolveNavigation,verifyNavigation,markWaitingOperator,fail,retry,list,get };
+  return { enqueue,claimNext,resolveNavigation,verifyNavigation,markWaitingOperator,fail,retry,list,get,current,signalSafety,safetyStatus,recoverSafety };
 }
 
 function requireReviewJob(repository,jobId) {

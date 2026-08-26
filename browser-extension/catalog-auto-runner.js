@@ -238,9 +238,15 @@
     const id='temu-catalog-auto-runner';if (document.getElementById(id)) return;
     const panel=document.createElement('div');panel.id=id;
     Object.assign(panel.style,{ all:'initial',position:'fixed',right:'18px',bottom:'150px',zIndex:'2147483647',width:'370px',boxSizing:'border-box',padding:'14px',borderRadius:'12px',background:'#102a43',color:'#fff',font:'14px/1.45 system-ui,"Microsoft YaHei",sans-serif',boxShadow:'0 8px 28px rgba(0,0,0,.35)' });
+    const launcher=document.createElement('button');launcher.id=`${id}-launcher`;launcher.type='button';launcher.textContent='Catalog';
+    Object.assign(launcher.style,{ all:'initial',position:'fixed',right:'18px',bottom:'122px',zIndex:'2147483647',padding:'7px 11px',borderRadius:'7px',background:'#102a43',color:'#fff',font:'700 13px/1.2 system-ui,sans-serif',cursor:'pointer',boxShadow:'0 3px 12px rgba(0,0,0,.25)' });
     const header=document.createElement('div');Object.assign(header.style,{ display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px' });
     const title=document.createElement('div');title.textContent='Catalog 1000 刷新';Object.assign(title.style,{ fontWeight:'800',fontSize:'17px' });
-    const badge=document.createElement('span');Object.assign(badge.style,{ padding:'3px 8px',borderRadius:'999px',fontWeight:'700',fontSize:'12px',background:'#64748b' });header.append(title,badge);
+    const badge=document.createElement('span');Object.assign(badge.style,{ padding:'3px 8px',borderRadius:'999px',fontWeight:'700',fontSize:'12px',background:'#64748b' });
+    const collapseButton=document.createElement('button');collapseButton.type='button';collapseButton.textContent='收起';collapseButton.title='收起 Catalog 面板';
+    Object.assign(collapseButton.style,{ all:'initial',padding:'3px 7px',borderRadius:'5px',background:'#334e68',color:'#fff',font:'700 12px/1.2 system-ui,sans-serif',cursor:'pointer' });
+    const setCollapsed=collapsed => { panel.style.display=collapsed?'none':'block';launcher.style.display=collapsed?'block':'none'; };
+    collapseButton.addEventListener('click',() => setCollapsed(true));launcher.addEventListener('click',() => setCollapsed(false));header.append(title,badge,collapseButton);
     const progressText=document.createElement('div');Object.assign(progressText.style,{ marginTop:'11px',fontSize:'22px',fontWeight:'800' });
     const track=document.createElement('div');Object.assign(track.style,{ height:'10px',margin:'6px 0 10px',borderRadius:'999px',background:'rgba(255,255,255,.2)',overflow:'hidden' });
     const bar=document.createElement('div');Object.assign(bar.style,{ height:'100%',width:'0%',background:'#22c55e',transition:'width .25s ease' });track.append(bar);
@@ -260,7 +266,8 @@
       startButton.disabled=value.state!==STATES.IDLE;pauseButton.disabled=!active;resumeButton.disabled=![STATES.PAUSED,STATES.MANUAL_REQUIRED,STATES.FAILED].includes(value.state);stopButton.disabled=value.state===STATES.IDLE;
       for(const button of [startButton,pauseButton,resumeButton,stopButton])button.style.opacity=button.disabled?'.45':'1';resumeButton.style.background=resumeButton.disabled?'#e2e8f0':'#22c55e';
     });
-    panel.append(header,progressText,track,details,notice,controls);document.documentElement.append(panel);
+    panel.append(header,progressText,track,details,notice,controls);document.documentElement.append(panel,launcher);
+    setCollapsed(location.pathname==='/' || /-g-\d+\.html/i.test(location.pathname) || /(?:login|sign[-_]?in|register|verification)/i.test(location.pathname));
   }
 
   const module=Object.freeze({ CatalogAutoRunner,STATES,difference,scanDom,findLoadControl,waitForProgress,uiSummary,humanAction });

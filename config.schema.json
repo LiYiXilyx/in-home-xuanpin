@@ -103,7 +103,19 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "maxPagesPerProduct": { "type": "integer", "minimum": 1 },
-        "negativeMaxRating": { "type": "number", "minimum": 1, "maximum": 5 }
+        "negativeMaxRating": { "type": "number", "minimum": 1, "maximum": 5 },
+        "navigationSafety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "cooldownMs", "minimumNavigationIntervalMs", "maxNavigationAttemptsPerSession", "maxProductsPerSession"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "cooldownMs": { "type": "integer", "minimum": 0 },
+            "minimumNavigationIntervalMs": { "type": "integer", "minimum": 0 },
+            "maxNavigationAttemptsPerSession": { "type": "integer", "minimum": 1 },
+            "maxProductsPerSession": { "type": "integer", "minimum": 1 }
+          }
+        }
       }
     }
   }

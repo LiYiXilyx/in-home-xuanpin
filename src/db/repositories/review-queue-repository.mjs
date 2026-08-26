@@ -16,11 +16,13 @@ export function createReviewQueueRepository(db,{ now=() => new Date().toISOStrin
     const timestamp=now();
     transaction(db,() => {
       const insert=db.prepare(`INSERT INTO review_queue(
-        id,job_id,product_id,goods_id,source_url,status,created_at,updated_at
-      ) VALUES(?,?,?,?,?,'pending',?,?)
+        id,job_id,product_id,goods_id,source_url,status,checkpoint_json,created_at,updated_at
+      ) VALUES(?,?,?,?,?,'pending',?,?,?)
       ON CONFLICT(job_id,product_id) DO UPDATE SET
-        goods_id=excluded.goods_id,source_url=excluded.source_url,updated_at=excluded.updated_at`);
-      for (const item of items) insert.run(createId('review_queue'),jobId,item.productId,item.goodsId,item.sourceUrl,timestamp,timestamp);
+        goods_id=excluded.goods_id,source_url=excluded.source_url,
+        checkpoint_json=excluded.checkpoint_json,updated_at=excluded.updated_at`);
+      for (const item of items) insert.run(createId('review_queue'),jobId,item.productId,item.goodsId,item.sourceUrl,
+        JSON.stringify(item.checkpoint ?? {}),timestamp,timestamp);
     });
     return list(jobId);
   }
@@ -41,19 +43,25 @@ export function createReviewQueueRepository(db,{ now=() => new Date().toISOStrin
   function transition(id,nextStatus,{ errorCode=null,errorMessage=null,checkpoint }={}) {
     const current=get(id);
     if (!current) throw new AppError('评论队列项不存在。',{ code:'REVIEW_QUEUE_NOT_FOUND' });
-    if (current.status === nextStatus) return current;
+    if (current.status === nextStatus) {
+      if (checkpoint === undefined) return current;
+      const timestamp=now();const mergedCheckpoint=JSON.stringify({ ...current.checkpoint,...checkpoint });
+      db.prepare('UPDATE review_queue SET checkpoint_json=?,updated_at=? WHERE id=?').run(mergedCheckpoint,timestamp,id);
+      return get(id);
+    }
     if (!TRANSITIONS[current.status]?.includes(nextStatus)) throw new AppError(
       `评论队列状态 ${current.status} 不允许转为 ${nextStatus}。`,
       { code:'REVIEW_QUEUE_INVALID_TRANSITION',details:{ id,currentStatus:current.status,nextStatus } }
     );
     const timestamp=now();
+    const mergedCheckpoint=checkpoint === undefined ? null:JSON.stringify({ ...current.checkpoint,...checkpoint });
     db.prepare(`UPDATE review_queue SET status=?,
       capture_started_at=CASE WHEN ?='capturing' THEN COALESCE(capture_started_at,?) ELSE capture_started_at END,
       completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,
       failed_at=CASE WHEN ?='failed' THEN ? ELSE NULL END,
       error_code=?,error_message=?,checkpoint_json=COALESCE(?,checkpoint_json),updated_at=? WHERE id=?`)
       .run(nextStatus,nextStatus,timestamp,nextStatus,timestamp,nextStatus,timestamp,errorCode,errorMessage,
-        checkpoint === undefined ? null:JSON.stringify(checkpoint),timestamp,id);
+        mergedCheckpoint,timestamp,id);
     return get(id);
   }
 

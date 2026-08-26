@@ -60,6 +60,11 @@ export function createRouter({ statusService,browserController,jobController,rev
         return json(response,200,{ ok:true,result:reviewQueueController.enqueue(body) },EXTENSION_CORS_HEADERS);
       }
       if (request.method === 'GET' && url.pathname === '/api/rpa/review-queue') return json(response,200,{ ok:true,result:reviewQueueController.list(url.searchParams.get('job_id')) },EXTENSION_CORS_HEADERS);
+      if (request.method === 'GET' && url.pathname === '/api/rpa/review-queue/current') return json(response,200,{ ok:true,result:reviewQueueController.current() },EXTENSION_CORS_HEADERS);
+      if (request.method === 'GET' && url.pathname === '/api/rpa/review-safety') return json(response,200,{ ok:true,result:reviewQueueController.safetyStatus(url.searchParams.get('job_id')) },EXTENSION_CORS_HEADERS);
+      if (request.method === 'POST' && url.pathname === '/api/rpa/review-safety/recover') {
+        const body=await readJson(request);return json(response,200,{ ok:true,result:reviewQueueController.recoverSafety(body) },EXTENSION_CORS_HEADERS);
+      }
       const queueItem=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)$/);
       if (request.method === 'GET' && queueItem) return json(response,200,{ ok:true,result:reviewQueueController.get(decodeURIComponent(queueItem[1])) },EXTENSION_CORS_HEADERS);
       if (request.method === 'POST' && url.pathname === '/api/rpa/review-queue/claim-next') {
@@ -71,6 +76,10 @@ export function createRouter({ statusService,browserController,jobController,rev
         const body=await readJson(request,256_000);const id=decodeURIComponent(navigationAction[1]);
         const result=navigationAction[2] === 'resolve' ? reviewQueueController.resolveNavigation(id,body):reviewQueueController.verifyNavigation(id,body);
         return json(response,200,{ ok:true,result },EXTENSION_CORS_HEADERS);
+      }
+      const safetySignal=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)\/safety\/signal$/);
+      if (request.method === 'POST' && safetySignal) {
+        const body=await readJson(request);return json(response,200,{ ok:true,result:reviewQueueController.signalSafety(decodeURIComponent(safetySignal[1]),body) },EXTENSION_CORS_HEADERS);
       }
       const queueAction=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)\/(waiting-operator|fail|retry)$/);
       if (request.method === 'POST' && queueAction) {

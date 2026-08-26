@@ -119,6 +119,15 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
     return getJob(id);
   }
 
+  function checkpointJob(id, checkpoint) {
+    const job=requireJob(id);
+    if (TERMINAL_STATUSES.has(job.status) || job.status === 'failed') throw invalidState(job.status,'checkpoint');
+    const timestamp=now();
+    db.prepare('UPDATE crawl_jobs SET checkpoint_json=?,updated_at=? WHERE id=?')
+      .run(stringify(checkpoint ?? {}),timestamp,id);
+    return getJob(id);
+  }
+
   function updateCounts(id, counts = {}) {
     requireJob(id);
     const current = getJob(id);
@@ -240,7 +249,7 @@ export function createJobRepository(db, { now = () => new Date().toISOString() }
   }
 
   return {
-    createJob, getJob, listJobs, startJob, transitionJob, requestPause, requestCancel, heartbeat,
+    createJob, getJob, listJobs, startJob, transitionJob, requestPause, requestCancel, heartbeat, checkpointJob,
     updateCounts, updateSourceUrl, recoverInterruptedJobs, appendEvent, listEvents, upsertJobItem, listJobItems,
     listRetriableFailedJobItems, transitionJobItem, checkpointJobItem, getControlState
   };

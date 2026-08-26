@@ -62,6 +62,14 @@ export function validateConfig(config) {
   }
   finiteNumber(config.reviews.negativeMaxRating, 'reviews.negativeMaxRating');
   positiveInteger(config.reviews.maxPagesPerProduct,'reviews.maxPagesPerProduct');
+  requireObject(config.reviews.navigationSafety,'reviews.navigationSafety');
+  if (typeof config.reviews.navigationSafety.enabled !== 'boolean') fail('reviews.navigationSafety.enabled','必须是布尔值');
+  for (const field of ['cooldownMs','minimumNavigationIntervalMs']) {
+    finiteNumber(config.reviews.navigationSafety[field],`reviews.navigationSafety.${field}`);
+    if (config.reviews.navigationSafety[field] < 0) fail(`reviews.navigationSafety.${field}`,'不能小于 0');
+  }
+  positiveInteger(config.reviews.navigationSafety.maxNavigationAttemptsPerSession,'reviews.navigationSafety.maxNavigationAttemptsPerSession');
+  positiveInteger(config.reviews.navigationSafety.maxProductsPerSession,'reviews.navigationSafety.maxProductsPerSession');
   if (config.reviews.negativeMaxRating < 1 || config.reviews.negativeMaxRating > 5) {
     fail('reviews.negativeMaxRating', '必须在 1 到 5 之间');
   }

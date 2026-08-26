@@ -23,12 +23,18 @@ export function createAnalysisRepository(db) {
       return String(row.taxonomy);
     },
 
-    inputCounts(sourceJobId) {
+    inputCounts(sourceJobId,taxonomy=null) {
       return normalizeCountRow(db.prepare(`SELECT
         COUNT(*) AS active_memberships,
         COUNT(DISTINCT product_id) AS active_products,
-        SUM(CASE WHEN last_job_id=? THEN 1 ELSE 0 END) AS source_job_memberships
-        FROM catalog_memberships WHERE active=1`).get(sourceJobId));
+        SUM(CASE WHEN last_job_id=@sourceJobId THEN 1 ELSE 0 END) AS source_job_memberships,
+        COUNT(DISTINCT CASE WHEN EXISTS (
+          SELECT 1 FROM product_classifications pc
+          WHERE pc.product_id=catalog_memberships.product_id
+            AND pc.job_id=@sourceJobId
+            AND (@taxonomy IS NULL OR pc.taxonomy=@taxonomy)
+        ) THEN product_id END) AS source_job_classifications
+        FROM catalog_memberships WHERE active=1`).get({ sourceJobId,taxonomy }));
     },
 
     coreCounts() {
@@ -62,10 +68,10 @@ export function createAnalysisRepository(db) {
             ORDER BY pi.updated_at DESC,pi.id DESC LIMIT 1) AS image_sha256
         FROM active_membership m
         JOIN products p ON p.id=m.product_id
-        JOIN product_snapshots s ON s.product_id=p.id AND s.job_id=?
+        JOIN product_snapshots s ON s.product_id=p.id AND s.job_id=m.last_job_id
         LEFT JOIN classifications c ON c.product_id=p.id AND c.row_number=1
-        WHERE m.row_number=1 AND m.last_job_id=?
-        ORDER BY m.current_rank,p.id`).all(sourceJobId,taxonomy,sourceJobId,sourceJobId).map(normalizeProduct);
+        WHERE m.row_number=1
+        ORDER BY m.current_rank,p.id`).all(sourceJobId,taxonomy).map(normalizeProduct);
     },
 
     createRun(run) {
@@ -143,7 +149,8 @@ function normalizeProduct(row) {
 function normalizeCountRow(row) {
   return {
     activeMemberships:Number(row.active_memberships),activeProducts:Number(row.active_products),
-    sourceJobMemberships:Number(row.source_job_memberships)
+    sourceJobMemberships:Number(row.source_job_memberships),
+    sourceJobClassifications:Number(row.source_job_classifications)
   };
 }
 

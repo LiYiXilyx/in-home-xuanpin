@@ -30,8 +30,8 @@ export async function runMarketAnalysis(config,options={}) {
   try {
     const sourceCatalogJobId=repository.resolveSourceJobId(options.jobId ?? DEFAULT_SOURCE_JOB_ID);
     const taxonomy=repository.resolveTaxonomy(sourceCatalogJobId,options.taxonomy);
-    const counts=repository.inputCounts(sourceCatalogJobId);
-    if (counts.activeMemberships !== expectedActiveCount || counts.activeProducts !== expectedActiveCount || counts.sourceJobMemberships !== expectedActiveCount) {
+    const counts=repository.inputCounts(sourceCatalogJobId,taxonomy);
+    if (counts.activeMemberships !== expectedActiveCount || counts.activeProducts !== expectedActiveCount || counts.sourceJobClassifications !== expectedActiveCount) {
       throw new Error(`Day8输入不是恰好${expectedActiveCount}个Gate D active商品：${JSON.stringify(counts)}`);
     }
     const coreCountsBefore=repository.coreCounts();

@@ -11,7 +11,7 @@ export async function runMarketAnalysisQa(config,{ runId=null,workbookPath=null,
   const queuePath=path.join(outputDir,'day9-fine-classification-queue.json');
   const db=openDatabase(config.app.databasePath,{ readOnly:true });
   let run,metrics,products,counts,coreCounts;
-  try { const repository=createAnalysisRepository(db);run=repository.getRun(runId);if (!run) throw new Error(runId ? `未找到市场分析run：${runId}` : '没有已完成的市场分析run。');metrics=repository.listCategoryMetrics(run.id);products=repository.listActiveProducts(run.sourceCatalogJobId,run.taxonomy);counts=repository.inputCounts(run.sourceCatalogJobId);coreCounts=repository.coreCounts(); }
+  try { const repository=createAnalysisRepository(db);run=repository.getRun(runId);if (!run) throw new Error(runId ? `未找到市场分析run：${runId}` : '没有已完成的市场分析run。');metrics=repository.listCategoryMetrics(run.id);products=repository.listActiveProducts(run.sourceCatalogJobId,run.taxonomy);counts=repository.inputCounts(run.sourceCatalogJobId,run.taxonomy);coreCounts=repository.coreCounts(); }
   finally { db.close(); }
   assertFiniteTree({ metrics,products },'marketQa');
   const businessSummary=run.config?.businessSummary ?? {};
@@ -39,9 +39,9 @@ export async function runMarketAnalysisQa(config,{ runId=null,workbookPath=null,
   const fineSheetCheck=!String(run.taxonomy).startsWith('week2-motorcycle-fine') || (workbook.worksheets.getItem('细分类分析').getUsedRange(true)?.values?.length > 1 && workbook.worksheets.getItem('人工复核队列').getUsedRange(true)?.values?.[0]?.includes('unresolved_reason'));
   const checks={
     expectedActiveProducts:counts.activeProducts === expectedActiveCount && products.length === expectedActiveCount,
-    activeMembershipsExact:counts.activeMemberships === expectedActiveCount && counts.sourceJobMemberships === expectedActiveCount,
+    activeMembershipsExact:counts.activeMemberships === expectedActiveCount && counts.sourceJobClassifications === expectedActiveCount,
     uniqueGoodsIds:new Set(products.map(item => item.goodsId)).size === expectedActiveCount && new Set(goodsIds).size === expectedActiveCount,
-    noInactiveProducts:products.length === counts.activeProducts && counts.sourceJobMemberships === counts.activeMemberships,
+    noInactiveProducts:products.length === counts.activeProducts,
     categoryDatabaseTotal:dbCategoryCount === expectedActiveCount,categoryExcelTotal:excelCategoryCount === expectedActiveCount,
     categorySummaryMatchesDetail:excelMatchesDatabase && categoryRows.length === metrics.length,
     businessFieldsPresent,businessCountsMatch,
@@ -55,7 +55,7 @@ export async function runMarketAnalysisQa(config,{ runId=null,workbookPath=null,
     excelProductRows:productRows.length === expectedActiveCount,productCategoriesPresent:productRows.every(row => String(row[indexes['分类']] ?? '').trim()),formulaErrors:formulaErrorCount === 0,
     productsUnchanged:coreCounts.products === Number(coreBefore.products),membershipsUnchanged:coreCounts.catalog_memberships === Number(coreBefore.catalog_memberships),snapshotsUnchanged:coreCounts.product_snapshots === Number(coreBefore.product_snapshots),activePoolUnchanged:coreCounts.activeMemberships === Number(coreBefore.activeMemberships)
   };
-  const report={ pass:Object.values(checks).every(Boolean),runId:run.id,workbookPath:resolvedWorkbook,checks,counts:{ databaseActiveProducts:counts.activeProducts,databaseActiveMemberships:counts.activeMemberships,sourceJobMemberships:counts.sourceJobMemberships,excelProductRows:productRows.length,uniqueGoodsIds:new Set(goodsIds).size,databaseCategoryTotal:dbCategoryCount,excelCategoryTotal:excelCategoryCount,categoryRows:categoryRows.length,formulaErrorCount,businessSummary,excelBusiness,fineClassificationQueueCount:queue.count,coreBefore,coreAfter:coreCounts,embeddedImages:productSheet.images.items.length } };
+  const report={ pass:Object.values(checks).every(Boolean),runId:run.id,workbookPath:resolvedWorkbook,checks,counts:{ databaseActiveProducts:counts.activeProducts,databaseActiveMemberships:counts.activeMemberships,sourceJobMemberships:counts.sourceJobMemberships,sourceJobClassifications:counts.sourceJobClassifications,excelProductRows:productRows.length,uniqueGoodsIds:new Set(goodsIds).size,databaseCategoryTotal:dbCategoryCount,excelCategoryTotal:excelCategoryCount,categoryRows:categoryRows.length,formulaErrorCount,businessSummary,excelBusiness,fineClassificationQueueCount:queue.count,coreBefore,coreAfter:coreCounts,embeddedImages:productSheet.images.items.length } };
   const reportPath=path.join(outputDir,'market-analysis-qa.json');await fs.mkdir(outputDir,{ recursive:true });await fs.writeFile(reportPath,JSON.stringify(report,null,2),'utf8');
   if (!report.pass) throw Object.assign(new Error(`market:qa 失败：${JSON.stringify(checks)}`),{ report,reportPath });return { ...report,reportPath };
 }

@@ -18,7 +18,8 @@ End If
 
 ' This profile is intentionally separate from daily Chrome and never copied from another profile.
 ' It opens a neutral page only; the operator navigates Temu and completes login or CAPTCHA manually.
-chromeCommand = """" & chromePath & """ --remote-debugging-port=" & cdpPort & " --remote-debugging-address=127.0.0.1 --user-data-dir="""" & operatorProfile & """ --lang=en-DE --no-first-run --no-default-browser-check --new-window about:blank"
+quote = Chr(34)
+chromeCommand = quote & chromePath & quote & " --remote-debugging-port=" & cdpPort & " --remote-debugging-address=127.0.0.1 --user-data-dir=" & quote & operatorProfile & quote & " --lang=en-DE --no-first-run --no-default-browser-check --new-window about:blank"
 shell.Run chromeCommand, 1, False
 
 Function FindChrome()

@@ -30,6 +30,7 @@ test('market analysis reads only active products, records explicit runs, exports
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM category_metrics').get().count,6);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM products WHERE external_product_id='inactive'").get().count,1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM product_snapshots WHERE product_id=(SELECT id FROM products WHERE external_product_id='inactive')").get().count,1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM catalog_memberships WHERE active=1 AND last_job_id='job-test'").get().count,3);
   } finally { db.close(); }
   const { FileBlob,SpreadsheetFile }=await loadArtifactTool();
   const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(second.workbookPath));
@@ -52,6 +53,8 @@ function seed(databasePath) {
   try {
     db.prepare(`INSERT INTO crawl_jobs(id,job_type,status,target_count,config_json,requested_at,created_at,updated_at,started_at,finished_at)
       VALUES('job-test','catalog','completed',6,'{}','2026-08-21','2026-08-21','2026-08-21','2026-08-21','2026-08-21')`).run();
+    db.prepare(`INSERT INTO crawl_jobs(id,job_type,status,target_count,config_json,requested_at,created_at,updated_at,started_at,finished_at)
+      VALUES('job-refresh','catalog','completed',3,'{}','2026-08-22','2026-08-22','2026-08-22','2026-08-22','2026-08-22')`).run();
     const insertProduct=db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,source_url,title,status,first_seen_at,last_seen_at)
       VALUES('temu',?,?,?,?, 'active','2026-08-21','2026-08-21')`);
     const insertMembership=db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,primary_category,subcategory,
@@ -71,6 +74,10 @@ function seed(databasePath) {
       const category=categories[index];const needsReview=category === '其他' || index === 2 ? 1 : 0;
       insertClassification.run(productId,category === '其他' ? 'other' : `c${index}`,category,needsReview ? 0.35 : 0.8,needsReview,category);
     }
+    db.prepare("UPDATE catalog_memberships SET last_job_id='job-refresh' WHERE product_id IN (SELECT id FROM products WHERE external_product_id IN ('g4','g5','g6'))").run();
+    db.prepare(`INSERT INTO product_snapshots(job_id,product_id,captured_at,source_url,title,price_amount,currency,sales_count,rating,review_count,listing_rank)
+      SELECT 'job-refresh',product_id,'2026-08-22',source_url,title,price_amount,currency,sales_count,rating,review_count,listing_rank
+      FROM product_snapshots WHERE job_id='job-test' AND product_id IN (SELECT id FROM products WHERE external_product_id IN ('g4','g5','g6'))`).run();
     const inactiveId=Number(insertProduct.run('inactive','https://www.temu.com/goods.html?goods_id=inactive','https://www.temu.com/goods.html?goods_id=inactive','Inactive Product').lastInsertRowid);
     insertMembership.run(inactiveId,7,0);
     insertSnapshot.run(inactiveId,'https://www.temu.com/goods.html?goods_id=inactive','Inactive Product',999,99999,5,9999,7);

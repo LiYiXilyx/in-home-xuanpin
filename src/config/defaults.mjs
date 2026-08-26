@@ -76,7 +76,14 @@ export const DEFAULT_CONFIG = Object.freeze({
     pilotFullHistory: true,
     fastGrowthRatio: 1.5,
     sessionControlGoodsIds: [],
-    sessionRecoveryMinimumAvailable: 2
+    sessionRecoveryMinimumAvailable: 2,
+    navigationSafety: {
+      enabled: false,
+      cooldownMs: 3600000,
+      minimumNavigationIntervalMs: 15000,
+      maxNavigationAttemptsPerSession: 15,
+      maxProductsPerSession: 5
+    }
   }
 });
 

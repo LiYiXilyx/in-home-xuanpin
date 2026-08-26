@@ -98,6 +98,8 @@ function coerceNumbers(config) {
     [config.browser, 'maxStaleRounds'], [config.browser, 'maxReviewPages'],
     [config.reviews, 'negativeMaxRating'], [config.reviews, 'maxPagesPerProduct'], [config.reviews, 'pilotBatchSize'],
     [config.reviews, 'minimumPilotSuccess'], [config.reviews, 'fastGrowthRatio'], [config.reviews, 'sessionRecoveryMinimumAvailable'],
+    [config.reviews.navigationSafety, 'cooldownMs'], [config.reviews.navigationSafety, 'minimumNavigationIntervalMs'],
+    [config.reviews.navigationSafety, 'maxNavigationAttemptsPerSession'], [config.reviews.navigationSafety, 'maxProductsPerSession'],
     [config.fineClassification.ai, 'timeoutMs']
   ];
   for (const [owner, field] of fields) owner[field] = Number(owner[field]);
