@@ -1,11 +1,22 @@
 import { operatorMessage } from './status-service.mjs';
 
-export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,exportController,testController,serveStatic,
+export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
       if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
+      if (request.method === 'GET' && url.pathname === '/api/catalog/context') {
+        return json(response,200,{ ok:true,context:catalogController.context(url.searchParams) },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog/batches') {
+        const body=await readJson(request,1_000_000);
+        return json(response,200,{ ok:true,result:catalogController.captureBatch(body) },CATALOG_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/catalog/status') {
+        return json(response,200,{ ok:true,result:catalogController.status(url.searchParams) },CATALOG_HEADERS);
+      }
       if (request.method === 'GET' && url.pathname === '/api/browser-extension/context') {
         return json(response,200,{ ok:true,context:reviewController.extensionContext(url.searchParams.get('goods_id')) },EXTENSION_CORS_HEADERS);
       }
@@ -82,7 +93,8 @@ export function createRouter({ statusService,browserController,jobController,rev
       return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });
     } catch (error) {
       logError(error?.stack ?? error);
-      const headers=url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
+      const headers=url.pathname.startsWith('/api/catalog/') ? CATALOG_HEADERS:
+        url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
       return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } },headers);
     }
   };
@@ -90,11 +102,13 @@ export function createRouter({ statusService,browserController,jobController,rev
 
 async function readJson(request,maxBytes=16_384) {
   let body='';
-  for await (const chunk of request) { body += chunk; if (body.length > maxBytes) throw Object.assign(new Error('请求内容过大。'),{ code:'REQUEST_TOO_LARGE' }); }
+  for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body,'utf8') > maxBytes) throw Object.assign(new Error('请求内容过大。'),{ code:'REQUEST_TOO_LARGE' }); }
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if (code === 'JOB_NOT_FOUND' || code === 'REVIEW_QUEUE_NOT_FOUND') return 404; if (code === 'BROWSER_JOB_CONFLICT' || code === 'REVIEW_TASK_MISMATCH') return 409; return 400; }
+function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE'].includes(code)) return 409; return 400; }
 const EXTENSION_CORS_HEADERS=Object.freeze({ 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
+const CATALOG_HEADERS=Object.freeze({ 'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
 function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }
+function catalogCors(response,status) { response.writeHead(status,{ ...CATALOG_HEADERS,'Cache-Control':'no-store' });response.end(); }
 function json(response,status,data,extraHeaders={}) { response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extraHeaders }); response.end(JSON.stringify(data)); }

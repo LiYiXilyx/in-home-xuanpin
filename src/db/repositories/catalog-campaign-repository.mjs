@@ -78,6 +78,17 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     return mapBatch(db.prepare('SELECT * FROM catalog_capture_batches WHERE id=?').get(id));
   }
 
+  function recordSourceObservation(input) {
+    const result=db.prepare(`INSERT INTO catalog_product_source_observations(
+      campaign_id,source_id,batch_id,platform,goods_id,screening_decision,observed_at,raw_json
+    ) VALUES(?,?,?,?,?,?,?,?)
+    ON CONFLICT(campaign_id,source_id,batch_id,platform,goods_id) DO NOTHING`).run(
+      input.campaignId,input.sourceId,input.batchId,input.platform ?? 'temu',input.goodsId,
+      input.screeningDecision,input.observedAt,JSON.stringify(input.raw ?? {})
+    );
+    return Number(result.changes)===1;
+  }
+
   function upsertStaging(campaign,source,batchId,product,screeningStatus) {
     const existing=db.prepare(`SELECT id,first_source_id AS firstSourceId FROM catalog_staging_products
       WHERE campaign_id=? AND platform=? AND goods_id=?`).get(campaign.id,product.platform,product.goodsId);
@@ -122,6 +133,15 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
       input.exclusionReason,input.classifierVersion,input.confidence ?? null,input.detectedAt
     );
     return Number(result.changes)===1;
+  }
+
+  function hasCampaignExclusion(campaignId,goodsId) {
+    return Boolean(db.prepare(`SELECT 1 FROM catalog_exclusion_observations
+      WHERE campaign_id=? AND goods_id=? LIMIT 1`).get(campaignId,goodsId));
+  }
+
+  function removeStagingForExclusion(campaignId,goodsId) {
+    return Number(db.prepare(`DELETE FROM catalog_staging_products WHERE campaign_id=? AND platform='temu' AND goods_id=?`).run(campaignId,goodsId).changes);
   }
 
   function refreshCampaignCounts(campaignId) {
@@ -171,9 +191,36 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
   function getRpaQueueForSource(sourceId) { return db.prepare('SELECT * FROM catalog_rpa_queue WHERE source_id=?').get(sourceId); }
 
+  function listSourceContributions(campaignId) {
+    return db.prepare(`SELECT s.id AS source_id,s.source_key,
+      COUNT(DISTINCT o.goods_id) AS source_unique_count,
+      COUNT(DISTINCT CASE WHEN first_seen.first_source_id=s.id THEN o.goods_id END) AS campaign_new_unique_count,
+      COUNT(DISTINCT CASE WHEN overlap.goods_id IS NOT NULL THEN o.goods_id END) AS campaign_overlap_count,
+      COUNT(DISTINCT CASE WHEN p.first_source_id=s.id AND p.electronic_screening_status='passed' THEN p.goods_id END) AS eligible_new_count
+    FROM catalog_sources s
+    LEFT JOIN catalog_product_source_observations o ON o.campaign_id=s.campaign_id AND o.source_id=s.id
+    LEFT JOIN (
+      SELECT ranked.campaign_id,ranked.goods_id,ranked.source_id AS first_source_id FROM (
+        SELECT campaign_id,goods_id,source_id,id,
+          ROW_NUMBER() OVER(PARTITION BY campaign_id,goods_id ORDER BY id) AS row_number
+        FROM catalog_product_source_observations
+      ) ranked WHERE ranked.row_number=1
+    ) first_seen ON first_seen.campaign_id=o.campaign_id AND first_seen.goods_id=o.goods_id
+    LEFT JOIN (
+      SELECT campaign_id,goods_id FROM catalog_product_source_observations
+      GROUP BY campaign_id,goods_id HAVING COUNT(DISTINCT source_id)>1
+    ) overlap ON overlap.campaign_id=o.campaign_id AND overlap.goods_id=o.goods_id
+    LEFT JOIN catalog_staging_products p ON p.campaign_id=s.campaign_id AND p.goods_id=o.goods_id
+    WHERE s.campaign_id=? GROUP BY s.id,s.source_key ORDER BY s.priority,s.id`).all(campaignId).map(row => ({
+      sourceId:row.source_id,sourceKey:row.source_key,sourceUniqueCount:Number(row.source_unique_count),
+      campaignNewUniqueCount:Number(row.campaign_new_unique_count),campaignOverlapCount:Number(row.campaign_overlap_count),
+      eligibleNewCount:Number(row.eligible_new_count)
+    }));
+  }
+
   return { createCampaign,getCampaign,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
-    completeBatch,upsertStaging,recordExclusion,refreshCampaignCounts,recordCampaignObservation,
-    activatePoolVersion,getRpaQueueForSource };
+    completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
+    activatePoolVersion,getRpaQueueForSource,listSourceContributions };
 }
 
 function mapCampaign(row) {

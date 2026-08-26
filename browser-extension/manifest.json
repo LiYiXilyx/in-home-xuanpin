@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Temu 当前商品评论采集",
-  "version": "0.1.0",
-  "description": "仅采集用户当前打开且已匹配运营台 Day9 任务的 Temu 商品页评论。",
+  "name": "Temu Catalog 与评论采集",
+  "version": "0.2.0",
+  "description": "隔离采集当前Catalog列表商品卡或已匹配运营台任务的商品评论。",
   "permissions": ["activeTab"],
   "host_permissions": [
     "https://www.temu.com/*",
@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["review-loader.js","content-script.js"],
+      "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","content-script.js"],
       "run_at": "document_idle"
     }
   ]

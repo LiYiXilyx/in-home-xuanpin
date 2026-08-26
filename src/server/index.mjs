@@ -8,12 +8,14 @@ import { createJobRepository } from '../db/repositories/job-repository.mjs';
 import { createReviewRepository } from '../db/repositories/review-repository.mjs';
 import { createReviewQueueRepository } from '../db/repositories/review-queue-repository.mjs';
 import { createNavigationResolutionRepository } from '../db/repositories/navigation-resolution-repository.mjs';
+import { createCatalogCampaignService } from '../modules/catalog-scale/catalog-campaign-service.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
 import { createReviewQueueService } from '../modules/reviews/review-queue-service.mjs';
 import { createBrowserController } from './controllers/browser-controller.mjs';
 import { createJobController } from './controllers/job-controller.mjs';
 import { createReviewController } from './controllers/review-controller.mjs';
 import { createReviewQueueController } from './controllers/review-queue-controller.mjs';
+import { createCatalogController } from './controllers/catalog-controller.mjs';
 import { createExportController } from './controllers/export-controller.mjs';
 import { createTestController } from './controllers/test-controller.mjs';
 import { createStatusService } from './status-service.mjs';
@@ -39,16 +41,19 @@ export async function createOperationsServer(options={}) {
   const reviewController=createReviewController({ config,db,repository,reviewRepository,reviewQueueRepository,navigationResolutionRepository,service,projectDir,runProcess:options.runProcess });
   const reviewQueueService=createReviewQueueService({ db,jobRepository:repository,queueRepository:reviewQueueRepository,navigationRepository:navigationResolutionRepository });
   const reviewQueueController=createReviewQueueController({ queueService:reviewQueueService });
+  const catalogService=createCatalogCampaignService(db);
+  const catalogController=createCatalogController({ catalogService });
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
-  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,exportController,testController,serveStatic,
+  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,serveStatic,
     environment:{ name:config.app.environment,testMode:testController.isTestMode },logError:options.logError });
   const server=http.createServer(router);
   let closed=false;
   return {
-    server,db,repository,service,
+    server,db,repository,service,catalogService,
     async listen({ host=options.host ?? '127.0.0.1',port=Number(options.port ?? process.env.TEMU_DASHBOARD_PORT ?? 37821) }={}) {
+      if (host!=='127.0.0.1') throw new Error('运营台只允许绑定127.0.0.1。');
       await new Promise((resolve,reject) => { server.once('error',reject); server.listen(port,host,() => { server.off('error',reject); resolve(); }); });
       const address=server.address();
       const actualPort=typeof address === 'object' ? address.port : port;

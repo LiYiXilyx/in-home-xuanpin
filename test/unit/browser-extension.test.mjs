@@ -11,16 +11,31 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.deepEqual(manifest.permissions,['activeTab']);
   assert.deepEqual(manifest.host_permissions,['https://www.temu.com/*','http://127.0.0.1:37821/*']);
   assert.deepEqual(manifest.content_scripts[0].matches,['https://www.temu.com/*']);
-  assert.deepEqual(manifest.content_scripts[0].js,['review-loader.js','content-script.js']);
+  assert.deepEqual(manifest.content_scripts[0].js,['review-loader.js','catalog-parser.js','catalog-capture.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
 });
 
 test('extension does not request or access browser secrets',() => {
-  const files=['manifest.json','background.js','content-script.js','popup.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
+  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','content-script.js','popup.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
   assert.doesNotMatch(files,/\b(?:cookies|localStorage|sessionStorage|chrome\.history|chrome\.identity)\b/i);
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);
+});
+
+test('Catalog extension is isolated from Review and routes only localhost batch messages',() => {
+  const background=fs.readFileSync(path.join(root,'browser-extension/background.js'),'utf8');
+  const content=fs.readFileSync(path.join(root,'browser-extension/content-script.js'),'utf8');
+  const capture=fs.readFileSync(path.join(root,'browser-extension/catalog-capture.js'),'utf8');
+  assert.match(background,/GET_CATALOG_CONTEXT/);
+  assert.match(background,/SAVE_CATALOG_BATCH/);
+  assert.match(background,/127\.0\.0\.1:37821\/api\/catalog/);
+  assert.match(content,/START_CATALOG_CAPTURE/);
+  assert.match(content,/START_CURRENT_PAGE_CAPTURE/);
+  assert.match(capture,/CATALOG_CONTEXT_MISMATCH/);
+  assert.match(capture,/CATEGORY_MISMATCH/);
+  assert.match(capture,/SORT_ORDER_MISMATCH/);
+  assert.match(capture,/NO_PRODUCT_CARDS/);
 });
 
 test('extension prompts the operator instead of submitting an empty review page',() => {

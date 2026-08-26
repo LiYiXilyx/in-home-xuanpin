@@ -93,6 +93,12 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
     sendResponse(currentPage());
     return undefined;
   }
+  if (message?.type === 'START_CATALOG_CAPTURE') {
+    if (!globalThis.TemuCatalogCapture) { sendResponse({ ok:false,error:'Catalog采集模块未就绪。' });return undefined; }
+    globalThis.TemuCatalogCapture.capture({ campaignId:message.campaignId,sourceId:message.sourceId,batchId:message.batchId })
+      .then(result => sendResponse({ ok:true,result })).catch(error => sendResponse({ ok:false,error:{ code:error.code,message:error.message } }));
+    return true;
+  }
   if (message?.type !== 'START_CURRENT_PAGE_CAPTURE') return undefined;
   captureCurrentPage().then(result => sendResponse({ ok:true,result })).catch(error => sendResponse({ ok:false,error:error.message }));
   return true;

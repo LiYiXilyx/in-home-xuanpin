@@ -98,6 +98,22 @@ CREATE TABLE catalog_capture_batches (
 CREATE INDEX idx_catalog_capture_batches_source_time
   ON catalog_capture_batches(source_id,captured_at);
 
+CREATE TABLE catalog_product_source_observations (
+  id INTEGER PRIMARY KEY,
+  campaign_id TEXT NOT NULL REFERENCES catalog_campaigns(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL REFERENCES catalog_sources(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL,
+  platform TEXT NOT NULL DEFAULT 'temu',
+  goods_id TEXT NOT NULL,
+  screening_decision TEXT NOT NULL CHECK(screening_decision IN ('passed','manual_review_required','exclude')),
+  observed_at TEXT NOT NULL,
+  raw_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(campaign_id,source_id,batch_id,platform,goods_id)
+) STRICT;
+
+CREATE INDEX idx_catalog_product_source_observations_contribution
+  ON catalog_product_source_observations(campaign_id,source_id,goods_id);
+
 CREATE TABLE catalog_staging_products (
   id INTEGER PRIMARY KEY,
   campaign_id TEXT NOT NULL REFERENCES catalog_campaigns(id) ON DELETE CASCADE,
