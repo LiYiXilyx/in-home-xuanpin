@@ -191,6 +191,65 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
   function getRpaQueueForSource(sourceId) { return db.prepare('SELECT * FROM catalog_rpa_queue WHERE source_id=?').get(sourceId); }
 
+  function getRpaQueue(id) { return mapRpaQueue(db.prepare('SELECT * FROM catalog_rpa_queue WHERE id=?').get(id)); }
+
+  function getNextRpaQueue(campaignId) {
+    return mapRpaQueue(db.prepare(`SELECT q.* FROM catalog_rpa_queue q
+      JOIN catalog_sources s ON s.id=q.source_id
+      WHERE q.campaign_id=? AND q.status='pending'
+      ORDER BY s.priority,s.id LIMIT 1`).get(campaignId));
+  }
+
+  function listActiveRpaQueues() {
+    return db.prepare(`SELECT * FROM catalog_rpa_queue WHERE status IN (
+      'opening','waiting_page_ready','capturing','waiting_load_more','manual_required'
+    ) ORDER BY claimed_at DESC,id`).all().map(mapRpaQueue);
+  }
+
+  function listRpaQueues(campaignId) {
+    return db.prepare('SELECT * FROM catalog_rpa_queue WHERE campaign_id=? ORDER BY created_at,id').all(campaignId).map(mapRpaQueue);
+  }
+
+  function claimRpaQueue(id,claimToken) {
+    const timestamp=now();
+    const result=db.prepare(`UPDATE catalog_rpa_queue SET status='opening',claim_token=?,claimed_at=?,heartbeat_at=?,
+      attempt_count=attempt_count+1,last_error_code=NULL,last_error_message=NULL,updated_at=?
+      WHERE id=? AND status='pending'`).run(claimToken,timestamp,timestamp,timestamp,id);
+    if (Number(result.changes)!==1) return null;
+    const queue=getRpaQueue(id);
+    db.prepare("UPDATE catalog_sources SET status='opening',updated_at=? WHERE id=?").run(timestamp,queue.sourceId);
+    return getRpaQueue(id);
+  }
+
+  function transitionRpaQueue(id,status,{ checkpoint,errorCode=null,errorMessage=null,clearError=false }={}) {
+    const timestamp=now();
+    db.prepare(`UPDATE catalog_rpa_queue SET status=?,heartbeat_at=?,checkpoint_json=COALESCE(?,checkpoint_json),
+      last_error_code=CASE WHEN ? THEN NULL ELSE COALESCE(?,last_error_code) END,
+      last_error_message=CASE WHEN ? THEN NULL ELSE COALESCE(?,last_error_message) END,updated_at=? WHERE id=?`).run(
+      status,timestamp,checkpoint===undefined ? null:JSON.stringify(checkpoint),clearError ? 1:0,errorCode,
+      clearError ? 1:0,errorMessage,timestamp,id
+    );
+    return getRpaQueue(id);
+  }
+
+  function transitionSource(id,status,{ errorCode=null }={}) {
+    db.prepare('UPDATE catalog_sources SET status=?,last_error_code=?,updated_at=? WHERE id=?').run(status,errorCode,now(),id);
+    return getSource(id);
+  }
+
+  function finishSourceRun(sourceId,metrics={}) {
+    const row=db.prepare(`SELECT id FROM catalog_source_runs WHERE source_id=? AND finished_at IS NULL
+      ORDER BY run_number DESC LIMIT 1`).get(sourceId);
+    if (!row) return null;
+    db.prepare(`UPDATE catalog_source_runs SET raw_observation_count=?,source_unique_count=?,campaign_new_unique_count=?,
+      campaign_overlap_count=?,eligible_new_count=?,load_more_count=?,scroll_rounds=?,stop_reason=?,finished_at=? WHERE id=?`).run(
+      Number(metrics.rawObservationCount ?? 0),Number(metrics.sourceUniqueCount ?? 0),Number(metrics.campaignNewUniqueCount ?? 0),
+      Number(metrics.campaignOverlapCount ?? 0),Number(metrics.eligibleNewCount ?? 0),Number(metrics.loadMoreCount ?? 0),
+      Number(metrics.scrollRounds ?? 0),metrics.stopReason ?? null,now(),row.id
+    );
+    return db.prepare('SELECT * FROM catalog_source_runs WHERE id=?').get(row.id);
+  }
+
   function listSourceContributions(campaignId) {
     return db.prepare(`SELECT s.id AS source_id,s.source_key,
       COUNT(DISTINCT o.goods_id) AS source_unique_count,
@@ -220,7 +279,8 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
   return { createCampaign,getCampaign,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
-    activatePoolVersion,getRpaQueueForSource,listSourceContributions };
+    activatePoolVersion,getRpaQueueForSource,getRpaQueue,getNextRpaQueue,listActiveRpaQueues,listRpaQueues,claimRpaQueue,
+    transitionRpaQueue,transitionSource,finishSourceRun,listSourceContributions };
 }
 
 function mapCampaign(row) {
@@ -243,5 +303,9 @@ function mapBatch(row) { return row ? { id:row.id,campaignId:row.campaign_id,sou
 function mapPoolVersion(row) { return row ? { id:row.id,campaignId:row.campaign_id,categoryKey:row.category_key,
   productCount:Number(row.product_count),nonElectronicUniqueCount:Number(row.non_electronic_unique_count),status:row.status,
   activatedAt:row.activated_at }:null; }
+function mapRpaQueue(row) { return row ? { id:row.id,campaignId:row.campaign_id,sourceId:row.source_id,status:row.status,
+  claimToken:row.claim_token,claimedAt:row.claimed_at,heartbeatAt:row.heartbeat_at,checkpoint:parseJson(row.checkpoint_json) ?? {},
+  attemptCount:Number(row.attempt_count),lastErrorCode:row.last_error_code,lastErrorMessage:row.last_error_message,
+  createdAt:row.created_at,updatedAt:row.updated_at }:null; }
 function nullableBoolean(value) { return value===undefined || value===null ? null:value ? 1:0; }
 function parseJson(value) { try { return value ? JSON.parse(value):null; } catch { return null; } }

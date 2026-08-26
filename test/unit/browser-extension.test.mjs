@@ -29,6 +29,7 @@ test('Catalog extension is isolated from Review and routes only localhost batch 
   const capture=fs.readFileSync(path.join(root,'browser-extension/catalog-capture.js'),'utf8');
   assert.match(background,/GET_CATALOG_CONTEXT/);
   assert.match(background,/SAVE_CATALOG_BATCH/);
+  assert.match(background,/GET_CATALOG_CURRENT/);
   assert.match(background,/127\.0\.0\.1:37821\/api\/catalog/);
   assert.match(content,/START_CATALOG_CAPTURE/);
   assert.match(content,/START_CURRENT_PAGE_CAPTURE/);
@@ -36,6 +37,8 @@ test('Catalog extension is isolated from Review and routes only localhost batch 
   assert.match(capture,/CATEGORY_MISMATCH/);
   assert.match(capture,/SORT_ORDER_MISMATCH/);
   assert.match(capture,/NO_PRODUCT_CARDS/);
+  assert.match(capture,/temu-catalog-capture-button/);
+  assert.match(capture,/采集当前商品列表/);
 });
 
 test('extension prompts the operator instead of submitting an empty review page',() => {

@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { transaction } from '../../db/client.mjs';
 import { createCatalogCampaignRepository } from '../../db/repositories/catalog-campaign-repository.mjs';
 import { AppError } from '../../shared/errors.mjs';
-import { canonicalProductUrl } from '../../shared/ids.mjs';
+import { canonicalProductUrl,createId } from '../../shared/ids.mjs';
 import { validateCategoryProfile } from './category-profile.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
-  pending:['running','cancelled'],running:['paused','qa_pending','failed','cancelled'],paused:['running','failed','cancelled'],
+  pending:['running','cancelled'],running:['paused','manual_required','qa_pending','failed','cancelled'],paused:['running','failed','cancelled'],
+  manual_required:['running','failed','cancelled'],
   qa_pending:['completed','qa_failed'],qa_failed:['running','failed','cancelled'],completed:[],failed:[],cancelled:[]
 });
 
@@ -119,7 +120,76 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
 
   function getStatus(campaignId) {
     const campaign=requireCampaign(requiredString(campaignId,'campaign_id',128));
-    return { campaign,sourceContributions:repository.listSourceContributions(campaign.id) };
+    return { campaign,queues:repository.listRpaQueues(campaign.id),sourceContributions:repository.listSourceContributions(campaign.id) };
+  }
+
+  function claimNextSource(campaignId) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);
+      if (campaign.status!=='running') throw new AppError('Catalog Campaign当前未运行。',{ code:'CAMPAIGN_NOT_ACTIVE' });
+      if (repository.listActiveRpaQueues().some(queue => queue.campaignId===campaign.id)) throw new AppError('当前Campaign已有活跃Catalog RPA来源。',{ code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+      const pending=repository.getNextRpaQueue(campaign.id);
+      if (!pending) return { idle:true,campaignId:campaign.id,queue:null };
+      const queue=repository.claimRpaQueue(pending.id,createId('catalog_claim'));
+      if (!queue) throw new AppError('Catalog RPA Queue已被其他流程领取。',{ code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+      repository.createSourceRun(queue.sourceId,queue.attemptCount);
+      return { idle:false,...rpaContext(queue) };
+    });
+  }
+
+  function currentRpaContext() {
+    const queues=repository.listActiveRpaQueues();
+    if (!queues.length) throw new AppError('没有已领取的Catalog RPA来源。',{ code:'CATALOG_RPA_NOT_CLAIMED' });
+    if (queues.length>1) throw new AppError('存在多个活跃Catalog RPA来源，拒绝猜测当前上下文。',{ code:'CATALOG_RPA_CONTEXT_AMBIGUOUS' });
+    return rpaContext(queues[0],{ exposeClaimToken:false });
+  }
+
+  function sourceOpened(input) {
+    const queue=requireClaim(input);
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'waiting_page_ready',pageUrl:optionalString(input.page_url,'page_url',2048),openedAt:now() });
+    repository.transitionSource(queue.sourceId,'waiting_page_ready');
+    return repository.transitionRpaQueue(queue.id,'waiting_page_ready',{ checkpoint,clearError:true });
+  }
+
+  function saveRpaCheckpoint(input) {
+    const queue=requireClaim(input);
+    if (!['opening','waiting_page_ready','capturing','waiting_load_more'].includes(queue.status)) throw new AppError('当前Catalog RPA状态不能保存运行checkpoint。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
+    const nextStatus=input.status==='waiting_load_more' ? 'waiting_load_more':'capturing';
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:nextStatus,lastCheckpointAt:now() });
+    repository.transitionSource(queue.sourceId,nextStatus);
+    return repository.transitionRpaQueue(queue.id,nextStatus,{ checkpoint,clearError:true });
+  }
+
+  function markRpaManualRequired(input) {
+    const queue=requireClaim(input);
+    const errorCode=requiredString(input.error_code,'error_code',128);
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'manual_required',manualGate:{ errorCode,message:optionalString(input.error_message,'error_message',1000),at:now() } });
+    repository.transitionSource(queue.sourceId,'manual_required',{ errorCode });
+    repository.transitionCampaign(queue.campaignId,'manual_required');
+    return repository.transitionRpaQueue(queue.id,'manual_required',{ checkpoint,errorCode,errorMessage:optionalString(input.error_message,'error_message',1000) });
+  }
+
+  function resumeRpa(input) {
+    const queue=requireClaim(input);
+    if (queue.status!=='manual_required') throw new AppError('只有manual_required队列可以恢复。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'opening',resumedAt:now(),manualGateResolved:true });
+    repository.transitionCampaign(queue.campaignId,'running');
+    repository.transitionSource(queue.sourceId,'opening');
+    return repository.transitionRpaQueue(queue.id,'opening',{ checkpoint,clearError:true });
+  }
+
+  function completeRpaSource(input) {
+    return transaction(db,() => {
+      const queue=requireClaim(input);
+      if (!['capturing','waiting_load_more','waiting_page_ready','opening'].includes(queue.status)) throw new AppError('当前Catalog RPA状态不能完成source。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
+      const contribution=repository.listSourceContributions(queue.campaignId).find(item => item.sourceId===queue.sourceId) ?? {};
+      const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'completed',stopReason:requiredString(input.stop_reason ?? 'SOURCE_COMPLETE','stop_reason',128),completedAt:now() });
+      const metrics={ ...normalizeRpaMetrics(checkpoint),...contribution,stopReason:checkpoint.stopReason };
+      repository.finishSourceRun(queue.sourceId,metrics);
+      repository.transitionSource(queue.sourceId,'completed');
+      const result=repository.transitionRpaQueue(queue.id,'completed',{ checkpoint,clearError:true });
+      return { queue:result,campaign:repository.refreshCampaignCounts(queue.campaignId),contribution };
+    });
   }
 
   function submitQa(campaignId,{ passed,summary={} }) {
@@ -175,7 +245,22 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   return { createCampaign,transitionCampaign,createSource,captureBatch,submitQa,failCampaign,
     activatePoolVersion,recordNotSeenInCampaign,getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
-    getCaptureContext,captureExtensionBatch,getStatus };
+    getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
+    saveRpaCheckpoint,markRpaManualRequired,resumeRpa,completeRpaSource };
+
+  function requireClaim(input) {
+    plainObject(input,'Catalog RPA request');
+    const queue=repository.getRpaQueue(requiredString(input.queue_id,'queue_id',128));
+    if (!queue) throw new AppError('Catalog RPA Queue不存在。',{ code:'CATALOG_RPA_QUEUE_NOT_FOUND' });
+    const claimToken=requiredString(input.claim_token,'claim_token',128);
+    if (!queue.claimToken || queue.claimToken!==claimToken) throw new AppError('Catalog RPA claim_token不匹配。',{ code:'CATALOG_RPA_CLAIM_MISMATCH' });
+    return queue;
+  }
+
+  function rpaContext(queue,{ exposeClaimToken=true }={}) {
+    const context=getCaptureContext(queue.campaignId,queue.sourceId);
+    return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },...context };
+  }
 }
 
 function normalizeCard(raw,goodsId,capturedAt) {
@@ -232,3 +317,7 @@ function optionalNumber(value,field,{ min=-Infinity,max=Infinity }={}) { if (val
 function optionalInteger(value,field) { const result=optionalNumber(value,field,{ min:0 });if (result!==null && !Number.isInteger(result)) throw new AppError(`${field}必须是非负整数。`,{ code:'CATALOG_BATCH_INVALID' });return result; }
 function optionalPositiveInteger(value,field) { const result=optionalNumber(value,field,{ min:1 });if (result!==null && !Number.isInteger(result)) throw new AppError(`${field}必须是正整数。`,{ code:'CATALOG_BATCH_INVALID' });return result; }
 function isoTimestamp(value,field) { const result=requiredString(value,field,64);if (!Number.isFinite(Date.parse(result))) throw new AppError(`${field}不是有效时间。`,{ code:'CATALOG_BATCH_INVALID' });return new Date(result).toISOString(); }
+function mergeCheckpoint(queue,value,extra={}) { if (value!==undefined) plainObject(value,'checkpoint');return { ...(queue.checkpoint ?? {}),...(value ?? {}),...extra }; }
+function normalizeRpaMetrics(checkpoint) { return { rawObservationCount:nonNegativeMetric(checkpoint.raw_observation_count),
+  loadMoreCount:nonNegativeMetric(checkpoint.load_more_count),scrollRounds:nonNegativeMetric(checkpoint.scroll_rounds) }; }
+function nonNegativeMetric(value) { const result=Number(value ?? 0);return Number.isInteger(result) && result>=0 ? result:0; }

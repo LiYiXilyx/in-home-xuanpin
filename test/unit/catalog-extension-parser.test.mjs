@@ -28,4 +28,5 @@ test('Catalog Extension parses the sanitized product-card fixture with stable fi
   assert.match(cards[2].raw_card_text,/Missing Metrics Motorcycle Cover/);
   assert.equal(context.TemuCatalogParser.extractGoodsId('https://www.temu.com/de-en/item-g-123456.html?x=1'),'123456');
   assert.equal(context.TemuCatalogParser.extractGoodsId('https://example.test/no-product'),null);
+  assert.equal(context.TemuCatalogParser.parseReviewCount('4.7 out of five stars 4.507 reviews'),4507);
 });

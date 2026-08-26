@@ -14,11 +14,16 @@
       try { elements=[...documentValue.querySelectorAll(selector)]; } catch { elements=[]; }
       if (elements.length) break;
     }
+    if (!elements.length) {
+      const links=[...documentValue.querySelectorAll('a[href*="goods_id="],a[href*="-g-"]')].filter(link => extractGoodsId(link.href || link.getAttribute('href')));
+      elements=links.map(findCardContainer);
+    }
+    elements=[...new Set(elements)];
     return elements.map((element,index) => parseElement(element,{ baseUrl,sequence:startSequence+index })).filter(Boolean);
   }
 
   function parseElement(element,{ baseUrl,sequence }) {
-    const links=[...element.querySelectorAll('a[href]')];
+    const links=[...(element.matches?.('a[href]') ? [element]:[]),...element.querySelectorAll('a[href]')];
     const link=links.find(item => extractGoodsId(item.href || item.getAttribute('href'))) ?? null;
     if (!link) return null;
     const href=absoluteUrl(link.href || link.getAttribute('href'),baseUrl);
@@ -57,11 +62,12 @@
   }
   function parseRating(text,element=null) {
     const aria=element ? [...element.querySelectorAll('[aria-label]')].map(item => item.getAttribute('aria-label')).join(' '):'';
-    const combined=`${aria} ${text}`;const match=combined.match(/(\d(?:[.,]\d)?)\s*out of 5(?: stars)?/i) || combined.match(/rating\s*:?\s*(\d(?:[.,]\d)?)/i);
+    const combined=`${aria} ${text}`;const match=combined.match(/(\d(?:[.,]\d)?)\s*out of (?:5|five)(?: stars)?/i) || combined.match(/rating\s*:?\s*(\d(?:[.,]\d)?)/i);
     const value=match ? localizedNumber(match[1]):null;return value!==null && value>=0 && value<=5 ? value:null;
   }
   function parseReviewCount(text) { return parseCompactCount(text,/\(?([\d.,]+)\s*([KMB])?\s*(?:reviews?|ratings?)\)?/i); }
-  function parseCompactCount(text,pattern) { const match=String(text).match(pattern);if (!match) return null;const value=localizedNumber(match[1]);const multiplier={ K:1e3,M:1e6,B:1e9 }[String(match[2] ?? '').toUpperCase()] ?? 1;return Number.isFinite(value) ? Math.round(value*multiplier):null; }
+  function parseCompactCount(text,pattern) { const match=String(text).match(pattern);if (!match) return null;const compact=String(match[1]);const value=!match[2] && /^\d{1,3}(?:[.,]\d{3})+$/.test(compact) ? Number(compact.replace(/[.,]/g,'')):localizedNumber(compact);const multiplier={ K:1e3,M:1e6,B:1e9 }[String(match[2] ?? '').toUpperCase()] ?? 1;return Number.isFinite(value) ? Math.round(value*multiplier):null; }
+  function findCardContainer(link) { let element=link.parentElement;for (let depth=0;element && depth<6;depth+=1,element=element.parentElement) { const productLinks=element.querySelectorAll('a[href*="goods_id="],a[href*="-g-"]').length;if (productLinks===1 && element.querySelector('img')) return element;if (productLinks>1) break; }return link.parentElement ?? link; }
   function localizedNumber(value) { let text=String(value).replace(/\s/g,'');if (text.includes(',') && text.includes('.')) text=text.lastIndexOf(',')>text.lastIndexOf('.') ? text.replace(/\./g,'').replace(',','.'):text.replace(/,/g,'');else if (text.includes(',')) text=/,\d{1,2}$/.test(text) ? text.replace(',','.'):text.replace(/,/g,'');const result=Number(text);return Number.isFinite(result) ? result:null; }
   function absoluteUrl(value,baseUrl) { if (!value) return null;try { return new URL(value,baseUrl).href; } catch { return null; } }
   function firstText(...values) { return values.map(clean).find(Boolean) ?? null; }

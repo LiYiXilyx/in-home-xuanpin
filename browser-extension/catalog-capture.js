@@ -28,9 +28,9 @@
   }
 
   async function capture({ campaignId,sourceId,batchId=globalThis.crypto?.randomUUID?.() ?? `catalog-${Date.now()}` }) {
-    if (!campaignId || !sourceId) throw error('CATALOG_CONTEXT_MISMATCH','Catalog采集缺少campaignId或sourceId。');
-    const lookup=await send({ type:'GET_CATALOG_CONTEXT',campaignId,sourceId });
+    const lookup=campaignId && sourceId ? await send({ type:'GET_CATALOG_CONTEXT',campaignId,sourceId }):await send({ type:'GET_CATALOG_CURRENT' });
     if (!lookup?.ok) throw error(lookup?.errorCode ?? 'CATALOG_CONTEXT_MISMATCH',lookup?.error ?? '无法读取Catalog上下文。');
+    campaignId=campaignId ?? lookup.context.campaign.id;sourceId=sourceId ?? lookup.context.source.id;
     const inspected=inspectContext(lookup.context);
     const payload={ campaign_id:campaignId,source_id:sourceId,batch_id:batchId,category_key:lookup.context.profile.category_key,
       category_profile_version:lookup.context.profile.category_profile_version,page_url:location.href,page_title:document.title,
@@ -40,5 +40,23 @@
     return saved.result;
   }
 
+  function showStatus(message,{ ok=false,result=null,errorCode=null }={}) {
+    let notice=document.getElementById('temu-catalog-capture-status');
+    if (!notice) { notice=document.createElement('div');notice.id='temu-catalog-capture-status';notice.setAttribute('role','status');
+      Object.assign(notice.style,{ all:'initial',position:'fixed',right:'18px',bottom:'122px',zIndex:'2147483647',width:'360px',boxSizing:'border-box',padding:'11px 13px',borderRadius:'8px',background:'#17324d',color:'#fff',font:'14px/1.45 system-ui,sans-serif',boxShadow:'0 3px 12px rgba(0,0,0,.3)' });document.documentElement.append(notice); }
+    notice.textContent=message;notice.dataset.state=ok ? 'completed':'failed';notice.dataset.errorCode=errorCode ?? '';
+    if (result) { notice.dataset.batchId=result.batch?.batchId ?? '';notice.dataset.rawObservedCount=String(result.campaign?.rawObservedCount ?? '');notice.dataset.nonElectronicUniqueCount=String(result.campaign?.nonElectronicUniqueCount ?? ''); }
+  }
+
+  function installButton() {
+    if (document.getElementById('temu-catalog-capture-button')) return;
+    const button=document.createElement('button');button.id='temu-catalog-capture-button';button.type='button';button.textContent='采集当前商品列表';
+    Object.assign(button.style,{ all:'initial',position:'fixed',right:'18px',bottom:'70px',zIndex:'2147483646',boxSizing:'border-box',padding:'11px 15px',border:'0',borderRadius:'8px',background:'#0369a1',color:'#fff',font:'700 14px/1.3 system-ui,sans-serif',cursor:'pointer',boxShadow:'0 2px 10px rgba(0,0,0,.25)' });
+    button.addEventListener('click',async () => { button.disabled=true;button.textContent='Catalog采集中…';try { const result=await capture({});showStatus(`Catalog批次完成：非电子唯一 ${result.campaign.nonElectronicUniqueCount}，raw ${result.campaign.rawObservedCount}。`,{ ok:true,result }); }
+      catch (caught) { showStatus(`Catalog未采集：${caught.message}`,{ errorCode:caught.code }); } finally { button.disabled=false;button.textContent='采集当前商品列表'; } });
+    document.documentElement.append(button);
+  }
+
   globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture });
+  installButton();
 })();

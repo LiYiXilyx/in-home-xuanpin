@@ -2,9 +2,10 @@
 
 const API_BASE='http://127.0.0.1:37821/api/browser-extension';
 const CATALOG_API_BASE='http://127.0.0.1:37821/api/catalog';
+const CATALOG_RPA_API_BASE='http://127.0.0.1:37821/api/catalog-rpa';
 
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
-  if (!['GET_REVIEW_CONTEXT','SAVE_REVIEW_PAGE','SAVE_REVIEW_BATCH','FINISH_REVIEW_SCROLL','FAIL_REVIEW_CAPTURE','GET_CATALOG_CONTEXT','SAVE_CATALOG_BATCH','GET_CATALOG_STATUS'].includes(message?.type)) return false;
+  if (!['GET_REVIEW_CONTEXT','SAVE_REVIEW_PAGE','SAVE_REVIEW_BATCH','FINISH_REVIEW_SCROLL','FAIL_REVIEW_CAPTURE','GET_CATALOG_CONTEXT','GET_CATALOG_CURRENT','SAVE_CATALOG_BATCH','GET_CATALOG_STATUS'].includes(message?.type)) return false;
   handleApiMessage(message).then(sendResponse).catch(error => sendResponse({ ok:false,error:error.message,errorCode:error.code }));
   return true;
 });
@@ -18,6 +19,7 @@ async function handleApiMessage(message) {
       const url=`${CATALOG_API_BASE}/context?campaign_id=${encodeURIComponent(message.campaignId ?? '')}&source_id=${encodeURIComponent(message.sourceId ?? '')}`;
       return await request(url,options);
     }
+    if (message.type==='GET_CATALOG_CURRENT') return await request(`${CATALOG_RPA_API_BASE}/current-context`,options);
     if (message.type==='GET_CATALOG_STATUS') {
       const url=`${CATALOG_API_BASE}/status?campaign_id=${encodeURIComponent(message.campaignId ?? '')}`;
       return await request(url,options);

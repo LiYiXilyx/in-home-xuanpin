@@ -7,6 +7,19 @@ export function createRouter({ statusService,browserController,jobController,rev
     try {
       if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog-rpa/')) return catalogCors(response,204);
+      if (request.method === 'GET' && url.pathname === '/api/catalog-rpa/current-context') {
+        return json(response,200,{ ok:true,context:catalogController.currentRpaContext() },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog-rpa/claim-next') {
+        return json(response,200,{ ok:true,result:catalogController.claimNext(await readJson(request,16_384)) },CATALOG_HEADERS);
+      }
+      const catalogRpaAction=url.pathname.match(/^\/api\/catalog-rpa\/(source-opened|checkpoint|manual-required|resume|source-complete)$/);
+      if (request.method === 'POST' && catalogRpaAction) {
+        const body=await readJson(request,64_000);
+        const handlers={ 'source-opened':'sourceOpened',checkpoint:'checkpoint','manual-required':'manualRequired',resume:'resume','source-complete':'sourceComplete' };
+        return json(response,200,{ ok:true,result:catalogController[handlers[catalogRpaAction[1]]](body) },CATALOG_HEADERS);
+      }
       if (request.method === 'GET' && url.pathname === '/api/catalog/context') {
         return json(response,200,{ ok:true,context:catalogController.context(url.searchParams) },CATALOG_HEADERS);
       }
@@ -93,7 +106,7 @@ export function createRouter({ statusService,browserController,jobController,rev
       return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });
     } catch (error) {
       logError(error?.stack ?? error);
-      const headers=url.pathname.startsWith('/api/catalog/') ? CATALOG_HEADERS:
+      const headers=url.pathname.startsWith('/api/catalog/') || url.pathname.startsWith('/api/catalog-rpa/') ? CATALOG_HEADERS:
         url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
       return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } },headers);
     }
@@ -106,7 +119,7 @@ async function readJson(request,maxBytes=16_384) {
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE'].includes(code)) return 409; return 400; }
+function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS'].includes(code)) return 409; return 400; }
 const EXTENSION_CORS_HEADERS=Object.freeze({ 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
 const CATALOG_HEADERS=Object.freeze({ 'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
 function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }
