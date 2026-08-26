@@ -11,6 +11,12 @@ const CAMPAIGN_TRANSITIONS=Object.freeze({
   manual_required:['running','failed','cancelled'],
   qa_pending:['completed','qa_failed'],qa_failed:['running','failed','cancelled'],completed:[],failed:[],cancelled:[]
 });
+export const CATALOG_LOAD_STATES=Object.freeze([
+  'LOAD_MORE_PROGRESS','LOAD_MORE_RETRYABLE','MANUAL_VERIFICATION_REQUIRED','LISTING_CONTEXT_UNHEALTHY'
+]);
+const NON_EXHAUSTING_LOAD_STATES=new Set([
+  'LOAD_MORE_RETRYABLE','MANUAL_VERIFICATION_REQUIRED','LISTING_CONTEXT_UNHEALTHY'
+]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
@@ -114,8 +120,9 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (!Array.isArray(input.cards) || input.cards.length===0) throw new AppError('当前页面没有有效商品卡。',{ code:'NO_PRODUCT_CARDS' });
     if (input.cards.length>500) throw new AppError('Catalog batch商品卡数量超过500。',{ code:'CATALOG_BATCH_INVALID' });
     const cards=input.cards.map((card,index) => validateExtensionCard(card,index));
-    return captureBatch({ campaignId,sourceId,batchId,pageUrl,pageTitle:optionalString(input.page_title,'page_title',500),
+    const result=captureBatch({ campaignId,sourceId,batchId,pageUrl,pageTitle:optionalString(input.page_title,'page_title',500),
       capturedAt,cards,categoryKey,categoryProfileVersion:profileVersion,pageContext });
+    return { ...result,campaign:{ ...result.campaign,manualReviewCount:null } };
   }
 
   function getStatus(campaignId) {
@@ -155,6 +162,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     const queue=requireClaim(input);
     if (!['opening','waiting_page_ready','capturing','waiting_load_more'].includes(queue.status)) throw new AppError('当前Catalog RPA状态不能保存运行checkpoint。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
     const nextStatus=input.status==='waiting_load_more' ? 'waiting_load_more':'capturing';
+    validateLoadStateCheckpoint(input.checkpoint);
     const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:nextStatus,lastCheckpointAt:now() });
     repository.transitionSource(queue.sourceId,nextStatus);
     return repository.transitionRpaQueue(queue.id,nextStatus,{ checkpoint,clearError:true });
@@ -163,7 +171,11 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   function markRpaManualRequired(input) {
     const queue=requireClaim(input);
     const errorCode=requiredString(input.error_code,'error_code',128);
-    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'manual_required',manualGate:{ errorCode,message:optionalString(input.error_message,'error_message',1000),at:now() } });
+    const loadState=errorCode==='CAPTCHA_OR_LOGIN' || errorCode==='BGN_VERIFICATION'
+      ? 'MANUAL_VERIFICATION_REQUIRED':errorCode==='LISTING_CONTEXT_UNHEALTHY' ? 'LISTING_CONTEXT_UNHEALTHY':
+        errorCode==='LOAD_MORE_RETRYABLE_EXHAUSTED' ? 'LOAD_MORE_RETRYABLE':null;
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'manual_required',...(loadState ? { load_state:loadState }:{}),
+      manualGate:{ errorCode,message:optionalString(input.error_message,'error_message',1000),at:now() } });
     repository.transitionSource(queue.sourceId,'manual_required',{ errorCode });
     repository.transitionCampaign(queue.campaignId,'manual_required');
     return repository.transitionRpaQueue(queue.id,'manual_required',{ checkpoint,errorCode,errorMessage:optionalString(input.error_message,'error_message',1000) });
@@ -178,12 +190,42 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return repository.transitionRpaQueue(queue.id,'opening',{ checkpoint,clearError:true });
   }
 
+  function saveExtensionCheckpoint(input) {
+    const queue=requireExtensionQueue(input);
+    if (!['opening','waiting_page_ready','capturing','waiting_load_more'].includes(queue.status)) throw new AppError(
+      '当前Catalog Extension状态不能保存运行checkpoint。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
+    validateLoadStateCheckpoint(input.checkpoint);
+    const nextStatus=input.status==='waiting_load_more' ? 'waiting_load_more':'capturing';
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:nextStatus,controlMode:'extension_auto_runner',lastCheckpointAt:now() });
+    repository.transitionSource(queue.sourceId,nextStatus);
+    return withoutClaimToken(repository.transitionRpaQueue(queue.id,nextStatus,{ checkpoint,clearError:true }));
+  }
+
+  function markExtensionManualRequired(input) {
+    const queue=requireExtensionQueue(input);
+    return withoutClaimToken(markRpaManualRequired({ ...input,queue_id:queue.id,claim_token:queue.claimToken }));
+  }
+
+  function resumeExtensionRunner(input) {
+    const queue=requireExtensionQueue(input);
+    return withoutClaimToken(resumeRpa({ ...input,queue_id:queue.id,claim_token:queue.claimToken }));
+  }
+
   function completeRpaSource(input) {
     return transaction(db,() => {
       const queue=requireClaim(input);
       if (!['capturing','waiting_load_more','waiting_page_ready','opening'].includes(queue.status)) throw new AppError('当前Catalog RPA状态不能完成source。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
       const contribution=repository.listSourceContributions(queue.campaignId).find(item => item.sourceId===queue.sourceId) ?? {};
-      const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'completed',stopReason:requiredString(input.stop_reason ?? 'SOURCE_COMPLETE','stop_reason',128),completedAt:now() });
+      validateLoadStateCheckpoint(input.checkpoint);
+      const stopReason=requiredString(input.stop_reason ?? 'SOURCE_COMPLETE','stop_reason',128);
+      const candidate=mergeCheckpoint(queue,input.checkpoint);
+      if (stopReason==='SOURCE_EXHAUSTED' && NON_EXHAUSTING_LOAD_STATES.has(candidate.load_state)) {
+        throw new AppError('当前加载状态不能判定Source Exhausted，必须保留checkpoint并等待恢复。',{
+          code:'CATALOG_SOURCE_EXHAUSTION_NOT_PROVEN',retriable:true,
+          details:{ loadState:candidate.load_state,stopReason }
+        });
+      }
+      const checkpoint={ ...candidate,phase:'completed',stopReason,completedAt:now() };
       const metrics={ ...normalizeRpaMetrics(checkpoint),...contribution,stopReason:checkpoint.stopReason };
       repository.finishSourceRun(queue.sourceId,metrics);
       repository.transitionSource(queue.sourceId,'completed');
@@ -246,7 +288,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     activatePoolVersion,recordNotSeenInCampaign,getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
     getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
-    saveRpaCheckpoint,markRpaManualRequired,resumeRpa,completeRpaSource };
+    saveRpaCheckpoint,markRpaManualRequired,resumeRpa,saveExtensionCheckpoint,markExtensionManualRequired,resumeExtensionRunner,
+    completeRpaSource };
 
   function requireClaim(input) {
     plainObject(input,'Catalog RPA request');
@@ -257,9 +300,29 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return queue;
   }
 
+  function requireExtensionQueue(input) {
+    plainObject(input,'Catalog Extension checkpoint');
+    const queue=repository.getRpaQueue(requiredString(input.queue_id,'queue_id',128));
+    if (!queue) throw new AppError('Catalog RPA Queue不存在。',{ code:'CATALOG_RPA_QUEUE_NOT_FOUND' });
+    if (!queue.claimToken) throw new AppError('Catalog RPA Queue尚未领取。',{ code:'CATALOG_RPA_NOT_CLAIMED' });
+    if (requiredString(input.campaign_id,'campaign_id',128)!==queue.campaignId
+      || requiredString(input.source_id,'source_id',128)!==queue.sourceId) throw new AppError(
+      'Extension checkpoint与当前Campaign/Source不匹配。',{ code:'CATALOG_RPA_CLAIM_MISMATCH' });
+    return queue;
+  }
+
   function rpaContext(queue,{ exposeClaimToken=true }={}) {
-    const context=getCaptureContext(queue.campaignId,queue.sourceId);
-    return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },...context };
+    const campaign=requireCampaign(queue.campaignId);
+    const source=requireSource(queue.sourceId);
+    if (source.campaignId!==campaign.id || source.categoryKey!==campaign.categoryKey) throw new AppError(
+      'Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
+    const profile=validateCategoryProfile(campaign.config?.categoryProfile);
+    return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },
+      campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
+        categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+        rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
+        nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount,
+        reviewableUniqueCount:campaign.reviewableUniqueCount,manualReviewCount:null },source,profile };
   }
 }
 
@@ -321,3 +384,14 @@ function mergeCheckpoint(queue,value,extra={}) { if (value!==undefined) plainObj
 function normalizeRpaMetrics(checkpoint) { return { rawObservationCount:nonNegativeMetric(checkpoint.raw_observation_count),
   loadMoreCount:nonNegativeMetric(checkpoint.load_more_count),scrollRounds:nonNegativeMetric(checkpoint.scroll_rounds) }; }
 function nonNegativeMetric(value) { const result=Number(value ?? 0);return Number.isInteger(result) && result>=0 ? result:0; }
+function withoutClaimToken(queue) { return queue ? { ...queue,claimToken:undefined }:queue; }
+function validateLoadStateCheckpoint(checkpoint) {
+  if (checkpoint===undefined || checkpoint===null || checkpoint.load_state===undefined) return;
+  plainObject(checkpoint,'checkpoint');
+  if (!CATALOG_LOAD_STATES.includes(checkpoint.load_state)) throw new AppError('Catalog load_state无效。',{
+    code:'CATALOG_LOAD_STATE_INVALID',details:{ loadState:checkpoint.load_state }
+  });
+  if (checkpoint.load_state==='LOAD_MORE_PROGRESS' && Number(checkpoint.new_goods_count ?? 0)<=0) {
+    throw new AppError('LOAD_MORE_PROGRESS必须记录正数new_goods_count。',{ code:'CATALOG_LOAD_STATE_INVALID' });
+  }
+}

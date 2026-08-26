@@ -15,6 +15,9 @@ export function createCatalogController({ catalogService }) {
     checkpoint(body) { return catalogService.saveRpaCheckpoint(body); },
     manualRequired(body) { return catalogService.markRpaManualRequired(body); },
     resume(body) { return catalogService.resumeRpa(body); },
+    extensionCheckpoint(body) { return catalogService.saveExtensionCheckpoint(body); },
+    extensionManualRequired(body) { return catalogService.markExtensionManualRequired(body); },
+    extensionResume(body) { return catalogService.resumeExtensionRunner(body); },
     sourceComplete(body) { return catalogService.completeRpaSource(body); },
     status(searchParams) {
       const campaignId=searchParams.get('campaign_id');

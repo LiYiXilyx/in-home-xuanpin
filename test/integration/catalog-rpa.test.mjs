@@ -27,6 +27,18 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   let response=await fetch(`${address.url}/api/catalog-rpa/current-context`);let body=await response.json();assert.equal(response.status,200);assert.equal(body.context.queue.claimToken,undefined);assert.equal(body.context.source.id,source.id);
   call=await post('/api/catalog-rpa/source-opened',{ queue_id:queue.id,claim_token:'wrong',page_url:'https://www.temu.com/de-en/motorcycles.html' });assert.equal(call.response.status,409);assert.equal(call.body.error.code,'CATALOG_RPA_CLAIM_MISMATCH');
   call=await post('/api/catalog-rpa/source-opened',{ queue_id:queue.id,claim_token:queue.claimToken,page_url:'https://www.temu.com/de-en/motorcycles.html' });assert.equal(call.body.result.status,'waiting_page_ready');
+  call=await post('/api/catalog-extension/checkpoint',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,status:'capturing',
+    checkpoint:{ runner_state:'SCANNING',round:1,batch_id:'extension-batch-1',current_unique:0 } });
+  assert.equal(call.response.status,200);assert.equal(call.body.result.checkpoint.controlMode,'extension_auto_runner');assert.equal(call.body.result.claimToken,undefined);
+  call=await post('/api/catalog-extension/checkpoint',{ campaign_id:'wrong',source_id:source.id,queue_id:queue.id,status:'capturing',checkpoint:{ round:2 } });
+  assert.equal(call.response.status,409);assert.equal(call.body.error.code,'CATALOG_RPA_CLAIM_MISMATCH');
+  call=await post('/api/catalog-extension/manual-required',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,
+    error_code:'CAPTCHA_OR_LOGIN',error_message:'extension fixture',checkpoint:{ runner_state:'MANUAL_REQUIRED',round:1 } });
+  assert.equal(call.response.status,200);assert.equal(call.body.result.status,'manual_required');assert.equal(app.catalogService.getCampaign(campaign.id).status,'manual_required');
+  response=await fetch(`${address.url}/api/catalog-rpa/current-context`);body=await response.json();assert.equal(response.status,200);
+  assert.equal(body.context.queue.status,'manual_required');assert.equal(body.context.queue.claimToken,undefined);assert.equal(body.context.queue.checkpoint.round,1);
+  call=await post('/api/catalog-extension/resume',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,checkpoint:{ resume_verified:true } });
+  assert.equal(call.response.status,200);assert.equal(call.body.result.status,'opening');assert.equal(app.catalogService.getCampaign(campaign.id).status,'running');
   call=await post('/api/catalog-rpa/checkpoint',{ queue_id:queue.id,claim_token:queue.claimToken,status:'capturing',checkpoint:{ scroll_rounds:1,load_more_count:0,new_goods_per_round:[3],stale_rounds:0,manual_gate_count:0 } });assert.equal(call.body.result.status,'capturing');
 
   const batchPayload=batch(campaign.id,source.id,'rpa-batch-1');call=await post('/api/catalog/batches',batchPayload);assert.equal(call.response.status,200);assert.equal(call.body.result.idempotentReplay,false);
@@ -34,6 +46,9 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   call=await post('/api/catalog-rpa/resume',{ queue_id:queue.id,claim_token:queue.claimToken,checkpoint:{ resume_verified:true } });assert.equal(call.body.result.status,'opening');assert.equal(app.catalogService.getCampaign(campaign.id).status,'running');
   call=await post('/api/catalog-rpa/checkpoint',{ queue_id:queue.id,claim_token:queue.claimToken,status:'capturing',checkpoint:{ scroll_rounds:2,load_more_count:1,new_goods_per_round:[3,0],stale_rounds:1,manual_gate_count:1,last_batch_id:'rpa-batch-1' } });assert.equal(call.body.result.status,'capturing');
   call=await post('/api/catalog/batches',batchPayload);assert.equal(call.body.result.idempotentReplay,true);assert.equal(count(app.db,'catalog_capture_batches'),1);assert.equal(count(app.db,'catalog_staging_products'),2);
+  call=await post('/api/catalog-rpa/checkpoint',{ queue_id:queue.id,claim_token:queue.claimToken,status:'waiting_load_more',checkpoint:{ load_state:'LOAD_MORE_RETRYABLE',load_more_retry_count:2,new_goods_count:0 } });assert.equal(call.body.result.status,'waiting_load_more');
+  call=await post('/api/catalog-rpa/source-complete',{ queue_id:queue.id,claim_token:queue.claimToken,stop_reason:'SOURCE_EXHAUSTED' });assert.equal(call.response.status,400);assert.equal(call.body.error.code,'CATALOG_SOURCE_EXHAUSTION_NOT_PROVEN');
+  call=await post('/api/catalog-rpa/checkpoint',{ queue_id:queue.id,claim_token:queue.claimToken,status:'capturing',checkpoint:{ load_state:'LOAD_MORE_PROGRESS',new_goods_count:2 } });assert.equal(call.body.result.status,'capturing');
   call=await post('/api/catalog-rpa/source-complete',{ queue_id:queue.id,claim_token:queue.claimToken,stop_reason:'SMOKE_FIXTURE_COMPLETE',checkpoint:{ raw_observation_count:3 } });assert.equal(call.body.result.queue.status,'completed');
   assert.equal(app.db.prepare('SELECT status FROM catalog_sources WHERE id=?').get(source.id).status,'completed');
   const sourceRun=app.db.prepare('SELECT * FROM catalog_source_runs WHERE source_id=?').get(source.id);assert.equal(sourceRun.scroll_rounds,2);assert.equal(sourceRun.load_more_count,1);assert.equal(sourceRun.stop_reason,'SMOKE_FIXTURE_COMPLETE');

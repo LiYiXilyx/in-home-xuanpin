@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Temu Catalog 与评论采集",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "隔离采集当前Catalog列表商品卡或已匹配运营台任务的商品评论。",
   "permissions": ["activeTab"],
   "host_permissions": [
@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","content-script.js"],
+      "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","catalog-auto-runner.js","content-script.js"],
       "run_at": "document_idle"
     }
   ]

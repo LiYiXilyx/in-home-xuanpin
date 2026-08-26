@@ -20,6 +20,12 @@ export function createRouter({ statusService,browserController,jobController,rev
         const handlers={ 'source-opened':'sourceOpened',checkpoint:'checkpoint','manual-required':'manualRequired',resume:'resume','source-complete':'sourceComplete' };
         return json(response,200,{ ok:true,result:catalogController[handlers[catalogRpaAction[1]]](body) },CATALOG_HEADERS);
       }
+      const catalogExtensionAction=url.pathname.match(/^\/api\/catalog-extension\/(checkpoint|manual-required|resume)$/);
+      if (request.method === 'POST' && catalogExtensionAction) {
+        const body=await readJson(request,64_000);
+        const handlers={ checkpoint:'extensionCheckpoint','manual-required':'extensionManualRequired',resume:'extensionResume' };
+        return json(response,200,{ ok:true,result:catalogController[handlers[catalogExtensionAction[1]]](body) },CATALOG_HEADERS);
+      }
       if (request.method === 'GET' && url.pathname === '/api/catalog/context') {
         return json(response,200,{ ok:true,context:catalogController.context(url.searchParams) },CATALOG_HEADERS);
       }
@@ -106,7 +112,7 @@ export function createRouter({ statusService,browserController,jobController,rev
       return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });
     } catch (error) {
       logError(error?.stack ?? error);
-      const headers=url.pathname.startsWith('/api/catalog/') || url.pathname.startsWith('/api/catalog-rpa/') ? CATALOG_HEADERS:
+      const headers=url.pathname.startsWith('/api/catalog/') || url.pathname.startsWith('/api/catalog-rpa/') || url.pathname.startsWith('/api/catalog-extension/') ? CATALOG_HEADERS:
         url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
       return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } },headers);
     }
