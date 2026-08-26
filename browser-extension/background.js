@@ -3,7 +3,7 @@
 const API_BASE='http://127.0.0.1:37821/api/browser-extension';
 
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
-  if (!['GET_REVIEW_CONTEXT','SAVE_REVIEW_PAGE'].includes(message?.type)) return false;
+  if (!['GET_REVIEW_CONTEXT','SAVE_REVIEW_PAGE','SAVE_REVIEW_BATCH','FINISH_REVIEW_SCROLL','FAIL_REVIEW_CAPTURE'].includes(message?.type)) return false;
   handleApiMessage(message).then(sendResponse).catch(error => sendResponse({ ok:false,error:error.message }));
   return true;
 });
@@ -14,8 +14,9 @@ async function handleApiMessage(message) {
   try {
     const options={ credentials:'omit',cache:'no-store',signal:controller.signal };
     let url=`${API_BASE}/context?goods_id=${encodeURIComponent(message.goodsId ?? '')}`;
-    if (message.type === 'SAVE_REVIEW_PAGE') {
-      url=`${API_BASE}/capture-page`;
+    if (message.type !== 'GET_REVIEW_CONTEXT') {
+      const route={ SAVE_REVIEW_PAGE:'capture-page',SAVE_REVIEW_BATCH:'capture-batch',FINISH_REVIEW_SCROLL:'complete-scroll',FAIL_REVIEW_CAPTURE:'capture-failed' }[message.type];
+      url=`${API_BASE}/${route}`;
       options.method='POST';
       options.headers={ 'Content-Type':'application/json' };
       options.body=JSON.stringify(message.payload ?? {});

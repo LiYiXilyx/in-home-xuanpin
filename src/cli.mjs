@@ -12,6 +12,7 @@ import { runClassifyCommand } from './app/commands/classify.mjs';
 import { runAnalyzeMarketCommand,runMarketQaCommand } from './app/commands/analyze-market.mjs';
 import { runFineClassifyCommand } from './app/commands/fine-classify.mjs';
 import { runDay9ReviewCaptureCommand,runDay9ReviewQaCommand } from './app/commands/review-capture.mjs';
+import { runLifecycleCommand,runLifecycleQaCommand } from './app/commands/lifecycle.mjs';
 import { runJobAction, runStatusCommand } from './app/commands/status.mjs';
 
 function parseArgs(argv) {
@@ -47,7 +48,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
   if (args.command === 'help') {
-    console.log('用法：node src/cli.mjs <init|browser-open|status|pause|resume|retry|cancel|capture|classify|fine-classify|export|export-qa|analyze-market|market-qa|review-capture|review-qa|current-review|refresh|crawl|reviews|demo> --config config.json');
+    console.log('用法：node src/cli.mjs <init|browser-open|status|pause|resume|retry|cancel|capture|classify|fine-classify|export|export-qa|analyze-market|market-qa|lifecycle|lifecycle-qa|review-capture|review-qa|current-review|refresh|crawl|reviews|demo> --config config.json');
     console.log('评论批次：node src/cli.mjs reviews --config config.json --batch-size 10 [--retry-failed] [--include-reviewed]');
     return;
   }
@@ -102,6 +103,12 @@ async function main() {
   if (args.command === 'market-qa') {
     await runMarketQaCommand(config,{ runId:args.run,expectedActiveCount:args.expectedActive });
     return;
+  }
+  if (args.command === 'lifecycle') {
+    await runLifecycleCommand(config,{ output:args.output,expectedActiveCount:args.expectedActive });return;
+  }
+  if (args.command === 'lifecycle-qa') {
+    await runLifecycleQaCommand(config,{ runId:args.run,workbookPath:args.output,expectedActiveCount:args.expectedActive });return;
   }
   if (args.command === 'review-capture') {
     const result=await runDay9ReviewCaptureCommand(config,{ targetCount:args.target ?? 10,jobId:args.job });

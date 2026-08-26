@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["content-script.js"],
+      "js": ["review-loader.js","content-script.js"],
       "run_at": "document_idle"
     }
   ]

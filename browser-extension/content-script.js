@@ -9,10 +9,7 @@ function currentPage() {
 }
 
 function extractGoodsId(value) {
-  try {
-    const url=new URL(value);
-    return url.searchParams.get('goods_id')?.trim() || url.pathname.match(/-g-(\d+)\.html/i)?.[1] || null;
-  } catch { return null; }
+  try { const url=new URL(value);return url.searchParams.get('goods_id')?.trim() || url.pathname.match(/-g-(\d+)\.html/i)?.[1] || null; } catch { return null; }
 }
 
 function sendRuntimeMessage(message) {
@@ -25,148 +22,80 @@ function sendRuntimeMessage(message) {
 async function captureCurrentPage(onStatus=() => {}) {
   if (captureRunning) return;
   captureRunning=true;
+  let matchedContext=false;
+  const report=message => { onStatus(message);showProgressNotice(message); };
   try {
     const page=currentPage();
     if (!page.isTemuProductPage) throw new Error('当前页面不是带 goods_id 的 Temu 商品页。');
-    onStatus('正在核对运营台任务…');
+    if (!globalThis.TemuReviewLoader) throw new Error('评论加载器未就绪。请在 chrome://extensions 重新加载扩展后刷新商品页。');
+    report('正在核对运营台任务…');
     const lookup=await sendRuntimeMessage({ type:'GET_REVIEW_CONTEXT',goodsId:page.goodsId });
     if (!lookup?.ok) throw new Error(lookup?.error ?? '无法连接本地运营台。');
     if (!lookup.context?.matched) throw new Error('当前商品与运营台 Day9 评论任务不匹配。');
-    if (hasReviewGuidelineDialog()) {
-      const message='Temu 正在显示“评价规则”说明。请先手动点击 OK 或右上角关闭，再点击采集；扩展不会自动关闭该说明。';
-      showOperatorNotice(message);
-      throw new Error(message);
-    }
-    onStatus('正在读取当前页面已显示评论…');
-    let cards=collectVisibleReviewCards();
-    if (!cards.length) {
-      const opened=await openVisibleReviews();
-      if (opened) {
-        onStatus('已展开评论区域，正在读取…');
-        await waitForPageUpdate();
-        cards=collectVisibleReviewCards();
+    matchedContext=true;
+
+    let received=0,inserted=0,deduplicated=0,batches=0,cutoffReached=false;
+    const result=await globalThis.TemuReviewLoader.loadReviews({
+      cutoffDate:lookup.context.cutoffDate,
+      startPageIndex:Number(lookup.context.pagesScanned ?? 0)+1,
+      onStatus:report,
+      onBatch:async (cards,pageIndex) => {
+        report(`正在保存第 ${pageIndex} 批已显示评论…`);
+        const saved=await sendRuntimeMessage({ type:'SAVE_REVIEW_BATCH',payload:{ goodsId:page.goodsId,sourceUrl:page.url,cards,pageIndex } });
+        if (!saved?.ok) throw new Error(saved?.error ?? '保存评论失败。');
+        batches+=1;received+=Number(saved.result.received ?? 0);inserted+=Number(saved.result.inserted ?? 0);deduplicated+=Number(saved.result.deduplicated ?? 0);
+        cutoffReached=Boolean(saved.result.cutoffReached);
+        return saved.result;
       }
-    }
-    if (!cards.length) {
-      const message='未发现已显示的具体评论。请向下滚动到 Customer reviews，点击 See all / View all reviews，确认评论内容出现后再点击采集。';
-      showOperatorNotice(message);
-      throw new Error(message);
-    }
-    const saved=await sendRuntimeMessage({ type:'SAVE_REVIEW_PAGE',payload:{ goodsId:page.goodsId,sourceUrl:page.url,cards,pageIndex:lookup.context.pagesScanned+1 } });
-    if (!saved?.ok) throw new Error(saved?.error ?? '保存评论失败。');
-    const result=saved.result;
-    onStatus(`完成：读取 ${result.received} 条，新增 ${result.inserted} 条，去重 ${result.deduplicated} 条。`);
-    return result;
+    });
+    const finalCutoffReached=cutoffReached || result.cutoffReached;
+    const finished=await sendRuntimeMessage({ type:'FINISH_REVIEW_SCROLL',payload:{ goodsId:page.goodsId,sourceUrl:page.url,stopReason:result.stopReason,cutoffReached:finalCutoffReached,lastPageIndex:result.lastPageIndex } });
+    if (!finished?.ok) throw new Error(finished?.error ?? '保存评论结束状态失败。');
+    report(`完成：加载 ${batches} 批，读取 ${received} 条，新增 ${inserted} 条，去重 ${deduplicated} 条。${finalCutoffReached ? '已遇到早于 cutoff 的评论，已停止。':'Temu 在 cutoff 前已无更多可加载评论，已记录为部分完成。'}`);
+    return { ...result,received,inserted,deduplicated,batches,cutoffReached:finalCutoffReached,completion:finished.result };
   } catch (error) {
-    onStatus(`未采集：${error.message}`);
-    throw error;
+    const errorCode=String(error?.code ?? 'EXTENSION_CAPTURE_FAILED');
+    const manualVerification=errorCode === 'MANUAL_VERIFICATION_REQUIRED';
+    const message=manualVerification ? `等待人工验证：${error.message}`:`未采集：${error.message}`;
+    const page=currentPage();
+    if (matchedContext && page.goodsId) await sendRuntimeMessage({ type:'FAIL_REVIEW_CAPTURE',payload:{ goodsId:page.goodsId,errorCode,errorMessage:error.message } }).catch(() => {});
+    showOperatorNotice(message,manualVerification);onStatus(message);throw error;
   } finally { captureRunning=false; }
 }
 
-async function openVisibleReviews() {
-  const controls=[...document.querySelectorAll('button,[role="button"],a')]
-    .filter(node => node instanceof HTMLElement && node.offsetParent !== null)
-    .filter(node => /^(?:see all|view all|all)\s+reviews?\b/i.test(node.innerText.trim()))
-    .slice(0,1);
-  const control=controls[0];
-  if (!control) return false;
-  control.scrollIntoView({ block:'center',behavior:'smooth' });
-  await new Promise(resolve => setTimeout(resolve,250));
-  control.click();
-  return true;
-}
-
-function waitForPageUpdate() { return new Promise(resolve => setTimeout(resolve,1200)); }
-
-function showOperatorNotice(message) {
-  const existing=document.getElementById('temu-review-capture-notice');
-  existing?.remove();
-  const notice=document.createElement('div');
-  notice.id='temu-review-capture-notice';notice.setAttribute('role','alert');notice.textContent=message;
-  Object.assign(notice.style,{ position:'fixed',right:'20px',bottom:'78px',zIndex:'2147483647',maxWidth:'360px',padding:'12px 14px',borderRadius:'8px',background:'#7f1d1d',color:'#fff',fontSize:'14px',lineHeight:'1.45',boxShadow:'0 3px 12px rgba(0,0,0,.28)' });
-  document.documentElement.append(notice);
-  setTimeout(() => notice.remove(),12000);
-}
-
-function collectVisibleReviewCards() {
-  const selectors=['[data-testid*="review" i]','[data-review-id]','[class*="review-item" i]','[class*="comment-item" i]'];
-  const selectorNodes=selectors.flatMap(selector => [...document.querySelectorAll(selector)]);
-  const nodes=[...new Set([...selectorNodes,...collectDateBasedReviewCards()])]
-    .filter(node => node instanceof HTMLElement && node.offsetParent !== null && node.innerText.trim().length >= 5)
-    .filter(node => !nodesContainCandidateAncestor(node,selectors)).slice(0,200);
-  return nodes.map(node => {
-    const rawText=node.innerText.trim().slice(0,5000);
-    const ratingNode=node.querySelector('[aria-label*="star" i],[aria-label*="out of 5" i],[data-rating]');
-    const contentNode=node.querySelector('[data-testid*="content" i],[class*="content" i],[class*="text" i]');
-    const dateNode=node.querySelector('time,[data-testid*="date" i],[class*="date" i]');
-    return {
-      reviewId:node.getAttribute('data-review-id') || node.id || null,
-      ratingText:inferRatingText(ratingNode,rawText),
-      contentText:contentNode?.textContent?.trim() || rawText,
-      dateText:dateNode?.getAttribute('datetime') || dateNode?.textContent?.trim() || rawText,
-      sku:node.querySelector('[class*="sku" i],[class*="variant" i]')?.textContent?.trim() || null,
-      country:node.querySelector('[class*="country" i]')?.textContent?.trim() || null,
-      imageUrls:[...node.querySelectorAll('img[src]')].map(image => image.currentSrc || image.src).filter(Boolean).slice(0,20),
-      rawText
-    };
-  });
-}
-
-function collectDateBasedReviewCards() {
-  const datePattern=/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+20\d{2}\b/i;
-  const dateNodes=[...document.querySelectorAll('div,li,article,span,p')]
-    .filter(node => node instanceof HTMLElement && node.offsetParent !== null && datePattern.test(node.innerText));
-  return [...new Set(dateNodes.map(node => reviewContainerForDate(node,datePattern)).filter(Boolean))];
-}
-
-function reviewContainerForDate(node,datePattern) {
-  let current=node;
-  let best=null;
-  for (let depth=0;current && depth<8;depth+=1,current=current.parentElement) {
-    const text=current.innerText?.trim() ?? '';
-    const matches=text.match(new RegExp(datePattern.source,'ig')) ?? [];
-    if (matches.length > 1) break;
-    if (matches.length === 1 && text.length >= 25 && text.length <= 5_000) best=current;
+function showProgressNotice(message) {
+  let notice=document.getElementById('temu-review-capture-progress');
+  if (!notice) {
+    notice=document.createElement('div');notice.id='temu-review-capture-progress';notice.setAttribute('role','status');
+    Object.assign(notice.style,{ all:'initial',position:'fixed',right:'18px',bottom:'76px',zIndex:'2147483647',width:'340px',boxSizing:'border-box',padding:'11px 13px',borderRadius:'8px',background:'#172033',color:'#fff',font:'14px/1.45 system-ui,sans-serif',boxShadow:'0 3px 12px rgba(0,0,0,.3)',wordBreak:'break-word' });
+    document.documentElement.append(notice);
   }
-  return best;
+  notice.textContent=message;
 }
 
-function inferRatingText(ratingNode,rawText) {
-  const explicit=ratingNode?.getAttribute('aria-label') || ratingNode?.getAttribute('data-rating');
-  if (explicit) return explicit;
-  const stars=(String(rawText).match(/★/g) ?? []).length;
-  if (stars >= 1 && stars <= 5) return `${stars} out of 5 stars`;
-  const named=String(rawText).match(/\b(excellent|good|average|poor|bad)\b/i)?.[1]?.toLowerCase();
-  const values={ excellent:5,good:4,average:3,poor:2,bad:1 };
-  return named ? `${values[named]} out of 5 stars`:rawText;
+function showOperatorNotice(message,recoverable=false) {
+  const existing=document.getElementById('temu-review-capture-notice');existing?.remove();
+  const notice=document.createElement('div');notice.id='temu-review-capture-notice';notice.setAttribute('role','alert');notice.textContent=message;
+  Object.assign(notice.style,{ position:'fixed',right:'20px',bottom:'78px',zIndex:'2147483647',maxWidth:'380px',padding:'12px 14px',borderRadius:'8px',background:recoverable ? '#92400e':'#7f1d1d',color:'#fff',fontSize:'14px',lineHeight:'1.45',boxShadow:'0 3px 12px rgba(0,0,0,.28)' });
+  document.documentElement.append(notice);setTimeout(() => notice.remove(),recoverable ? 30000:12000);
 }
 
-function hasReviewGuidelineDialog() {
-  return [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')]
-    .some(node => node instanceof HTMLElement && node.offsetParent !== null
-      && /all reviews are from customers who have purchased this item from temu/i.test(node.innerText));
-}
-
-function nodesContainCandidateAncestor(node,selectors) {
-  return selectors.some(selector => node.parentElement?.closest(selector));
-}
-
-function injectCaptureButton() {
-  if (!currentPage().isTemuProductPage || document.getElementById(BUTTON_ID)) return;
-  const button=document.createElement('button');
-  button.id=BUTTON_ID;button.type='button';button.textContent='采集当前商品评论';
-  Object.assign(button.style,{ position:'fixed',right:'20px',bottom:'20px',zIndex:'2147483647',padding:'12px 18px',border:'0',borderRadius:'8px',background:'#ff5a1f',color:'#fff',fontSize:'14px',fontWeight:'700',boxShadow:'0 3px 12px rgba(0,0,0,.25)',cursor:'pointer' });
-  button.addEventListener('click',() => captureCurrentPage(status => { button.textContent=status;button.disabled=captureRunning; }).catch(() => {}).finally(() => { setTimeout(() => { button.textContent='采集当前商品评论';button.disabled=false; },3000); }));
+function installCaptureButton() {
+  if (document.getElementById(BUTTON_ID)) return;
+  const button=document.createElement('button');button.id=BUTTON_ID;button.type='button';button.textContent='采集当前商品评论';button.title='仅读取当前页面已经显示的公开评论';
+  Object.assign(button.style,{ all:'initial',position:'fixed',right:'18px',bottom:'18px',zIndex:'2147483646',boxSizing:'border-box',padding:'11px 15px',border:'0',borderRadius:'8px',background:'#f97316',color:'#fff',font:'700 14px/1.3 system-ui,sans-serif',cursor:'pointer',boxShadow:'0 2px 10px rgba(0,0,0,.25)' });
+  button.addEventListener('click',async () => { button.disabled=true;try { await captureCurrentPage(message => { button.textContent=message.slice(0,42); }); } catch {} finally { button.disabled=false;button.textContent='采集当前商品评论'; } });
   document.documentElement.append(button);
 }
 
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
-  if (message?.type === 'GET_CURRENT_PAGE') { sendResponse(currentPage());return false; }
-  if (message?.type === 'START_CURRENT_PAGE_CAPTURE') {
-    captureCurrentPage().then(result => sendResponse({ ok:true,result })).catch(error => sendResponse({ ok:false,error:error.message }));
-    return true;
+  if (message?.type === 'GET_CURRENT_PAGE') {
+    sendResponse(currentPage());
+    return undefined;
   }
-  return false;
+  if (message?.type !== 'START_CURRENT_PAGE_CAPTURE') return undefined;
+  captureCurrentPage().then(result => sendResponse({ ok:true,result })).catch(error => sendResponse({ ok:false,error:error.message }));
+  return true;
 });
 
-injectCaptureButton();
+installCaptureButton();

@@ -32,11 +32,14 @@ export async function prepareReviewCaptureJob(config,{ targetCount=10,jobId=null
     const products=analysis.listActiveProducts(sourceJobId,'week2-motorcycle-fine-v1');
     const knownUnavailable=Number(targetCount) < 512 ? db.prepare(`SELECT DISTINCT goods_id FROM review_capture_coverage
       WHERE stop_reason='PRODUCT_NOT_FOUND'`).all().map(row => String(row.goods_id)):[];
-    const queue=buildDay9EligibleQueue(products,{ targetCount,excludeGoodsIds:knownUnavailable });
+    const previouslyCovered=Number(targetCount) < 512 ? db.prepare(`SELECT DISTINCT goods_id FROM review_capture_coverage
+      UNION SELECT DISTINCT goods_id FROM reviews`).all().map(row => String(row.goods_id)):[];
+    const queue=buildDay9EligibleQueue(products,{ targetCount,excludeGoodsIds:[...new Set([...knownUnavailable,...previouslyCovered])] });
     const runDate=now();const cutoffDate=daysAgoIso(30,runDate);const coreBefore=analysis.coreCounts();
     const job=jobs.createJob({ jobType:'reviews',mode:'recent_30d',siteCountry:config.catalog.siteCountry,language:config.catalog.language,
       currency:config.catalog.currency,targetCount:queue.selected.length,config:{ day:9,sourceJobId,taxonomy:'week2-motorcycle-fine-v1',eligibleCount:queue.eligible.length,
-        manualReviewExcluded:queue.manualReviewExcluded,knownUnavailableExcluded:queue.knownUnavailableExcluded,priorityCounts:queue.priorityCounts,cutoffDate,runDate:runDate.toISOString(),coreBefore } });
+        manualReviewExcluded:queue.manualReviewExcluded,knownUnavailableExcluded:knownUnavailable.length,
+        previouslyCoveredExcluded:previouslyCovered.length,priorityCounts:queue.priorityCounts,cutoffDate,runDate:runDate.toISOString(),coreBefore } });
     for (const [index,item] of queue.selected.entries()) jobs.upsertJobItem(job.id,{ sequenceNo:index+1,itemKey:item.goodsId,productId:item.productId,productUrl:item.canonicalUrl ?? item.productUrl,
       checkpoint:{ category:item.level3,reviewCount:item.reviewCount,cutoffDate } });
     reviews.initializeCoverage(job.id,queue.selected,cutoffDate);

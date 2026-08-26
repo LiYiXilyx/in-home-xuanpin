@@ -36,12 +36,13 @@ export function summarizeCoverage(items) {
 
 function acceptanceTen(eligible) {
   const selected=[];const add=item => { if (item && !selected.some(current => current.productId === item.productId)) selected.push(item); };
-  const priority=eligible.filter(item => PRIORITY.has(item.level3));
-  const nonPriority=eligible.filter(item => !PRIORITY.has(item.level3));
-  add(priority.find(item => Number(item.reviewCount) >= 100));
-  add(priority.find(item => item.reviewCount !== null && Number(item.reviewCount) > 0 && Number(item.reviewCount) <= 5));
-  add(priority.find(item => Number(item.reviewCount) === 0) ?? eligible.find(item => Number(item.reviewCount) === 0));
-  add(nonPriority.find(item => Number(item.reviewCount) >= 20) ?? nonPriority[0]);
+  for (const label of PRIORITY.keys()) add(eligible.find(item => item.level3 === label));
+  const nonPriority=eligible.filter(item => !PRIORITY.has(item.level3));const seenCategories=new Set();
+  for (const item of nonPriority) {
+    if (seenCategories.has(item.level3)) continue;
+    seenCategories.add(item.level3);add(item);
+    if (selected.length === 10) break;
+  }
   for (const item of eligible) { add(item);if (selected.length === 10) break; }
   return selected.sort(queueOrder);
 }
