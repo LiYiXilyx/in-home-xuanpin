@@ -1,0 +1,36 @@
+{
+  "category_key": "motorcycle-accessories",
+  "category_profile_version": "motorcycle-accessories-v1",
+  "display_name": "Motorcycle Accessories",
+  "site_country": "DE",
+  "language": "en",
+  "currency": "EUR",
+  "sort_order": "Top Sales",
+  "target_count": 3000,
+  "exclude_electronics": true,
+  "exclude_usb": true,
+  "exclude_battery": true,
+  "price_min_eur": 5,
+  "taxonomy": "week2-motorcycle-fine-v1",
+  "navigation": {
+    "entry_method": "site_menu",
+    "breadcrumbs": ["Automotive", "Motorcycle Accessories"],
+    "category_confirmation_gate": true
+  },
+  "business_rules": {
+    "default_gate": "non_electronic_unique_count",
+    "manual_review_on_low_confidence": true,
+    "count_manual_review_as_non_electronic": false,
+    "hard_exclusion_codes": [
+      "ELECTRONIC_PRODUCT",
+      "USB_PRODUCT",
+      "BATTERY_PRODUCT",
+      "RECHARGEABLE_PRODUCT",
+      "BLUETOOTH_PRODUCT",
+      "WIRELESS_COMMUNICATION",
+      "AUDIO_ELECTRONIC",
+      "LIGHTING_ELECTRONIC",
+      "CERTIFICATION_RISK"
+    ]
+  }
+}
