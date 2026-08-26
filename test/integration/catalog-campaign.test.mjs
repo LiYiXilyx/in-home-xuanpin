@@ -17,7 +17,7 @@ test('Catalog Scale Day1 foundation is isolated, idempotent, electronic-safe, an
   const databasePath=path.join(directory,'catalog-scale.db');
   const first=migrateDatabase({ databasePath });
   const second=migrateDatabase({ databasePath });
-  assert.equal(first.applied.at(-1),'017_catalog_scale_v2.sql');
+  assert.equal(first.applied.at(-1),'018_catalog_refresh_baseline.sql');
   assert.equal(second.applied.length,0);
 
   const db=openDatabase(databasePath);

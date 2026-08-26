@@ -16,6 +16,27 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
   function getCampaign(id) { return mapCampaign(db.prepare('SELECT * FROM catalog_campaigns WHERE id=?').get(id)); }
 
+  function setCampaignBrowserContext(id,{ profileName=null,profileDirectory=null,controlMode=null }={}) {
+    db.prepare(`UPDATE catalog_campaigns SET browser_profile_name=?,browser_profile_directory=?,
+      browser_control_mode=?,updated_at=? WHERE id=?`).run(profileName,profileDirectory,controlMode,now(),id);
+    return getCampaign(id);
+  }
+
+  function captureCampaignBaseline(campaignId) {
+    const timestamp=now();
+    db.prepare(`INSERT INTO catalog_campaign_baseline_items(
+      campaign_id,product_id,platform,goods_id,membership_id,captured_at
+    ) SELECT ?,p.id,p.platform,p.external_product_id,m.id,?
+      FROM products p
+      JOIN catalog_memberships m ON m.product_id=p.id AND m.active=1
+      WHERE m.id=(SELECT m2.id FROM catalog_memberships m2
+        WHERE m2.product_id=p.id AND m2.active=1 ORDER BY m2.last_seen_at DESC,m2.id DESC LIMIT 1)
+      ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp);
+    const count=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_campaign_baseline_items WHERE campaign_id=?').get(campaignId).count);
+    db.prepare('UPDATE catalog_campaigns SET baseline_pool_count=?,updated_at=? WHERE id=?').run(count,timestamp,campaignId);
+    return count;
+  }
+
   function transitionCampaign(id,status,{ qaStatus,qaSummary,finished=false }={}) {
     const timestamp=now();
     db.prepare(`UPDATE catalog_campaigns SET status=?,qa_status=COALESCE(?,qa_status),
@@ -169,8 +190,202 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     );
   }
 
+  function recordNavigationRisk(campaignId,input) {
+    const timestamp=now();
+    db.prepare(`INSERT INTO catalog_navigation_risk_observations(
+      campaign_id,platform,goods_id,historical_url_status,fresh_navigation_status,
+      category_card_available,search_context_mismatch,navigation_not_resolved,evidence_json,observed_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(campaign_id,platform,goods_id) DO UPDATE SET
+      historical_url_status=excluded.historical_url_status,
+      fresh_navigation_status=excluded.fresh_navigation_status,
+      category_card_available=excluded.category_card_available,
+      search_context_mismatch=excluded.search_context_mismatch,
+      navigation_not_resolved=excluded.navigation_not_resolved,
+      evidence_json=excluded.evidence_json,observed_at=excluded.observed_at,updated_at=excluded.updated_at`).run(
+      campaignId,input.platform ?? 'temu',String(input.goodsId),input.historicalUrlStatus ?? 'not_checked',
+      input.freshNavigationStatus ?? 'not_checked',input.categoryCardAvailable ? 1:0,
+      input.searchContextMismatch ? 1:0,input.navigationNotResolved ? 1:0,
+      JSON.stringify(input.evidence ?? {}),input.observedAt ?? timestamp,timestamp
+    );
+  }
+
+  function getRefreshComparison(campaignId) {
+    const row=db.prepare(`SELECT
+      (SELECT COUNT(*) FROM catalog_campaign_baseline_items WHERE campaign_id=?) AS old_active_count,
+      (SELECT COUNT(*) FROM catalog_staging_products WHERE campaign_id=? AND electronic_screening_status='passed') AS new_observed_unique_count,
+      (SELECT COUNT(*) FROM catalog_campaign_baseline_items b JOIN catalog_staging_products s
+        ON s.campaign_id=b.campaign_id AND s.platform=b.platform AND s.goods_id=b.goods_id
+        WHERE b.campaign_id=? AND s.electronic_screening_status='passed') AS intersection_count,
+      (SELECT COUNT(*) FROM catalog_staging_products s LEFT JOIN catalog_campaign_baseline_items b
+        ON b.campaign_id=s.campaign_id AND b.platform=s.platform AND b.goods_id=s.goods_id
+        WHERE s.campaign_id=? AND s.electronic_screening_status='passed' AND b.id IS NULL) AS new_goods_count,
+      (SELECT COUNT(*) FROM catalog_campaign_baseline_items b LEFT JOIN catalog_staging_products s
+        ON s.campaign_id=b.campaign_id AND s.platform=b.platform AND s.goods_id=b.goods_id
+          AND s.electronic_screening_status='passed'
+        WHERE b.campaign_id=? AND s.id IS NULL) AS not_seen_count`).get(campaignId,campaignId,campaignId,campaignId,campaignId);
+    return Object.fromEntries(Object.entries(row).map(([key,value]) => [key,Number(value)]));
+  }
+
+  function getNavigationRiskMetrics(campaignId) {
+    const row=db.prepare(`SELECT
+      SUM(CASE WHEN historical_url_status='available' THEN 1 ELSE 0 END) AS historical_url_available_count,
+      SUM(CASE WHEN historical_url_status='sold_out' THEN 1 ELSE 0 END) AS historical_url_sold_out_count,
+      SUM(CASE WHEN fresh_navigation_status='recovered' THEN 1 ELSE 0 END) AS fresh_navigation_recovered_count,
+      SUM(category_card_available) AS category_card_available_count,
+      SUM(search_context_mismatch) AS search_context_mismatch_count,
+      SUM(navigation_not_resolved) AS navigation_not_resolved_count
+      FROM catalog_navigation_risk_observations WHERE campaign_id=?`).get(campaignId);
+    return Object.fromEntries(Object.entries(row).map(([key,value]) => [key,Number(value ?? 0)]));
+  }
+
+  function getQualityMetrics(campaignId) {
+    const row=db.prepare(`SELECT COUNT(*) AS total,
+      COUNT(DISTINCT goods_id) AS distinct_goods,
+      SUM(CASE WHEN latest_title IS NOT NULL AND TRIM(latest_title)<>'' THEN 1 ELSE 0 END) AS title_count,
+      SUM(CASE WHEN price_amount IS NOT NULL THEN 1 ELSE 0 END) AS price_count,
+      SUM(CASE WHEN image_url IS NOT NULL AND TRIM(image_url)<>'' THEN 1 ELSE 0 END) AS image_count,
+      SUM(CASE WHEN sales_count IS NOT NULL THEN 1 ELSE 0 END) AS sales_count,
+      SUM(CASE WHEN rating IS NOT NULL THEN 1 ELSE 0 END) AS rating_count,
+      SUM(CASE WHEN review_count IS NOT NULL THEN 1 ELSE 0 END) AS review_count_count,
+      SUM(CASE WHEN electronic_screening_status='manual_review_required' THEN 1 ELSE 0 END) AS manual_review_count
+      FROM catalog_staging_products WHERE campaign_id=?`).get(campaignId);
+    const total=Number(row.total);
+    const coverage=value => total ? Number(value)/total:0;
+    return { total,duplicateGoodsIdCount:total-Number(row.distinct_goods),manualReviewCount:Number(row.manual_review_count),
+      titleCoverage:coverage(row.title_count),priceCoverage:coverage(row.price_count),imageCoverage:coverage(row.image_count),
+      salesCoverage:coverage(row.sales_count),ratingCoverage:coverage(row.rating_count),reviewCountCoverage:coverage(row.review_count_count),
+      electronicInStagingCount:Number(db.prepare(`SELECT COUNT(*) AS count FROM catalog_staging_products s
+        WHERE s.campaign_id=? AND EXISTS(SELECT 1 FROM catalog_exclusion_observations e
+          WHERE e.campaign_id=s.campaign_id AND e.goods_id=s.goods_id)`).get(campaignId).count) };
+  }
+
+  function materializeRefresh(campaign) {
+    const existing=db.prepare('SELECT * FROM catalog_refresh_materializations WHERE campaign_id=?').get(campaign.id);
+    if (existing) return mapMaterialization(existing);
+    const profile=campaign.config.categoryProfile;
+    const timestamp=now();
+    const before=coreCounts(db);
+    const jobId=createId('catalog_refresh_job');
+    db.prepare(`INSERT INTO crawl_jobs(
+      id,job_type,mode,site_country,language,currency,primary_category,subcategory,sort_order,target_count,
+      status,checkpoint_json,config_json,total_items,processed_items,success_items,failed_items,
+      discovered_count,stored_count,error_count,resume_count,requested_at,started_at,heartbeat_at,
+      updated_at,finished_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      jobId,'catalog','catalog_scale_refresh',profile.site_country,profile.language,profile.currency,
+      profile.navigation?.breadcrumbs?.[0] ?? 'Automotive',profile.display_name,profile.sort_order,campaign.targetCount,
+      'completed','{}',JSON.stringify({ campaignId:campaign.id,categoryKey:campaign.categoryKey }),
+      campaign.nonElectronicUniqueCount,campaign.nonElectronicUniqueCount,campaign.nonElectronicUniqueCount,0,
+      campaign.nonElectronicUniqueCount,campaign.nonElectronicUniqueCount,0,0,
+      timestamp,timestamp,timestamp,timestamp,timestamp,timestamp
+    );
+    const rows=db.prepare(`SELECT * FROM catalog_staging_products
+      WHERE campaign_id=? AND electronic_screening_status='passed' ORDER BY first_seen_sequence`).all(campaign.id);
+    let productsInserted=0,membershipsInserted=0,snapshotsInserted=0;
+    for (const row of rows) {
+      let product=db.prepare('SELECT id FROM products WHERE platform=? AND external_product_id=?').get(row.platform,row.goods_id);
+      if (!product) {
+        const inserted=db.prepare(`INSERT INTO products(platform,external_product_id,source_url,canonical_url,source_domain,title,status,
+          first_seen_at,last_seen_at,raw_identity_json) VALUES(?,?,?,?,? ,?,'active',?,?,?)`).run(
+          row.platform,row.goods_id,row.latest_source_url,row.canonical_url,'www.temu.com',row.latest_title,
+          row.first_seen_at,row.last_seen_at,JSON.stringify({ platform:row.platform,goods_id:row.goods_id })
+        );
+        product={ id:Number(inserted.lastInsertRowid) };productsInserted+=1;
+      } else {
+        db.prepare(`UPDATE products SET source_url=COALESCE(?,source_url),canonical_url=?,title=COALESCE(?,title),
+          last_seen_at=? WHERE id=?`).run(row.latest_source_url,row.canonical_url,row.latest_title,row.last_seen_at,product.id);
+      }
+      const snapshot=db.prepare(`INSERT INTO product_snapshots(job_id,product_id,captured_at,source_url,title,price_amount,currency,
+        sales_count,rating,review_count,listing_rank,image_url,availability,missing_fields_json,raw_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id,product_id) DO NOTHING`).run(
+        jobId,product.id,row.last_seen_at,row.latest_source_url ?? row.canonical_url,row.latest_title,row.price_amount,row.currency,
+        row.sales_count,row.rating,row.review_count,row.first_seen_sequence,row.image_url,'observed',
+        JSON.stringify(missingSnapshotFields(row)),row.raw_json
+      );
+      snapshotsInserted+=Number(snapshot.changes);
+      const membership=db.prepare(`SELECT id FROM catalog_memberships WHERE product_id=? ORDER BY active DESC,last_seen_at DESC,id DESC LIMIT 1`).get(product.id);
+      if (membership) {
+        db.prepare(`UPDATE catalog_memberships SET source_page_url=COALESCE(?,source_page_url),current_rank=?,last_seen_at=?,
+          last_job_id=?,category_key=?,category_profile_version=?,campaign_id=?,source_id=? WHERE id=?`).run(
+          row.latest_source_url,row.first_seen_sequence,row.last_seen_at,jobId,campaign.categoryKey,campaign.categoryProfileVersion,
+          campaign.id,row.latest_source_id,membership.id
+        );
+      } else {
+        db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,primary_category,subcategory,
+          source_page_url,sort_order,current_rank,active,first_seen_at,last_seen_at,last_job_id,category_key,
+          category_profile_version,campaign_id,source_id) VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`).run(
+          product.id,profile.site_country,profile.language,profile.currency,profile.navigation?.breadcrumbs?.[0] ?? 'Automotive',
+          profile.display_name,row.latest_source_url,profile.sort_order,row.first_seen_sequence,row.first_seen_at,row.last_seen_at,
+          jobId,campaign.categoryKey,campaign.categoryProfileVersion,campaign.id,row.latest_source_id
+        );membershipsInserted+=1;
+      }
+      recordCampaignObservation(campaign.id,{ productId:product.id,platform:row.platform,goodsId:row.goods_id },'seen',{
+        source:'catalog_staging',snapshotJobId:jobId
+      });
+    }
+    const notSeen=db.prepare(`SELECT b.product_id,b.platform,b.goods_id FROM catalog_campaign_baseline_items b
+      LEFT JOIN catalog_staging_products s ON s.campaign_id=b.campaign_id AND s.platform=b.platform
+        AND s.goods_id=b.goods_id AND s.electronic_screening_status='passed'
+      WHERE b.campaign_id=? AND s.id IS NULL`).all(campaign.id);
+    for (const row of notSeen) recordCampaignObservation(campaign.id,{ productId:row.product_id,platform:row.platform,goodsId:row.goods_id },
+      'not_seen_in_campaign',{ meaning:'observation only; product and active membership preserved' });
+    const after=coreCounts(db);
+    db.prepare(`INSERT INTO catalog_refresh_materializations(
+      campaign_id,snapshot_job_id,products_before,products_after,memberships_before,memberships_after,
+      snapshots_before,snapshots_after,reviews_before,reviews_after,products_inserted,memberships_inserted,
+      snapshots_inserted,materialized_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(campaign.id,jobId,before.products,after.products,before.memberships,
+      after.memberships,before.snapshots,after.snapshots,before.reviews,after.reviews,productsInserted,membershipsInserted,
+      snapshotsInserted,timestamp);
+    return mapMaterialization(db.prepare('SELECT * FROM catalog_refresh_materializations WHERE campaign_id=?').get(campaign.id));
+  }
+
+  function saveRefreshAudit(campaignId,audit) {
+    db.prepare(`INSERT INTO catalog_refresh_audits(
+      campaign_id,old_active_count,new_observed_unique_count,intersection_count,new_goods_count,not_seen_count,
+      historical_url_available_count,historical_url_sold_out_count,fresh_navigation_recovered_count,
+      category_card_available_count,search_context_mismatch_count,navigation_not_resolved_count,
+      duplicate_goods_id_count,electronic_in_staging_count,manual_review_count,title_coverage,price_coverage,
+      image_coverage,sales_coverage,rating_coverage,review_count_coverage,qa_passed,qa_details_json,checked_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(campaign_id) DO UPDATE SET
+      old_active_count=excluded.old_active_count,new_observed_unique_count=excluded.new_observed_unique_count,
+      intersection_count=excluded.intersection_count,new_goods_count=excluded.new_goods_count,not_seen_count=excluded.not_seen_count,
+      historical_url_available_count=excluded.historical_url_available_count,
+      historical_url_sold_out_count=excluded.historical_url_sold_out_count,
+      fresh_navigation_recovered_count=excluded.fresh_navigation_recovered_count,
+      category_card_available_count=excluded.category_card_available_count,
+      search_context_mismatch_count=excluded.search_context_mismatch_count,
+      navigation_not_resolved_count=excluded.navigation_not_resolved_count,
+      duplicate_goods_id_count=excluded.duplicate_goods_id_count,electronic_in_staging_count=excluded.electronic_in_staging_count,
+      manual_review_count=excluded.manual_review_count,title_coverage=excluded.title_coverage,
+      price_coverage=excluded.price_coverage,image_coverage=excluded.image_coverage,sales_coverage=excluded.sales_coverage,
+      rating_coverage=excluded.rating_coverage,review_count_coverage=excluded.review_count_coverage,
+      qa_passed=excluded.qa_passed,qa_details_json=excluded.qa_details_json,checked_at=excluded.checked_at`).run(
+      campaignId,audit.oldActiveCount,audit.newObservedUniqueCount,audit.intersectionCount,audit.newGoodsCount,audit.notSeenCount,
+      audit.historicalUrlAvailableCount,audit.historicalUrlSoldOutCount,audit.freshNavigationRecoveredCount,
+      audit.categoryCardAvailableCount,audit.searchContextMismatchCount,audit.navigationNotResolvedCount,
+      audit.duplicateGoodsIdCount,audit.electronicInStagingCount,audit.manualReviewCount,audit.titleCoverage,
+      audit.priceCoverage,audit.imageCoverage,audit.salesCoverage,audit.ratingCoverage,audit.reviewCountCoverage,
+      audit.qaPassed ? 1:0,JSON.stringify(audit.qaDetails),now()
+    );
+    return getRefreshAudit(campaignId);
+  }
+
+  function getRefreshAudit(campaignId) {
+    const row=db.prepare('SELECT * FROM catalog_refresh_audits WHERE campaign_id=?').get(campaignId);
+    return row ? { ...row,qa_details_json:parseJson(row.qa_details_json) }:null;
+  }
+
+  function getRefreshMaterialization(campaignId) {
+    return mapMaterialization(db.prepare('SELECT * FROM catalog_refresh_materializations WHERE campaign_id=?').get(campaignId));
+  }
+
   function activatePoolVersion(campaign,qaSummary={}) {
     const timestamp=now();
+    const previous=db.prepare(`SELECT id FROM catalog_pool_versions WHERE category_key=? AND status='active'`).get(campaign.categoryKey);
+    const legacyMembershipIds=db.prepare(`SELECT id FROM catalog_memberships WHERE active=1 ORDER BY id`).all().map(row => Number(row.id));
     db.prepare(`UPDATE catalog_pool_versions SET status='superseded',superseded_at=?,updated_at=?
       WHERE category_key=? AND status='active'`).run(timestamp,timestamp,campaign.categoryKey);
     const id=createId('catalog_pool');
@@ -186,6 +401,10 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
       pool_version_id,staging_product_id,platform,goods_id,category_key,membership_status,created_at
     ) SELECT ?,id,platform,goods_id,category_key,'seen',? FROM catalog_staging_products
       WHERE campaign_id=? AND electronic_screening_status='passed'`).run(id,timestamp,campaign.id);
+    db.prepare(`INSERT INTO catalog_pool_activation_history(
+      id,category_key,new_pool_version_id,previous_pool_version_id,legacy_active_membership_ids_json,activated_at
+    ) VALUES(?,?,?,?,?,?)`).run(createId('catalog_activation'),campaign.categoryKey,id,previous?.id ?? null,
+      JSON.stringify(legacyMembershipIds),timestamp);
     return mapPoolVersion(db.prepare('SELECT * FROM catalog_pool_versions WHERE id=?').get(id));
   }
 
@@ -277,9 +496,10 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     }));
   }
 
-  return { createCampaign,getCampaign,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
+  return { createCampaign,getCampaign,setCampaignBrowserContext,captureCampaignBaseline,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
-    activatePoolVersion,getRpaQueueForSource,getRpaQueue,getNextRpaQueue,listActiveRpaQueues,listRpaQueues,claimRpaQueue,
+    recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,materializeRefresh,
+    saveRefreshAudit,getRefreshAudit,getRefreshMaterialization,activatePoolVersion,getRpaQueueForSource,getRpaQueue,getNextRpaQueue,listActiveRpaQueues,listRpaQueues,claimRpaQueue,
     transitionRpaQueue,transitionSource,finishSourceRun,listSourceContributions };
 }
 
@@ -292,7 +512,9 @@ function mapCampaign(row) {
     nonElectronicUniqueCount:Number(row.non_electronic_unique_count),businessEligibleCount:Number(row.business_eligible_count),
     reviewableUniqueCount:Number(row.reviewable_unique_count),sourceCount:Number(row.source_count),
     completedSourceCount:Number(row.completed_source_count),config:parseJson(row.config_json),qaSummary:parseJson(row.qa_summary_json),
-    startedAt:row.started_at,finishedAt:row.finished_at,createdAt:row.created_at,updatedAt:row.updated_at };
+    browserProfileName:row.browser_profile_name,browserProfileDirectory:row.browser_profile_directory,
+    browserControlMode:row.browser_control_mode,startedAt:row.started_at,finishedAt:row.finished_at,
+    createdAt:row.created_at,updatedAt:row.updated_at };
 }
 function mapSource(row) { return row ? { id:row.id,campaignId:row.campaign_id,categoryKey:row.category_key,sourceKey:row.source_key,
   sourceType:row.source_type,sortOrder:row.sort_order,priority:Number(row.priority),targetQuota:row.target_quota===null?null:Number(row.target_quota),
@@ -309,3 +531,21 @@ function mapRpaQueue(row) { return row ? { id:row.id,campaignId:row.campaign_id,
   createdAt:row.created_at,updatedAt:row.updated_at }:null; }
 function nullableBoolean(value) { return value===undefined || value===null ? null:value ? 1:0; }
 function parseJson(value) { try { return value ? JSON.parse(value):null; } catch { return null; } }
+function coreCounts(db) {
+  return { products:Number(db.prepare('SELECT COUNT(*) AS count FROM products').get().count),
+    memberships:Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_memberships').get().count),
+    snapshots:Number(db.prepare('SELECT COUNT(*) AS count FROM product_snapshots').get().count),
+    reviews:Number(db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count) };
+}
+function missingSnapshotFields(row) {
+  return [['title','latest_title'],['price_amount','price_amount'],['currency','currency'],['sales_count','sales_count'],
+    ['rating','rating'],['review_count','review_count'],['listing_rank','first_seen_sequence'],['image_url','image_url']]
+    .filter(([,column]) => row[column]===null || row[column]===undefined || row[column]==='').map(([field]) => field);
+}
+function mapMaterialization(row) {
+  return row ? { campaignId:row.campaign_id,snapshotJobId:row.snapshot_job_id,productsBefore:Number(row.products_before),
+    productsAfter:Number(row.products_after),membershipsBefore:Number(row.memberships_before),membershipsAfter:Number(row.memberships_after),
+    snapshotsBefore:Number(row.snapshots_before),snapshotsAfter:Number(row.snapshots_after),reviewsBefore:Number(row.reviews_before),
+    reviewsAfter:Number(row.reviews_after),productsInserted:Number(row.products_inserted),membershipsInserted:Number(row.memberships_inserted),
+    snapshotsInserted:Number(row.snapshots_inserted),materializedAt:row.materialized_at }:null;
+}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 const root=path.resolve(import.meta.dirname,'../..');
 
@@ -27,7 +28,7 @@ test('Catalog Auto Runner is isolated, checkpointed, bounded, and exposes operat
   const script=fs.readFileSync(path.join(root,'browser-extension/catalog-auto-runner.js'),'utf8');
   for (const state of ['IDLE','SCANNING','BATCH_SUBMITTING','SCROLLING','LOAD_MORE_DETECTED','LOAD_MORE_TRIGGERED','WAITING_PROGRESS','MANUAL_REQUIRED','COMPLETED','FAILED']) assert.match(script,new RegExp(state));
   assert.match(script,/attempt<=2/);assert.match(script,/SAVE_CATALOG_CHECKPOINT/);assert.match(script,/CATALOG_MANUAL_REQUIRED/);
-  assert.match(script,/开始自动采集/);assert.match(script,/暂停/);assert.match(script,/继续/);assert.match(script,/停止/);
+  assert.match(script,/首次开始/);assert.match(script,/暂停/);assert.match(script,/恢复当前进度/);assert.match(script,/停止/);
   assert.doesNotMatch(script,/\b(?:cookie|localStorage|sessionStorage|authorization|token)\b/i);
 });
 
@@ -53,6 +54,14 @@ test('Catalog extension is isolated from Review and routes only localhost batch 
   assert.match(capture,/NO_PRODUCT_CARDS/);
   assert.match(capture,/temu-catalog-capture-button/);
   assert.match(capture,/采集当前商品列表/);
+});
+
+test('Catalog capture splits large DOM card sets below the localhost 500-card safety limit',() => {
+  const source=fs.readFileSync(path.join(root,'browser-extension/catalog-capture.js'),'utf8');
+  const sandbox=vm.createContext({ console,URL,location:{ href:'https://www.temu.com/de-en/motorcycles.html' },
+    document:{ getElementById:() => ({}) } });vm.runInContext(source,sandbox);
+  const capture=sandbox.TemuCatalogCapture;const chunks=capture.splitCards(Array.from({ length:820 },(_,index)=>index));
+  assert.deepEqual(Array.from(chunks,chunk=>chunk.length),[300,300,220]);assert.equal(capture.MAX_CARDS_PER_BATCH,300);
 });
 
 test('extension prompts the operator instead of submitting an empty review page',() => {

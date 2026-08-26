@@ -21,11 +21,19 @@ const NON_EXHAUSTING_LOAD_STATES=new Set([
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
 
-  function createCampaign({ name,campaignType='expansion',profile,baselinePoolCount=0 }) {
+  function createCampaign({ name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null }) {
     const validated=validateCategoryProfile(profile);
-    return repository.createCampaign({ name,campaignType,categoryKey:validated.category_key,
-      categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
-      targetCount:validated.target_count,baselinePoolCount,config:{ categoryProfile:validated } });
+    return transaction(db,() => {
+      let campaign=repository.createCampaign({ name,campaignType,categoryKey:validated.category_key,
+        categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
+        targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated } });
+      if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
+      if (campaignType==='refresh') {
+        repository.captureCampaignBaseline(campaign.id);
+        campaign=repository.getCampaign(campaign.id);
+      }
+      return campaign;
+    });
   }
 
   function transitionCampaign(campaignId,status,options={}) {
@@ -65,6 +73,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         return { idempotentReplay:true,batch:registered.batch,campaign:repository.getCampaign(campaignId) };
       }
       let stagingCount=0,excludedCount=0,duplicateCount=0;
+      let acceptedNonElectronic=campaign.nonElectronicUniqueCount;
       for (const raw of cards) {
         const goodsId=normalizeGoodsId(raw.goods_id ?? raw.goodsId);
         const screening=screenElectronicRisk(raw);
@@ -82,8 +91,12 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
           excludedCount+=1;
           continue;
         }
+        if (campaign.campaignType==='refresh' && screening.decision==='passed' && acceptedNonElectronic>=campaign.targetCount) break;
         const result=repository.upsertStaging(campaign,source,String(batchId),normalizeCard(raw,goodsId,capturedAt),screening.decision);
-        if (result.inserted) stagingCount+=1; else duplicateCount+=1;
+        if (result.inserted) {
+          stagingCount+=1;
+          if (screening.decision==='passed') acceptedNonElectronic+=1;
+        } else duplicateCount+=1;
       }
       const batch=repository.completeBatch(registered.batch.id,{ stagingCount,excludedCount,duplicateCount });
       return { idempotentReplay:false,batch,campaign:repository.refreshCampaignCounts(campaignId) };
@@ -127,7 +140,11 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
 
   function getStatus(campaignId) {
     const campaign=requireCampaign(requiredString(campaignId,'campaign_id',128));
-    return { campaign,queues:repository.listRpaQueues(campaign.id),sourceContributions:repository.listSourceContributions(campaign.id) };
+    return { campaign,queues:repository.listRpaQueues(campaign.id),sourceContributions:repository.listSourceContributions(campaign.id),
+      qualityMetrics:repository.getQualityMetrics(campaign.id),
+      refreshComparison:campaign.campaignType==='refresh' ? repository.getRefreshComparison(campaign.id):null,
+      navigationRiskMetrics:campaign.campaignType==='refresh' ? repository.getNavigationRiskMetrics(campaign.id):null,
+      materialization:repository.getRefreshMaterialization(campaign.id),refreshAudit:repository.getRefreshAudit(campaign.id) };
   }
 
   function claimNextSource(campaignId) {
@@ -244,6 +261,82 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     });
   }
 
+  function recordNavigationRisk(campaignId,input) {
+    const campaign=requireCampaign(campaignId);
+    if (campaign.campaignType!=='refresh') throw new AppError('导航风险观察只允许写入refresh Campaign。',{ code:'CATALOG_REFRESH_REQUIRED' });
+    const allowedHistorical=new Set(['not_checked','available','sold_out','context_mismatch','unreachable']);
+    const allowedFresh=new Set(['not_checked','recovered','available','not_resolved']);
+    const historicalUrlStatus=input.historicalUrlStatus ?? 'not_checked';
+    const freshNavigationStatus=input.freshNavigationStatus ?? 'not_checked';
+    if (!allowedHistorical.has(historicalUrlStatus) || !allowedFresh.has(freshNavigationStatus)) {
+      throw new AppError('导航风险状态无效。',{ code:'CATALOG_NAVIGATION_RISK_INVALID' });
+    }
+    return transaction(db,() => {
+      repository.recordNavigationRisk(campaign.id,{ ...input,historicalUrlStatus,freshNavigationStatus });
+      return repository.getNavigationRiskMetrics(campaign.id);
+    });
+  }
+
+  function materializeRefresh(campaignId) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);
+      if (campaign.campaignType!=='refresh') throw new AppError('只有refresh Campaign可以生成刷新snapshot。',{ code:'CATALOG_REFRESH_REQUIRED' });
+      if (campaign.status!=='running') throw new AppError('Refresh Campaign必须处于running才能生成snapshot。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
+      if (repository.listRpaQueues(campaign.id).some(queue => queue.status!=='completed')) {
+        throw new AppError('所有Catalog RPA来源完成后才能生成refresh snapshot。',{ code:'CATALOG_REFRESH_SOURCES_INCOMPLETE' });
+      }
+      return repository.materializeRefresh(campaign);
+    });
+  }
+
+  function evaluateRefreshQa(campaignId) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);
+      if (campaign.campaignType!=='refresh') throw new AppError('只有refresh Campaign可以执行Refresh QA。',{ code:'CATALOG_REFRESH_REQUIRED' });
+      if (campaign.status!=='running') throw new AppError('Refresh QA要求Campaign处于running。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
+      const materialization=repository.getRefreshMaterialization(campaign.id);
+      if (!materialization) throw new AppError('Refresh QA前必须先生成products与snapshot。',{ code:'CATALOG_REFRESH_NOT_MATERIALIZED' });
+      const comparison=repository.getRefreshComparison(campaign.id);
+      const navigation=repository.getNavigationRiskMetrics(campaign.id);
+      const quality=repository.getQualityMetrics(campaign.id);
+      const checks={
+        targetGate:campaign.nonElectronicUniqueCount>=campaign.targetCount,
+        baselineFrozen:comparison.old_active_count===campaign.baselinePoolCount,
+        comparisonBalanced:comparison.intersection_count+comparison.new_goods_count===comparison.new_observed_unique_count
+          && comparison.intersection_count+comparison.not_seen_count===comparison.old_active_count,
+        snapshotsExact:materialization.snapshotsInserted===comparison.new_observed_unique_count,
+        reviewsUnchanged:materialization.reviewsBefore===materialization.reviewsAfter,
+        duplicateGoodsId:quality.duplicateGoodsIdCount===0,
+        electronicInStaging:quality.electronicInStagingCount===0,
+        goodsIdCoverage:quality.total===comparison.new_observed_unique_count,
+        titleCoverage:quality.titleCoverage>=0.95,priceCoverage:quality.priceCoverage>=0.95,
+        imageCoverage:quality.imageCoverage>=0.95,salesCoverage:quality.salesCoverage>=0.90,
+        ratingCoverage:quality.ratingCoverage>=0.90,reviewCountCoverage:quality.reviewCountCoverage>=0.90
+      };
+      const passed=Object.values(checks).every(Boolean);
+      const audit={ oldActiveCount:comparison.old_active_count,newObservedUniqueCount:comparison.new_observed_unique_count,
+        intersectionCount:comparison.intersection_count,newGoodsCount:comparison.new_goods_count,notSeenCount:comparison.not_seen_count,
+        historicalUrlAvailableCount:navigation.historical_url_available_count,
+        historicalUrlSoldOutCount:navigation.historical_url_sold_out_count,
+        freshNavigationRecoveredCount:navigation.fresh_navigation_recovered_count,
+        categoryCardAvailableCount:navigation.category_card_available_count,
+        searchContextMismatchCount:navigation.search_context_mismatch_count,
+        navigationNotResolvedCount:navigation.navigation_not_resolved_count,
+        duplicateGoodsIdCount:quality.duplicateGoodsIdCount,electronicInStagingCount:quality.electronicInStagingCount,
+        manualReviewCount:quality.manualReviewCount,titleCoverage:quality.titleCoverage,priceCoverage:quality.priceCoverage,
+        imageCoverage:quality.imageCoverage,salesCoverage:quality.salesCoverage,ratingCoverage:quality.ratingCoverage,
+        reviewCountCoverage:quality.reviewCountCoverage,qaPassed:passed,
+        qaDetails:{ checks,materialization,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+          actual:gateValue(campaign),notSeenSemantics:'observation_only_membership_preserved' } };
+      repository.saveRefreshAudit(campaign.id,audit);
+      repository.transitionCampaign(campaign.id,'qa_pending');
+      const completed=repository.transitionCampaign(campaign.id,passed ? 'completed':'qa_failed',{
+        qaStatus:passed ? 'passed':'failed',qaSummary:audit.qaDetails,finished:passed
+      });
+      return { campaign:completed,audit:repository.getRefreshAudit(campaign.id),comparison,navigation,quality,materialization };
+    });
+  }
+
   function failCampaign(campaignId,summary={}) {
     const campaign=requireCampaign(campaignId);
     if (['completed','failed','cancelled'].includes(campaign.status)) throw new AppError('终态Campaign不能再次失败。',{ code:'CATALOG_CAMPAIGN_TERMINAL' });
@@ -259,6 +352,13 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         code:'CATALOG_POOL_SAFETY_REJECTED',retriable:true,
         details:{ targetGate:campaign.targetGate,targetCount:campaign.targetCount,actual }
       });
+      if (campaign.campaignType==='refresh') {
+        const audit=repository.getRefreshAudit(campaign.id);
+        const materialization=repository.getRefreshMaterialization(campaign.id);
+        if (!audit || Number(audit.qa_passed)!==1 || !materialization || materialization.reviewsBefore!==materialization.reviewsAfter) {
+          throw new AppError('Refresh审计或数据物化未通过，拒绝激活Pool Version。',{ code:'CATALOG_POOL_SAFETY_REJECTED' });
+        }
+      }
       return repository.activatePoolVersion(campaign,qaSummary);
     });
   }
@@ -285,7 +385,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   }
 
   return { createCampaign,transitionCampaign,createSource,captureBatch,submitQa,failCampaign,
-    activatePoolVersion,recordNotSeenInCampaign,getCampaign:repository.getCampaign,getSource:repository.getSource,
+    recordNavigationRisk,materializeRefresh,evaluateRefreshQa,activatePoolVersion,recordNotSeenInCampaign,
+    getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
     getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
     saveRpaCheckpoint,markRpaManualRequired,resumeRpa,saveExtensionCheckpoint,markExtensionManualRequired,resumeExtensionRunner,

@@ -8,7 +8,7 @@ const root=path.resolve(import.meta.dirname,'../..');
 const source=fs.readFileSync(path.join(root,'browser-extension/catalog-auto-runner.js'),'utf8');
 const sandbox=vm.createContext({ console,setTimeout,clearTimeout,Date });
 vm.runInContext(source,sandbox);
-const { CatalogAutoRunner,STATES }=sandbox.TemuCatalogAutoRunnerModule;
+const { CatalogAutoRunner,STATES,uiSummary }=sandbox.TemuCatalogAutoRunnerModule;
 
 function signals(ids=['1'],extra={}) { return { goodsIds:new Set(ids),cardCount:ids.length,scrollHeight:1000,
   verification:false,unhealthy:false,loading:false,...extra }; }
@@ -74,4 +74,11 @@ test('resume uses the existing manual queue checkpoint and never extends its sav
   const result=await runner.resume({ smokeLimit:1 });
   assert.equal(value.resumes.length,1);assert.equal(value.resumes[0].queue_id,'queue-1');assert.equal(result.state,STATES.COMPLETED);
   assert.equal(result.sessionTarget,5);assert.equal(result.round,5);
+});
+
+test('operator panel exposes a human-readable progress summary and Top Sales warning',() => {
+  const value=uiSummary({ state:STATES.MANUAL_REQUIRED,round:20,sessionTarget:1000,lastAction:'manual_required',
+    campaign:{ nonElectronicUniqueCount:737,rawObservedCount:16880,electronicExcludedCount:42 } },'Relevance');
+  assert.equal(value.stateLabel,'需要人工处理');assert.equal(value.percent,74);assert.equal(value.sortHealthy,false);
+  assert.equal(value.action,'等待人工处理');
 });

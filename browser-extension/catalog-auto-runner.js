@@ -7,6 +7,10 @@
   const LOAD_PATTERN=/^(?:See more|Try again|Try more|Load more|Show more)(?:\s+(?:items|products))?$/i;
   const VERIFY_PATTERN=/captcha|verify you are human|security verification|slide to verify|验证码|安全验证/i;
   const UNHEALTHY_PATTERN=/Oops!\s*The items are gone|No results for|Please check your network connection and try again/i;
+  const STATE_UI=Object.freeze({ IDLE:['未开始','#64748b'],SCANNING:['正在扫描商品卡','#0ea5e9'],BATCH_SUBMITTING:['正在保存数据','#2563eb'],
+    SCROLLING:['正在加载下一批','#7c3aed'],LOAD_MORE_DETECTED:['发现加载按钮','#7c3aed'],LOAD_MORE_TRIGGERED:['已点击加载按钮','#7c3aed'],
+    WAITING_PROGRESS:['等待新商品出现','#d97706'],MANUAL_REQUIRED:['需要人工处理','#dc2626'],COMPLETED:['本轮目标已完成','#16a34a'],
+    FAILED:['运行失败','#dc2626'],PAUSED:['已暂停','#64748b'] });
 
   class CatalogAutoRunner {
     constructor(dependencies) {
@@ -25,7 +29,8 @@
       this.round=Number(checkpoint.round ?? 0);this.sessionTarget=numberOrNull(checkpoint.session_target);
       this.startedAt=checkpoint.ab_started_at ?? null;this.restoreStats(checkpoint);
       this.state=checkpoint.runner_state===STATES.MANUAL_REQUIRED ? STATES.MANUAL_REQUIRED:
-        checkpoint.runner_state===STATES.COMPLETED ? STATES.COMPLETED:checkpoint.runner_state===STATES.PAUSED ? STATES.PAUSED:STATES.IDLE;
+        checkpoint.runner_state===STATES.COMPLETED ? STATES.COMPLETED:checkpoint.runner_state===STATES.PAUSED ? STATES.PAUSED:
+          checkpoint.runner_state===STATES.FAILED ? STATES.FAILED:STATES.IDLE;
       this.emit({ lastAction:'checkpoint_restored' });return this.snapshot();
     }
 
@@ -213,22 +218,52 @@
     resume:async payload => (await send({ type:'RESUME_CATALOG_RUNNER',payload })).result };
   }
 
+  function detectSortLabel() {
+    const text=String(document.body?.innerText ?? '');const match=text.match(/Sort by:\s*(Top\s*sales|Relevance)/i);
+    return match ? match[1].replace(/\s+/g,' '):'未识别';
+  }
+  function humanAction(action) { return ({ checkpoint_restored:'已恢复上次进度',scan:'扫描商品卡',batch_submit:'准备保存',batch_submitted:'数据已保存',
+    scroll_bottom:'滚动加载',scroll_progress:'发现新商品',load_more_detected:'发现 See more / Try again',load_more_triggered:'已触发加载',
+    waiting_progress:'等待页面返回新商品',load_more_progress:'加载成功',load_more_retryable:'加载未新增，准备重试',manual_required:'等待人工处理',
+    target_reached:'已达到目标',pause_requested:'正在暂停',pause:'已暂停',stop_requested:'已停止',failed:'运行失败',start:'开始采集',resume_checkpoint:'从 checkpoint 继续' })[action] ?? action ?? '-'; }
+  function uiSummary(value,sortLabel='未识别') {
+    const campaign=value.campaign ?? {};const target=Number(value.sessionTarget ?? campaign.targetCount ?? 0);const current=Number(campaign.nonElectronicUniqueCount ?? 0);
+    const [stateLabel,stateColor]=STATE_UI[value.state] ?? [value.state,'#64748b'];
+    return { stateLabel,stateColor,target,current,percent:target ? Math.min(100,Math.round(current/target*100)):0,
+      raw:Number(campaign.rawObservedCount ?? 0),excluded:Number(campaign.electronicExcludedCount ?? 0),round:Number(value.round ?? 0),
+      action:humanAction(value.lastAction),sortLabel,sortHealthy:/^Top\s*sales$/i.test(sortLabel) };
+  }
+
   function installUi(runner) {
     const id='temu-catalog-auto-runner';if (document.getElementById(id)) return;
     const panel=document.createElement('div');panel.id=id;
-    Object.assign(panel.style,{ all:'initial',position:'fixed',right:'18px',bottom:'172px',zIndex:'2147483647',width:'390px',boxSizing:'border-box',padding:'11px',borderRadius:'8px',background:'#163047',color:'#fff',font:'13px/1.4 system-ui,sans-serif',boxShadow:'0 3px 12px rgba(0,0,0,.3)' });
-    const title=document.createElement('div');title.textContent='Catalog Extension Auto Runner';title.style.fontWeight='700';
-    const controls=document.createElement('div');controls.style.margin='8px 0';
+    Object.assign(panel.style,{ all:'initial',position:'fixed',right:'18px',bottom:'150px',zIndex:'2147483647',width:'370px',boxSizing:'border-box',padding:'14px',borderRadius:'12px',background:'#102a43',color:'#fff',font:'14px/1.45 system-ui,"Microsoft YaHei",sans-serif',boxShadow:'0 8px 28px rgba(0,0,0,.35)' });
+    const header=document.createElement('div');Object.assign(header.style,{ display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px' });
+    const title=document.createElement('div');title.textContent='Catalog 1000 刷新';Object.assign(title.style,{ fontWeight:'800',fontSize:'17px' });
+    const badge=document.createElement('span');Object.assign(badge.style,{ padding:'3px 8px',borderRadius:'999px',fontWeight:'700',fontSize:'12px',background:'#64748b' });header.append(title,badge);
+    const progressText=document.createElement('div');Object.assign(progressText.style,{ marginTop:'11px',fontSize:'22px',fontWeight:'800' });
+    const track=document.createElement('div');Object.assign(track.style,{ height:'10px',margin:'6px 0 10px',borderRadius:'999px',background:'rgba(255,255,255,.2)',overflow:'hidden' });
+    const bar=document.createElement('div');Object.assign(bar.style,{ height:'100%',width:'0%',background:'#22c55e',transition:'width .25s ease' });track.append(bar);
+    const details=document.createElement('div');Object.assign(details.style,{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 12px',fontSize:'13px',color:'#dbeafe' });
+    const notice=document.createElement('div');Object.assign(notice.style,{ display:'none',marginTop:'10px',padding:'8px 10px',borderRadius:'7px',background:'#7f1d1d',color:'#fff',fontWeight:'700',whiteSpace:'pre-wrap' });
+    const controls=document.createElement('div');controls.style.margin='11px 0 0';
     const make=(label,handler) => { const button=document.createElement('button');button.type='button';button.textContent=label;
-      Object.assign(button.style,{ margin:'0 6px 6px 0',padding:'6px 8px',border:'0',borderRadius:'5px',cursor:'pointer' });button.addEventListener('click',handler);controls.append(button);return button; };
-    make('开始自动采集',() => runner.start());make('暂停',() => runner.pause());
-    make('继续',() => runner.resume());make('停止',() => runner.stop());
-    const status=document.createElement('div');status.textContent='IDLE';
-    runner.subscribe(value => { const campaign=value.campaign ?? {};status.textContent=`${value.state}｜Campaign ${campaign.id ?? '-'}｜unique ${campaign.nonElectronicUniqueCount ?? '-'} / ${value.sessionTarget ?? campaign.targetCount ?? '-'}｜raw ${campaign.rawObservedCount ?? '-'}｜excluded ${campaign.electronicExcludedCount ?? '-'}｜round ${value.round}｜${value.lastAction ?? '-'}${value.errorCode ? `｜${value.errorCode}: ${value.errorMessage ?? ''}`:''}`; });
-    panel.append(title,controls,status);document.documentElement.append(panel);
+      Object.assign(button.style,{ margin:'0 6px 6px 0',padding:'7px 10px',border:'0',borderRadius:'6px',cursor:'pointer',fontWeight:'700',background:'#e2e8f0',color:'#0f172a' });button.addEventListener('click',handler);controls.append(button);return button; };
+    const startButton=make('首次开始',() => runner.start());const pauseButton=make('暂停',() => runner.pause());
+    const resumeButton=make('恢复当前进度',() => runner.resume());const stopButton=make('停止',() => runner.stop());
+    runner.subscribe(value => { const summary=uiSummary(value,detectSortLabel());badge.textContent=summary.stateLabel;badge.style.background=summary.stateColor;
+      progressText.textContent=`已采集 ${summary.current} / ${summary.target}（${summary.percent}%）`;bar.style.width=`${summary.percent}%`;
+      details.innerHTML=`<span>电子排除：<b>${summary.excluded}</b></span><span>原始观察：<b>${summary.raw}</b></span><span>运行轮次：<b>${summary.round}</b></span><span>当前排序：<b>${summary.sortLabel}</b></span><span style="grid-column:1 / -1">当前动作：<b>${summary.action}</b></span>`;
+      const warnings=[];if(!summary.sortHealthy)warnings.push('⚠ 请把页面排序改成 Top sales');if(value.state===STATES.MANUAL_REQUIRED)warnings.push(`⚠ 需要人工处理：${value.errorMessage ?? '请检查 Try again、验证码或 Oops'}`);if(value.errorCode)warnings.push(`错误代码：${value.errorCode}`);
+      notice.textContent=warnings.join('\n');notice.style.display=warnings.length?'block':'none';
+      const active=[STATES.SCANNING,STATES.BATCH_SUBMITTING,STATES.SCROLLING,STATES.LOAD_MORE_DETECTED,STATES.LOAD_MORE_TRIGGERED,STATES.WAITING_PROGRESS].includes(value.state);
+      startButton.disabled=value.state!==STATES.IDLE;pauseButton.disabled=!active;resumeButton.disabled=![STATES.PAUSED,STATES.MANUAL_REQUIRED,STATES.FAILED].includes(value.state);stopButton.disabled=value.state===STATES.IDLE;
+      for(const button of [startButton,pauseButton,resumeButton,stopButton])button.style.opacity=button.disabled?'.45':'1';resumeButton.style.background=resumeButton.disabled?'#e2e8f0':'#22c55e';
+    });
+    panel.append(header,progressText,track,details,notice,controls);document.documentElement.append(panel);
   }
 
-  const module=Object.freeze({ CatalogAutoRunner,STATES,difference,scanDom,findLoadControl,waitForProgress });
+  const module=Object.freeze({ CatalogAutoRunner,STATES,difference,scanDom,findLoadControl,waitForProgress,uiSummary,humanAction });
   globalThis.TemuCatalogAutoRunnerModule=module;
   if (typeof document!=='undefined' && typeof chrome!=='undefined') { const runner=new CatalogAutoRunner(realDependencies());globalThis.TemuCatalogAutoRunner=runner;installUi(runner);runner.restore().catch(() => {}); }
 })();

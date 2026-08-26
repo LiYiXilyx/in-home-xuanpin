@@ -1,6 +1,7 @@
 'use strict';
 
 (() => {
+  const MAX_CARDS_PER_BATCH=300;
   function error(code,message) { const value=new Error(message);value.code=code;return value; }
   function send(message) { return new Promise((resolve,reject) => chrome.runtime.sendMessage(message,response => { const runtimeError=chrome.runtime.lastError;if (runtimeError) reject(new Error(runtimeError.message));else resolve(response); })); }
 
@@ -32,13 +33,24 @@
     if (!lookup?.ok) throw error(lookup?.errorCode ?? 'CATALOG_CONTEXT_MISMATCH',lookup?.error ?? '无法读取Catalog上下文。');
     campaignId=campaignId ?? lookup.context.campaign.id;sourceId=sourceId ?? lookup.context.source.id;
     const inspected=inspectContext(lookup.context);
-    const payload={ campaign_id:campaignId,source_id:sourceId,batch_id:batchId,category_key:lookup.context.profile.category_key,
-      category_profile_version:lookup.context.profile.category_profile_version,page_url:location.href,page_title:document.title,
-      captured_at:new Date().toISOString(),page_context:inspected.pageContext,cards:inspected.cards };
-    const saved=await send({ type:'SAVE_CATALOG_BATCH',payload });
-    if (!saved?.ok) throw error(saved?.errorCode ?? 'CATALOG_BATCH_FAILED',saved?.error ?? 'Catalog批次保存失败。');
-    return saved.result;
+    const chunks=splitCards(inspected.cards);const capturedAt=new Date().toISOString();const results=[];
+    for (let index=0;index<chunks.length;index+=1) {
+      const chunkBatchId=chunks.length===1 ? batchId:`${batchId}:part-${index+1}-of-${chunks.length}`;
+      const payload={ campaign_id:campaignId,source_id:sourceId,batch_id:chunkBatchId,category_key:lookup.context.profile.category_key,
+        category_profile_version:lookup.context.profile.category_profile_version,page_url:location.href,page_title:document.title,
+        captured_at:capturedAt,page_context:inspected.pageContext,cards:chunks[index] };
+      const saved=await send({ type:'SAVE_CATALOG_BATCH',payload });
+      if (!saved?.ok) throw error(saved?.errorCode ?? 'CATALOG_BATCH_FAILED',saved?.error ?? `Catalog分片 ${index+1}/${chunks.length} 保存失败。`);
+      results.push(saved.result);
+    }
+    return aggregateResults(batchId,results);
   }
+
+  function splitCards(cards,max=MAX_CARDS_PER_BATCH) { const chunks=[];for(let index=0;index<cards.length;index+=max)chunks.push(cards.slice(index,index+max));return chunks; }
+  function aggregateResults(batchId,results) { const last=results.at(-1);const sum=field => results.reduce((total,item)=>total+Number(item.batch?.[field] ?? 0),0);
+    return { ...last,idempotentReplay:results.every(item=>item.idempotentReplay),batch:{ ...last.batch,batchId,chunkCount:results.length,
+      chunkBatchIds:results.map(item=>item.batch?.batchId).filter(Boolean),receivedCount:sum('receivedCount'),stagingCount:sum('stagingCount'),
+      excludedCount:sum('excludedCount'),duplicateCount:sum('duplicateCount') } }; }
 
   function showStatus(message,{ ok=false,result=null,errorCode=null }={}) {
     let notice=document.getElementById('temu-catalog-capture-status');
@@ -57,6 +69,6 @@
     document.documentElement.append(button);
   }
 
-  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture });
+  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,splitCards,aggregateResults,MAX_CARDS_PER_BATCH });
   installButton();
 })();
