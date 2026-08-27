@@ -92,13 +92,14 @@
           }
 
           this.setState(STATES.SCROLLING,{ lastAction:'scroll_bottom' });
-          await this.dependencies.scroll();await this.dependencies.delay(this.dependencies.scrollWaitMs ?? 2500);
+          await this.dependencies.scroll();await this.dependencies.delay(this.dependencies.scrollWaitMs ?? 6000);
           const afterScroll=this.dependencies.scan();
           if (await this.guardPage(afterScroll)) return this.snapshot();
           const scrollAdded=difference(afterScroll.goodsIds,before.goodsIds);
           if (scrollAdded.length) {
             await this.checkpoint('capturing',this.metrics({ runner_state:STATES.SCROLLING,last_action:'scroll_progress',
               load_state:'LOAD_MORE_PROGRESS',new_goods_count:scrollAdded.length,last_progress_at:this.dependencies.now() }));
+            await this.dependencies.delay(this.dependencies.progressCooldownMs ?? 5000);
             continue;
           }
 
@@ -119,7 +120,7 @@
             this.setState(STATES.LOAD_MORE_TRIGGERED,{ lastAction:'load_more_triggered',buttonLabel:label,attempt });
             await this.dependencies.trigger(button);
             this.setState(STATES.WAITING_PROGRESS,{ lastAction:'waiting_progress',buttonLabel:label,attempt });
-            const progress=await this.dependencies.waitForProgress(triggerBefore,{ timeoutMs:this.dependencies.progressTimeoutMs ?? 10_000 });
+            const progress=await this.dependencies.waitForProgress(triggerBefore,{ timeoutMs:this.dependencies.progressTimeoutMs ?? 20_000 });
             if (progress.verification) return this.manual('CAPTCHA_OR_LOGIN','检测到 CAPTCHA / Security Verification。',{ load_more_attempt:attempt });
             if (progress.unhealthy) return this.manual('LISTING_CONTEXT_UNHEALTHY','商品列表上下文异常或商品卡归零。',{ load_more_attempt:attempt });
             const added=difference(progress.goodsIds,triggerBefore.goodsIds);
@@ -129,6 +130,7 @@
                 load_state:'LOAD_MORE_PROGRESS',new_goods_count:added.length,button_detected:true,button_label:label,
                 load_more_attempt:attempt,loading_observed:Boolean(progress.loadingObserved),after_card_count:progress.cardCount,
                 after_scroll_height:progress.scrollHeight,last_progress_at:this.dependencies.now() }));
+              await this.dependencies.delay(this.dependencies.progressCooldownMs ?? 5000);
               break;
             }
             this.stats.retryCount+=1;
@@ -136,7 +138,7 @@
               load_state:'LOAD_MORE_RETRYABLE',new_goods_count:0,button_detected:true,button_label:label,
               load_more_attempt:attempt,loading_observed:Boolean(progress.loadingObserved),after_card_count:progress.cardCount,
               after_scroll_height:progress.scrollHeight }));
-            if (attempt===1) await this.dependencies.delay(this.dependencies.retryWaitMs ?? 8000);
+            if (attempt===1) await this.dependencies.delay(this.dependencies.retryWaitMs ?? 15000);
           }
           if (!progressed) return this.manual('LOAD_MORE_RETRYABLE_EXHAUSTED','两次DOM触发均未产生新goods_id，等待人工处理。',
             { load_state:'LOAD_MORE_RETRYABLE',load_more_attempt:2,new_goods_count:0 });
@@ -208,7 +210,7 @@
     return { ...current,loadingObserved };
   }
   function realDependencies() { return { scan:scanDom,findLoadControl,controlLabel:element => String(element.innerText ?? element.textContent ?? '').trim(),
-    trigger:async element => { element.scrollIntoView({ block:'center',behavior:'instant' });await wait(300);element.click(); },
+    trigger:async element => { element.scrollIntoView({ block:'center',behavior:'instant' });await wait(1200);element.click(); },
     scroll:async () => { const root=document.scrollingElement || document.documentElement;root.scrollTop=root.scrollHeight;window.scrollTo(0,root.scrollHeight); },
     delay:wait,waitForProgress,now:() => new Date().toISOString(),
     getContext:async () => (await send({ type:'GET_CATALOG_CURRENT' })).context,
@@ -241,7 +243,7 @@
     const launcher=document.createElement('button');launcher.id=`${id}-launcher`;launcher.type='button';launcher.textContent='Catalog';
     Object.assign(launcher.style,{ all:'initial',position:'fixed',right:'18px',bottom:'122px',zIndex:'2147483647',padding:'7px 11px',borderRadius:'7px',background:'#102a43',color:'#fff',font:'700 13px/1.2 system-ui,sans-serif',cursor:'pointer',boxShadow:'0 3px 12px rgba(0,0,0,.25)' });
     const header=document.createElement('div');Object.assign(header.style,{ display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px' });
-    const title=document.createElement('div');title.textContent='Catalog 1000 刷新';Object.assign(title.style,{ fontWeight:'800',fontSize:'17px' });
+    const title=document.createElement('div');title.textContent='Catalog';Object.assign(title.style,{ fontWeight:'800',fontSize:'17px' });
     const badge=document.createElement('span');Object.assign(badge.style,{ padding:'3px 8px',borderRadius:'999px',fontWeight:'700',fontSize:'12px',background:'#64748b' });
     const collapseButton=document.createElement('button');collapseButton.type='button';collapseButton.textContent='收起';collapseButton.title='收起 Catalog 面板';
     Object.assign(collapseButton.style,{ all:'initial',padding:'3px 7px',borderRadius:'5px',background:'#334e68',color:'#fff',font:'700 12px/1.2 system-ui,sans-serif',cursor:'pointer' });
@@ -257,7 +259,8 @@
       Object.assign(button.style,{ margin:'0 6px 6px 0',padding:'7px 10px',border:'0',borderRadius:'6px',cursor:'pointer',fontWeight:'700',background:'#e2e8f0',color:'#0f172a' });button.addEventListener('click',handler);controls.append(button);return button; };
     const startButton=make('首次开始',() => runner.start());const pauseButton=make('暂停',() => runner.pause());
     const resumeButton=make('恢复当前进度',() => runner.resume());const stopButton=make('停止',() => runner.stop());
-    runner.subscribe(value => { const summary=uiSummary(value,detectSortLabel());badge.textContent=summary.stateLabel;badge.style.background=summary.stateColor;
+    runner.subscribe(value => { const summary=uiSummary(value,detectSortLabel());const campaign=value.campaign??{};
+      title.textContent=`Catalog ${summary.target||''} ${campaign.campaignType==='expansion'?'扩容':'刷新'}`.replace(/\s+/g,' ').trim();badge.textContent=summary.stateLabel;badge.style.background=summary.stateColor;
       progressText.textContent=`已采集 ${summary.current} / ${summary.target}（${summary.percent}%）`;bar.style.width=`${summary.percent}%`;
       details.innerHTML=`<span>电子排除：<b>${summary.excluded}</b></span><span>原始观察：<b>${summary.raw}</b></span><span>运行轮次：<b>${summary.round}</b></span><span>当前排序：<b>${summary.sortLabel}</b></span><span style="grid-column:1 / -1">当前动作：<b>${summary.action}</b></span>`;
       const warnings=[];if(!summary.sortHealthy)warnings.push('⚠ 请把页面排序改成 Top sales');if(value.state===STATES.MANUAL_REQUIRED)warnings.push(`⚠ 需要人工处理：${value.errorMessage ?? '请检查 Try again、验证码或 Oops'}`);if(value.errorCode)warnings.push(`错误代码：${value.errorCode}`);

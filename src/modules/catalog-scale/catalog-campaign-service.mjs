@@ -28,7 +28,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
         targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated } });
       if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
-      if (campaignType==='refresh') {
+      if (campaignType==='refresh' || campaignType==='expansion') {
         repository.captureCampaignBaseline(campaign.id);
         campaign=repository.getCampaign(campaign.id);
       }
@@ -76,6 +76,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       let acceptedNonElectronic=campaign.nonElectronicUniqueCount;
       for (const raw of cards) {
         const goodsId=normalizeGoodsId(raw.goods_id ?? raw.goodsId);
+        const platform='temu';
         const screening=screenElectronicRisk(raw);
         const previouslyExcluded=repository.hasCampaignExclusion(campaignId,goodsId);
         const screeningDecision=screening.decision==='exclude' || previouslyExcluded ? 'exclude':screening.decision;
@@ -91,11 +92,14 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
           excludedCount+=1;
           continue;
         }
-        if (campaign.campaignType==='refresh' && screening.decision==='passed' && acceptedNonElectronic>=campaign.targetCount) break;
+        const baselineItem=campaign.campaignType==='expansion' && repository.isCampaignBaselineItem(campaign.id,platform,goodsId);
+        const existingStaging=campaign.campaignType==='expansion' && repository.hasCampaignStagingItem(campaign.id,platform,goodsId);
+        if ((campaign.campaignType==='refresh' || campaign.campaignType==='expansion') && screening.decision==='passed'
+          && acceptedNonElectronic>=campaign.targetCount && (campaign.campaignType==='refresh' || (!baselineItem && !existingStaging))) break;
         const result=repository.upsertStaging(campaign,source,String(batchId),normalizeCard(raw,goodsId,capturedAt),screening.decision);
         if (result.inserted) {
           stagingCount+=1;
-          if (screening.decision==='passed') acceptedNonElectronic+=1;
+          if (screening.decision==='passed' && (campaign.campaignType!=='expansion' || !baselineItem)) acceptedNonElectronic+=1;
         } else duplicateCount+=1;
       }
       const batch=repository.completeBatch(registered.batch.id,{ stagingCount,excludedCount,duplicateCount });
@@ -144,7 +148,10 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       qualityMetrics:repository.getQualityMetrics(campaign.id),
       refreshComparison:campaign.campaignType==='refresh' ? repository.getRefreshComparison(campaign.id):null,
       navigationRiskMetrics:campaign.campaignType==='refresh' ? repository.getNavigationRiskMetrics(campaign.id):null,
-      materialization:repository.getRefreshMaterialization(campaign.id),refreshAudit:repository.getRefreshAudit(campaign.id) };
+      expansionComparison:campaign.campaignType==='expansion' ? repository.getExpansionComparison(campaign.id):null,
+      expansionQualityMetrics:campaign.campaignType==='expansion' ? repository.getExpansionQualityMetrics(campaign.id):null,
+      materialization:campaign.campaignType==='expansion' ? repository.getExpansionMaterialization(campaign.id):repository.getRefreshMaterialization(campaign.id),
+      refreshAudit:repository.getRefreshAudit(campaign.id),expansionAudit:repository.getExpansionAudit(campaign.id) };
   }
 
   function claimNextSource(campaignId) {
@@ -247,7 +254,12 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       repository.finishSourceRun(queue.sourceId,metrics);
       repository.transitionSource(queue.sourceId,'completed');
       const result=repository.transitionRpaQueue(queue.id,'completed',{ checkpoint,clearError:true });
-      return { queue:result,campaign:repository.refreshCampaignCounts(queue.campaignId),contribution };
+      let updated=repository.refreshCampaignCounts(queue.campaignId);let skippedPendingSources=0;
+      if (updated.campaignType==='expansion' && updated.nonElectronicUniqueCount>=updated.targetCount) {
+        skippedPendingSources=repository.completePendingSources(queue.campaignId);
+        updated=repository.refreshCampaignCounts(queue.campaignId);
+      }
+      return { queue:result,campaign:updated,contribution,skippedPendingSources };
     });
   }
 
@@ -337,6 +349,54 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     });
   }
 
+  function materializeExpansion(campaignId) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);
+      if (campaign.campaignType!=='expansion') throw new AppError('只有expansion Campaign可以生成扩容snapshot。',{ code:'CATALOG_EXPANSION_REQUIRED' });
+      if (campaign.status!=='running') throw new AppError('Expansion Campaign必须处于running才能物化。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
+      if (campaign.baselinePoolCount<=0 || campaign.targetCount<=campaign.baselinePoolCount) throw new AppError('Expansion baseline/target无效。',{ code:'CATALOG_EXPANSION_BASELINE_INVALID' });
+      if (campaign.nonElectronicUniqueCount<campaign.targetCount) throw new AppError('Expansion Gate尚未达到。',{ code:'CATALOG_POOL_SAFETY_REJECTED',retriable:true });
+      if (repository.listRpaQueues(campaign.id).some(queue => queue.status!=='completed')) {
+        throw new AppError('所有Expansion来源完成后才能生成snapshot。',{ code:'CATALOG_EXPANSION_SOURCES_INCOMPLETE' });
+      }
+      return repository.materializeExpansion(campaign);
+    });
+  }
+
+  function evaluateExpansionQa(campaignId) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);
+      if (campaign.campaignType!=='expansion') throw new AppError('只有expansion Campaign可以执行扩容QA。',{ code:'CATALOG_EXPANSION_REQUIRED' });
+      if (!['running','qa_failed'].includes(campaign.status)) throw new AppError('Expansion QA要求Campaign处于running或qa_failed。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
+      if (campaign.status==='qa_failed') repository.transitionCampaign(campaign.id,'running');
+      const materialization=repository.getExpansionMaterialization(campaign.id);
+      if (!materialization) throw new AppError('Expansion QA前必须先物化新增products与snapshot。',{ code:'CATALOG_EXPANSION_NOT_MATERIALIZED' });
+      const comparison=repository.getExpansionComparison(campaign.id);const quality=repository.getExpansionQualityMetrics(campaign.id);
+      const checks={ targetGate:campaign.nonElectronicUniqueCount>=campaign.targetCount,
+        baselineFrozen:comparison.baselineCount===campaign.baselinePoolCount,
+        newUniqueExact:comparison.newNonElectronicCount===comparison.newUniqueNeeded,
+        activeCandidateExact:comparison.activeCandidateCount===campaign.targetCount,
+        snapshotsExact:materialization.snapshotsInserted===comparison.newUniqueNeeded,
+        reviewsUnchanged:materialization.reviewsBefore===materialization.reviewsAfter,
+        duplicateGoodsId:quality.duplicateGoodsIdCount===0,electronicInCandidate:quality.electronicInCandidateCount===0,
+        manualReviewExcluded:comparison.manualReviewCount===quality.manualReviewCount,
+        titleCoverage:quality.titleCoverage>=0.95,priceCoverage:quality.priceCoverage>=0.95,imageCoverage:quality.imageCoverage>=0.95,
+        salesCoverage:quality.salesCoverage>=0.90,ratingCoverage:quality.ratingCoverage>=0.90,reviewCountCoverage:quality.reviewCountCoverage>=0.90 };
+      const passed=Object.values(checks).every(Boolean);
+      const audit={ ...comparison,duplicateGoodsIdCount:quality.duplicateGoodsIdCount,
+        electronicInCandidateCount:quality.electronicInCandidateCount,manualReviewCount:quality.manualReviewCount,
+        titleCoverage:quality.titleCoverage,priceCoverage:quality.priceCoverage,imageCoverage:quality.imageCoverage,
+        salesCoverage:quality.salesCoverage,ratingCoverage:quality.ratingCoverage,reviewCountCoverage:quality.reviewCountCoverage,
+        qaPassed:passed,qaDetails:{ checks,materialization,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+          actual:gateValue(campaign),baselineSemantics:'active_pool_frozen_and_carried_forward' } };
+      repository.saveExpansionAudit(campaign.id,audit);repository.transitionCampaign(campaign.id,'qa_pending');
+      const completed=repository.transitionCampaign(campaign.id,passed?'completed':'qa_failed',{
+        qaStatus:passed?'passed':'failed',qaSummary:audit.qaDetails,finished:passed
+      });
+      return { campaign:completed,audit:repository.getExpansionAudit(campaign.id),comparison,quality,materialization };
+    });
+  }
+
   function failCampaign(campaignId,summary={}) {
     const campaign=requireCampaign(campaignId);
     if (['completed','failed','cancelled'].includes(campaign.status)) throw new AppError('终态Campaign不能再次失败。',{ code:'CATALOG_CAMPAIGN_TERMINAL' });
@@ -357,6 +417,13 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         const materialization=repository.getRefreshMaterialization(campaign.id);
         if (!audit || Number(audit.qa_passed)!==1 || !materialization || materialization.reviewsBefore!==materialization.reviewsAfter) {
           throw new AppError('Refresh审计或数据物化未通过，拒绝激活Pool Version。',{ code:'CATALOG_POOL_SAFETY_REJECTED' });
+        }
+      }
+      if (campaign.campaignType==='expansion') {
+        const audit=repository.getExpansionAudit(campaign.id);const materialization=repository.getExpansionMaterialization(campaign.id);
+        if (!audit || Number(audit.qa_passed)!==1 || !materialization || materialization.reviewsBefore!==materialization.reviewsAfter
+          || Number(audit.active_candidate_count)!==campaign.targetCount) {
+          throw new AppError('Expansion审计或数据物化未通过，拒绝激活Pool Version。',{ code:'CATALOG_POOL_SAFETY_REJECTED' });
         }
       }
       return repository.activatePoolVersion(campaign,qaSummary);
@@ -385,7 +452,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   }
 
   return { createCampaign,transitionCampaign,createSource,captureBatch,submitQa,failCampaign,
-    recordNavigationRisk,materializeRefresh,evaluateRefreshQa,activatePoolVersion,recordNotSeenInCampaign,
+    recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,recordNotSeenInCampaign,
     getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
     getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
@@ -420,6 +487,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
     return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },
       campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
+        campaignType:campaign.campaignType,baselinePoolCount:campaign.baselinePoolCount,
         categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
         rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
         nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount,

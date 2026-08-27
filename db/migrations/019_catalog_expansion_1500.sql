@@ -1,0 +1,41 @@
+CREATE TABLE catalog_expansion_materializations (
+  campaign_id TEXT PRIMARY KEY REFERENCES catalog_campaigns(id) ON DELETE RESTRICT,
+  snapshot_job_id TEXT NOT NULL UNIQUE REFERENCES crawl_jobs(id) ON DELETE RESTRICT,
+  baseline_count INTEGER NOT NULL CHECK(baseline_count >= 0),
+  target_count INTEGER NOT NULL CHECK(target_count >= baseline_count),
+  new_unique_count INTEGER NOT NULL CHECK(new_unique_count >= 0),
+  products_before INTEGER NOT NULL CHECK(products_before >= 0),
+  products_after INTEGER NOT NULL CHECK(products_after >= products_before),
+  memberships_before INTEGER NOT NULL CHECK(memberships_before >= 0),
+  memberships_after INTEGER NOT NULL CHECK(memberships_after >= memberships_before),
+  snapshots_before INTEGER NOT NULL CHECK(snapshots_before >= 0),
+  snapshots_after INTEGER NOT NULL CHECK(snapshots_after >= snapshots_before),
+  reviews_before INTEGER NOT NULL CHECK(reviews_before >= 0),
+  reviews_after INTEGER NOT NULL CHECK(reviews_after >= 0),
+  products_inserted INTEGER NOT NULL CHECK(products_inserted >= 0),
+  memberships_inserted INTEGER NOT NULL CHECK(memberships_inserted >= 0),
+  snapshots_inserted INTEGER NOT NULL CHECK(snapshots_inserted >= 0),
+  historical_products_reactivated INTEGER NOT NULL CHECK(historical_products_reactivated >= 0),
+  materialized_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE catalog_expansion_audits (
+  campaign_id TEXT PRIMARY KEY REFERENCES catalog_campaigns(id) ON DELETE RESTRICT,
+  baseline_count INTEGER NOT NULL CHECK(baseline_count >= 0),
+  target_count INTEGER NOT NULL CHECK(target_count >= baseline_count),
+  new_unique_needed INTEGER NOT NULL CHECK(new_unique_needed >= 0),
+  new_non_electronic_count INTEGER NOT NULL CHECK(new_non_electronic_count >= 0),
+  active_candidate_count INTEGER NOT NULL CHECK(active_candidate_count >= 0),
+  duplicate_goods_id_count INTEGER NOT NULL DEFAULT 0 CHECK(duplicate_goods_id_count >= 0),
+  electronic_in_candidate_count INTEGER NOT NULL DEFAULT 0 CHECK(electronic_in_candidate_count >= 0),
+  manual_review_count INTEGER NOT NULL DEFAULT 0 CHECK(manual_review_count >= 0),
+  title_coverage REAL NOT NULL CHECK(title_coverage >= 0 AND title_coverage <= 1),
+  price_coverage REAL NOT NULL CHECK(price_coverage >= 0 AND price_coverage <= 1),
+  image_coverage REAL NOT NULL CHECK(image_coverage >= 0 AND image_coverage <= 1),
+  sales_coverage REAL NOT NULL CHECK(sales_coverage >= 0 AND sales_coverage <= 1),
+  rating_coverage REAL NOT NULL CHECK(rating_coverage >= 0 AND rating_coverage <= 1),
+  review_count_coverage REAL NOT NULL CHECK(review_count_coverage >= 0 AND review_count_coverage <= 1),
+  qa_passed INTEGER NOT NULL CHECK(qa_passed IN (0,1)),
+  qa_details_json TEXT NOT NULL DEFAULT '{}',
+  checked_at TEXT NOT NULL
+) STRICT;
