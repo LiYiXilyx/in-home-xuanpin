@@ -39,6 +39,10 @@ test('Scale Day5 expansion carries the active 1000 baseline forward, adds only n
   service.captureBatch({ campaignId:expansion.id,sourceId:main.id,batchId:'main-1',cards:[card('1001'),card('2001'),card('9001','Bluetooth helmet headset')] });
   let status=service.getStatus(expansion.id);assert.equal(status.campaign.nonElectronicUniqueCount,3);
   assert.equal(status.expansionComparison.baselineOverlapCount,1);assert.equal(status.expansionComparison.newNonElectronicCount,1);
+  const checkpoint=service.recordExpansionCheckpoint(expansion.id,3);assert.equal(checkpoint.actualUniqueCount,3);
+  assert.equal(checkpoint.trueNetNewCount,1);assert.equal(checkpoint.duplicateGoodsIdCount,0);assert.equal(checkpoint.integrityCheck,'ok');
+  assert.equal(service.getStatus(expansion.id).expansionCheckpoints.length,1);
+  assert.equal(db.prepare('SELECT status FROM catalog_pool_versions WHERE id=?').get(oldPool.id).status,'active');
   service.completeRpaSource({ queue_id:first.queue.id,claim_token:first.queue.claimToken,stop_reason:'SOURCE_EXHAUSTED',checkpoint:{ load_state:'LOAD_MORE_PROGRESS',new_goods_count:1 } });
   const second=service.claimNextSource(expansion.id);assert.equal(second.source.id,covers.id);
   service.captureBatch({ campaignId:expansion.id,sourceId:covers.id,batchId:'covers-1',cards:[card('2001'),card('2002'),card('2003')] });
@@ -67,11 +71,16 @@ test('Scale Day5 expansion carries the active 1000 baseline forward, adds only n
   assert.equal(report.sqliteReconciliation.campaignNonElectronic,4);assert.equal(report.status.sourceContributions[0].electronicExcludedCount,1);
   const artifact=await loadArtifactTool();const imageDataByGoodsId=new Map(report.currentPool.map(item=>[String(item.goods_id),TINY_PNG_DATA_URL]));
   const workbook=buildCatalogExpansionWorkbook(artifact,report,{ imageDataByGoodsId }).workbook;
-  const poolSheet=workbook.worksheets.getItem('当前1500商品池');
+  const poolSheet=workbook.worksheets.getItem('当前4商品池');
   assert.equal(poolSheet.getRange('B1').values[0][0],'商品主图');
   assert.match(poolSheet.getRange('E2').formulas[0][0],/de-en\/item-g-/);
   assert.match(poolSheet.getRange('F2').formulas[0][0],/goods\.html\?goods_id=/);
-  assert.equal(poolSheet.images.items.length,4);assert.equal(workbook.worksheets.getItem('本轮新增500').images.items.length,2);
+  assert.equal(poolSheet.images.items.length,4);assert.equal(workbook.worksheets.getItem('本轮新增2').images.items.length,2);
+  const day8Model={ ...report,campaign:{ ...report.campaign,targetCount:3000,baselinePoolCount:1500 } };
+  const day8Workbook=buildCatalogExpansionWorkbook(artifact,day8Model,{ imageDataByGoodsId }).workbook;
+  assert.deepEqual(day8Workbook.worksheets.items.map(sheet=>sheet.name),[
+    '当前3000商品池','本轮净新增1500','Staging','Source贡献','电子排除','Baseline/Overlap','数据质量','Campaign','字段说明'
+  ]);
   const after=counts(db);assert.equal(after.products,before.products+2);assert.equal(after.snapshots,before.snapshots+2);assert.equal(after.reviews,before.reviews);
 });
 

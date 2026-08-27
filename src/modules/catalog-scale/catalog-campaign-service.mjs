@@ -59,6 +59,18 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return repository.transitionCampaign(campaignId,status,options);
   }
 
+  function updateBrowserContext(campaignId,browserContext={}) {
+    const campaign=requireCampaign(campaignId);
+    if (['completed','failed','cancelled'].includes(campaign.status)) throw new AppError(
+      '终态Campaign不能修改浏览器控制上下文。',{ code:'CATALOG_CAMPAIGN_TERMINAL' }
+    );
+    return repository.setCampaignBrowserContext(campaign.id,{
+      profileName:optionalString(browserContext.profileName,'profileName',128),
+      profileDirectory:optionalString(browserContext.profileDirectory,'profileDirectory',256),
+      controlMode:requiredString(browserContext.controlMode,'controlMode',128)
+    });
+  }
+
   function createSource(campaignId,input) {
     const campaign=requireCampaign(campaignId);
     if (['completed','failed','cancelled'].includes(campaign.status)) throw new AppError('终态Campaign不能新增来源。',{ code:'CATALOG_CAMPAIGN_TERMINAL' });
@@ -163,8 +175,30 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       navigationRiskMetrics:campaign.campaignType==='refresh' ? repository.getNavigationRiskMetrics(campaign.id):null,
       expansionComparison:campaign.campaignType==='expansion' ? repository.getExpansionComparison(campaign.id):null,
       expansionQualityMetrics:campaign.campaignType==='expansion' ? repository.getExpansionQualityMetrics(campaign.id):null,
+      expansionCheckpoints:campaign.campaignType==='expansion' ? repository.listExpansionCheckpoints(campaign.id):[],
       materialization:campaign.campaignType==='expansion' ? repository.getExpansionMaterialization(campaign.id):repository.getRefreshMaterialization(campaign.id),
       refreshAudit:repository.getRefreshAudit(campaign.id),expansionAudit:repository.getExpansionAudit(campaign.id) };
+  }
+
+  function recordExpansionCheckpoint(campaignId,milestoneCount) {
+    return transaction(db,() => {
+      const campaign=requireCampaign(campaignId);const milestone=Number(milestoneCount);
+      if (campaign.campaignType!=='expansion' || campaign.status!=='running') throw new AppError(
+        '只有运行中的Expansion Campaign可以记录中间checkpoint。',{ code:'CATALOG_EXPANSION_REQUIRED' });
+      if (!Number.isInteger(milestone) || milestone<=campaign.baselinePoolCount || milestone>=campaign.targetCount) throw new AppError(
+        'Expansion checkpoint必须位于baseline与最终target之间。',{ code:'CATALOG_EXPANSION_CHECKPOINT_INVALID' });
+      const comparison=repository.getExpansionComparison(campaign.id);const quality=repository.getExpansionQualityMetrics(campaign.id);
+      if (comparison.activeCandidateCount<milestone) throw new AppError('Expansion checkpoint尚未达到。',{
+        code:'CATALOG_EXPANSION_CHECKPOINT_NOT_REACHED',retriable:true,
+        details:{ milestone,actual:comparison.activeCandidateCount }
+      });
+      if (quality.duplicateGoodsIdCount!==0 || quality.distinctGoodsIdCount!==comparison.activeCandidateCount) throw new AppError(
+        'Expansion checkpoint唯一性检查失败。',{ code:'CATALOG_EXPANSION_CHECKPOINT_INVALID' });
+      const checkpoint=repository.recordExpansionCheckpoint(campaign.id,milestone);
+      if (checkpoint.integrityCheck!=='ok') throw new AppError('Expansion checkpoint SQLite完整性检查失败。',{
+        code:'CATALOG_EXPANSION_CHECKPOINT_INVALID' });
+      return checkpoint;
+    });
   }
 
   function claimNextSource(campaignId) {
@@ -233,7 +267,9 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       '当前Catalog Extension状态不能保存运行checkpoint。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
     validateLoadStateCheckpoint(input.checkpoint);
     const nextStatus=input.status==='waiting_load_more' ? 'waiting_load_more':'capturing';
-    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:nextStatus,controlMode:'extension_auto_runner',lastCheckpointAt:now() });
+    const campaign=requireCampaign(queue.campaignId);
+    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:nextStatus,
+      controlMode:campaign.browserControlMode ?? 'extension_auto_runner',lastCheckpointAt:now() });
     repository.transitionSource(queue.sourceId,nextStatus);
     return withoutClaimToken(repository.transitionRpaQueue(queue.id,nextStatus,{ checkpoint,clearError:true }));
   }
@@ -466,8 +502,9 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return source;
   }
 
-  return { createCampaign,transitionCampaign,createSource,captureBatch,submitQa,failCampaign,
-    recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,recordNotSeenInCampaign,
+  return { createCampaign,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
+    recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
+    recordExpansionCheckpoint,recordNotSeenInCampaign,
     getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
     reconcileActiveMembershipsToPool:categoryKey => transaction(db,() => repository.reconcileActiveMembershipsToPool(categoryKey)),
     getCampaign:repository.getCampaign,getSource:repository.getSource,
@@ -508,7 +545,9 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
         rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
         nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount,
-        reviewableUniqueCount:campaign.reviewableUniqueCount,manualReviewCount:null },source,profile };
+        reviewableUniqueCount:campaign.reviewableUniqueCount,manualReviewCount:null,
+        browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
+        browserControlMode:campaign.browserControlMode },source,profile };
   }
 }
 

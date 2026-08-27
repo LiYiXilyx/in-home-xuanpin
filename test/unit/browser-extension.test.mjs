@@ -54,6 +54,8 @@ test('Catalog extension is isolated from Review and routes only localhost batch 
   assert.match(capture,/NO_PRODUCT_CARDS/);
   assert.match(capture,/temu-catalog-capture-button/);
   assert.match(capture,/采集当前商品列表/);
+  assert.match(capture,/YINGDAO_CAPTURED/);
+  assert.match(capture,/SAVE_CATALOG_CHECKPOINT/);
 });
 
 test('Catalog capture splits large DOM card sets below the localhost 500-card safety limit',() => {

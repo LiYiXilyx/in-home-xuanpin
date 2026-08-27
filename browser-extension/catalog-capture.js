@@ -43,7 +43,21 @@
       if (!saved?.ok) throw error(saved?.errorCode ?? 'CATALOG_BATCH_FAILED',saved?.error ?? `Catalog分片 ${index+1}/${chunks.length} 保存失败。`);
       results.push(saved.result);
     }
-    return aggregateResults(batchId,results);
+    const result=aggregateResults(batchId,results);
+    if (lookup.context.queue?.id) {
+      const before=Number(lookup.context.campaign.nonElectronicUniqueCount ?? 0);
+      const after=Number(result.campaign?.nonElectronicUniqueCount ?? before);
+      const checkpoint=await send({ type:'SAVE_CATALOG_CHECKPOINT',payload:{
+        campaign_id:campaignId,source_id:sourceId,queue_id:lookup.context.queue.id,status:'capturing',
+        checkpoint:{ runner_state:'YINGDAO_CAPTURED',browser_control_mode:lookup.context.campaign.browserControlMode ?? 'yingdao_browser_controller',
+          batch_id:result.batch?.batchId ?? batchId,current_unique:after,new_goods_count:Math.max(0,after-before),
+          raw_observation_count:Number(result.campaign?.rawObservedCount ?? 0),captured_at:capturedAt }
+      } });
+      if (!checkpoint?.ok) throw error(checkpoint?.errorCode ?? 'CATALOG_CHECKPOINT_FAILED',
+        `Catalog批次已保存，但checkpoint失败：${checkpoint?.error ?? '未知错误'}`);
+      result.checkpoint=checkpoint.result;
+    }
+    return result;
   }
 
   function splitCards(cards,max=MAX_CARDS_PER_BATCH) { const chunks=[];for(let index=0;index<cards.length;index+=max)chunks.push(cards.slice(index,index+max));return chunks; }

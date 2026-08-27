@@ -395,6 +395,31 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
       salesCoverage:coverage(row.sales_count),ratingCoverage:coverage(row.rating_count),reviewCountCoverage:coverage(row.review_count_count) };
   }
 
+  function recordExpansionCheckpoint(campaignId,milestoneCount) {
+    const existing=db.prepare(`SELECT * FROM catalog_expansion_checkpoints
+      WHERE campaign_id=? AND milestone_count=?`).get(campaignId,milestoneCount);
+    if (existing) return mapExpansionCheckpoint(existing);
+    const campaign=getCampaign(campaignId);const comparison=getExpansionComparison(campaignId);
+    const quality=getExpansionQualityMetrics(campaignId);const integrity=String(db.prepare('PRAGMA integrity_check').get().integrity_check);
+    const contributions=listSourceContributions(campaignId);const timestamp=now();
+    db.prepare(`INSERT INTO catalog_expansion_checkpoints(
+      campaign_id,milestone_count,baseline_count,actual_unique_count,true_net_new_count,
+      raw_observed_count,electronic_excluded_count,manual_review_count,duplicate_goods_id_count,
+      distinct_goods_id_count,integrity_check,source_contributions_json,captured_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      campaignId,milestoneCount,comparison.baselineCount,comparison.activeCandidateCount,comparison.newNonElectronicCount,
+      campaign.rawObservedCount,campaign.electronicExcludedCount,comparison.manualReviewCount,quality.duplicateGoodsIdCount,
+      quality.distinctGoodsIdCount,integrity,JSON.stringify(contributions),timestamp
+    );
+    return mapExpansionCheckpoint(db.prepare(`SELECT * FROM catalog_expansion_checkpoints
+      WHERE campaign_id=? AND milestone_count=?`).get(campaignId,milestoneCount));
+  }
+
+  function listExpansionCheckpoints(campaignId) {
+    return db.prepare('SELECT * FROM catalog_expansion_checkpoints WHERE campaign_id=? ORDER BY milestone_count')
+      .all(campaignId).map(mapExpansionCheckpoint);
+  }
+
   function materializeRefresh(campaign) {
     const existing=db.prepare('SELECT * FROM catalog_refresh_materializations WHERE campaign_id=?').get(campaign.id);
     if (existing) return mapMaterialization(existing);
@@ -796,7 +821,8 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
     recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,getExpansionComparison,getExpansionQualityMetrics,
     materializeRefresh,materializeExpansion,saveRefreshAudit,getRefreshAudit,getRefreshMaterialization,
-    saveExpansionAudit,getExpansionAudit,getExpansionMaterialization,activatePoolVersion,completePendingSources,
+    saveExpansionAudit,getExpansionAudit,getExpansionMaterialization,recordExpansionCheckpoint,listExpansionCheckpoints,
+    activatePoolVersion,completePendingSources,
     getRpaQueueForSource,getRpaQueue,getNextRpaQueue,listActiveRpaQueues,listRpaQueues,claimRpaQueue,
     transitionRpaQueue,transitionSource,finishSourceRun,listSourceContributions };
 }
@@ -856,4 +882,12 @@ function mapExpansionMaterialization(row) {
     reviewsAfter:Number(row.reviews_after),productsInserted:Number(row.products_inserted),membershipsInserted:Number(row.memberships_inserted),
     snapshotsInserted:Number(row.snapshots_inserted),historicalProductsReactivated:Number(row.historical_products_reactivated),
     materializedAt:row.materialized_at }:null;
+}
+function mapExpansionCheckpoint(row) {
+  return row ? { campaignId:row.campaign_id,milestoneCount:Number(row.milestone_count),baselineCount:Number(row.baseline_count),
+    actualUniqueCount:Number(row.actual_unique_count),trueNetNewCount:Number(row.true_net_new_count),
+    rawObservedCount:Number(row.raw_observed_count),electronicExcludedCount:Number(row.electronic_excluded_count),
+    manualReviewCount:Number(row.manual_review_count),duplicateGoodsIdCount:Number(row.duplicate_goods_id_count),
+    distinctGoodsIdCount:Number(row.distinct_goods_id_count),integrityCheck:row.integrity_check,
+    sourceContributions:parseJson(row.source_contributions_json) ?? [],capturedAt:row.captured_at }:null;
 }

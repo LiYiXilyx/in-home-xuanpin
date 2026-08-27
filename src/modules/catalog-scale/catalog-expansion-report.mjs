@@ -4,29 +4,29 @@ import sharp from 'sharp';
 import { loadArtifactTool } from '../analysis/artifact-runtime.mjs';
 import { createCatalogCampaignService } from './catalog-campaign-service.mjs';
 
-const SHEETS=['当前1500商品池','本轮新增500','Staging','电子排除','来源贡献','数据质量','Campaign任务','字段说明'];
 const COLORS={ navy:'#17365D',green:'#E2F0D9',amber:'#FFF2CC',text:'#1F2937' };
 
 export async function exportCatalogExpansionWorkbook(db,{ campaignId,outputDir }) {
   const model=buildCatalogExpansionReportModel(db,campaignId);const artifact=await loadArtifactTool();
+  const layout=reportLayout(model);
   await fs.mkdir(outputDir,{ recursive:true });
   const prepared=await prepareExpansionImages(model.currentPool,{ baseDir:process.cwd(),cacheDir:path.join(outputDir,'.catalog-images') });
   const built=buildCatalogExpansionWorkbook(artifact,model,{ clickableLinks:true,imageDataByGoodsId:prepared.imageDataByGoodsId });
   const workbook=built.workbook;
-  const workbookPath=path.join(outputDir,'catalog-expansion-1500.xlsx');const output=await artifact.SpreadsheetFile.exportXlsx(workbook);await output.save(workbookPath);
-  const qa={ workbookPath,sheetNames:SHEETS,rowCounts:model.rowCounts,sqliteReconciliation:model.sqliteReconciliation,
+  const workbookPath=path.join(outputDir,layout.fileName);const output=await artifact.SpreadsheetFile.exportXlsx(workbook);await output.save(workbookPath);
+  const qa={ workbookPath,sheetNames:layout.sheetNames,rowCounts:model.rowCounts,sqliteReconciliation:model.sqliteReconciliation,
     formulaErrorCount:null,previews:[],visualQaStatus:'known_failure',clickableLinksInExport:true,
     embeddedImages:built.imageCount,imageFailures:prepared.failures,
     navigationLinks:{ currentObservedFirst:true,canonicalIdentitySeparate:true },
     knownRenderLimitation:'Windows artifact render validation terminates at process level; this is the known market-report Excel renderer failure' };
-  await fs.writeFile(path.join(outputDir,'catalog-expansion-1500-qa.json'),JSON.stringify(qa,null,2));return qa;
+  await fs.writeFile(path.join(outputDir,layout.qaFileName),JSON.stringify(qa,null,2));return qa;
 }
 
 export function buildCatalogExpansionReportModel(db,campaignId) {
   const status=createCatalogCampaignService(db).getStatus(campaignId);const campaign=status.campaign;
   if (campaign.campaignType!=='expansion') throw new Error('Catalog Expansion Excel只支持expansion Campaign。');
   const poolVersion=db.prepare('SELECT * FROM catalog_pool_versions WHERE campaign_id=?').get(campaignId);
-  if (!poolVersion || poolVersion.status!=='active') throw new Error('Expansion Excel要求1500 Pool已激活。');
+  if (!poolVersion || poolVersion.status!=='active') throw new Error(`Expansion Excel要求${campaign.targetCount} Pool已激活。`);
   const currentPool=db.prepare(`SELECT i.goods_id,s.latest_title,s.canonical_url,s.latest_source_url,s.image_url,s.price_amount,s.currency,
       s.sales_count,s.rating,s.review_count,i.membership_status,s.last_seen_at,img.local_path,
       COALESCE(img.content_sha256,img.sha256) AS image_sha256
@@ -66,13 +66,15 @@ export function buildCatalogExpansionReportModel(db,campaignId) {
 }
 
 export function buildCatalogExpansionWorkbook({ Workbook },model,{ clickableLinks=true,imageDataByGoodsId=new Map() }={}) {
-  const workbook=Workbook.create();const sheets=Object.fromEntries(SHEETS.map(name=>[name,workbook.worksheets.add(name)]));
+  const layout=reportLayout(model);const workbook=Workbook.create();const sheets=Object.fromEntries(layout.sheetNames.map(name=>[name,workbook.worksheets.add(name)]));
   Object.values(sheets).forEach(sheet=>{sheet.showGridLines=false;});
-  const imageCount=productsSheet(sheets['当前1500商品池'],model.currentPool,'CatalogExpansionPool',clickableLinks,imageDataByGoodsId)
-    +newItemsSheet(sheets['本轮新增500'],model.newItems,clickableLinks,imageDataByGoodsId)
+  const imageCount=productsSheet(sheets[layout.currentPool],model.currentPool,'CatalogExpansionPool',clickableLinks,imageDataByGoodsId)
+    +newItemsSheet(sheets[layout.newItems],model.newItems,clickableLinks,imageDataByGoodsId)
     +stagingSheet(sheets.Staging,model.staging,clickableLinks,imageDataByGoodsId);
-  exclusionSheet(sheets['电子排除'],model);sourceSheet(sheets['来源贡献'],model);qualitySheet(sheets['数据质量'],model);
-  campaignSheet(sheets['Campaign任务'],model);fieldsSheet(sheets['字段说明']);return { workbook,sheetNames:SHEETS,imageCount };
+  exclusionSheet(sheets['电子排除'],model);sourceSheet(sheets[layout.sources],model);
+  if(layout.baselineOverlap)baselineOverlapSheet(sheets[layout.baselineOverlap],model);
+  qualitySheet(sheets['数据质量'],model);campaignSheet(sheets[layout.campaign],model);fieldsSheet(sheets['字段说明'],model);
+  return { workbook,sheetNames:layout.sheetNames,imageCount };
 }
 
 function productsSheet(sheet,items,tableName,clickable,imageDataByGoodsId) {
@@ -110,6 +112,18 @@ function sourceSheet(sheet,model) {
   writeTable(sheet,['source_id','source_key','raw_observed','source_unique','campaign_new_unique','overlap','electronic_excluded','manual_review','non_electronic_new','stop_reason'],rows,'CatalogExpansionSources',[38,30,16,16,20,14,20,16,22,28]);
   const b=model.batches;sheet.getRange('L1:M1').values=[['批次指标','值']];header(sheet.getRange('L1:M1'));sheet.getRange('L2:M8').values=[['accepted_batches',Number(b.accepted_batches)],['raw_received',Number(b.raw_received)],['staging_writes',Number(b.staging_writes)],['exclusion_hits',Number(b.exclusion_hits)],['duplicate_observations',Number(b.duplicate_observations)],['first_batch_at',b.first_batch_at],['last_batch_at',b.last_batch_at]];body(sheet.getRange('L2:M8'));sheet.getRange('L:M').format.columnWidth=26;
 }
+function baselineOverlapSheet(sheet,model) {
+  const c=model.comparison;const rows=[['Baseline unique',c.baselineCount],['Target unique',c.targetCount],
+    ['True net new',c.newNonElectronicCount],['Baseline overlap observed',c.baselineOverlapCount],
+    ['Active candidate',c.activeCandidateCount],['Manual review',c.manualReviewCount]];
+  writeTable(sheet,['指标','值'],rows,'CatalogExpansionBaselineOverlap',[34,20]);
+  const checkpoints=model.status.expansionCheckpoints??[];const start=checkpoints.length?10:0;if(!start)return;
+  sheet.getRange(`D1:N1`).values=[['milestone','actual_unique','true_net_new','raw_observed','electronic_excluded','manual_review','duplicates','distinct_goods','integrity','captured_at','source_contributions']];header(sheet.getRange('D1:N1'));
+  sheet.getRange(`D2:N${checkpoints.length+1}`).values=checkpoints.map(item=>[item.milestoneCount,item.actualUniqueCount,item.trueNetNewCount,item.rawObservedCount,
+    item.electronicExcludedCount,item.manualReviewCount,item.duplicateGoodsIdCount,item.distinctGoodsIdCount,item.integrityCheck,toDate(item.capturedAt),JSON.stringify(item.sourceContributions)]);
+  body(sheet.getRange(`D2:N${checkpoints.length+1}`));sheet.getRange(`M2:M${checkpoints.length+1}`).format.numberFormat='yyyy-mm-dd hh:mm';
+  [14,16,16,18,20,16,14,18,14,22,70].forEach((w,i)=>sheet.getRange(`${col(i+4)}:${col(i+4)}`).format.columnWidth=w);
+}
 function qualitySheet(sheet,model) {
   const q=model.quality,m=model.materialization,c=model.comparison;const rows=[['Active candidate',c.activeCandidateCount,model.campaign.targetCount,"'="],['净新增',c.newNonElectronicCount,c.newUniqueNeeded,"'="],['goods_id duplicate',q.duplicateGoodsIdCount,0,"'="],['电子进入候选池',q.electronicInCandidateCount,0,"'="],['标题完整度',q.titleCoverage,0.95,'>='],['价格完整度',q.priceCoverage,0.95,'>='],['图片完整度',q.imageCoverage,0.95,'>='],['销量完整度',q.salesCoverage,0.90,'>='],['评分完整度',q.ratingCoverage,0.90,'>='],['评论数完整度',q.reviewCountCoverage,0.90,'>='],['新增Snapshots',m?.snapshotsInserted,c.newUniqueNeeded,"'="],['Reviews变化',m?m.reviewsAfter-m.reviewsBefore:null,0,"'="]];
   writeTable(sheet,['指标','实际','阈值','规则'],rows,'CatalogExpansionQuality',[30,18,18,12]);sheet.getRange('B6:C11').format.numberFormat='0.0%';sheet.getRange('F1:G1').values=[['SQLite计数','值']];header(sheet.getRange('F1:G1'));sheet.getRange('F2:G6').values=Object.entries(model.counts);body(sheet.getRange('F2:G6'));sheet.getRange('F:G').format.columnWidth=24;
@@ -118,7 +132,7 @@ function campaignSheet(sheet,model) {
   const c=model.campaign,queues=model.status.queues;const sums=queues.reduce((a,q)=>{const p=q.checkpoint??{};for(const k of ['round','retry_count','manual_intervention_count','captcha_count','oops_count','load_more_success_count','elapsed_ms'])a[k]+=Number(p[k]??0);return a;},{round:0,retry_count:0,manual_intervention_count:0,captcha_count:0,oops_count:0,load_more_success_count:0,elapsed_ms:0});
   const rows=[['campaign_id',c.id],['campaign_type',c.campaignType],['status',c.status],['qa_status',c.qaStatus],['baseline_count',c.baselinePoolCount],['target_count',c.targetCount],['non_electronic_unique_count',c.nonElectronicUniqueCount],['raw_observed_count',c.rawObservedCount],['electronic_excluded_unique',c.electronicExcludedCount],['browser_profile_name',c.browserProfileName],['browser_profile_directory',c.browserProfileDirectory],['browser_control_mode',c.browserControlMode],['sources',c.sourceCount],['completed_sources',c.completedSourceCount],...Object.entries(sums)];writeTable(sheet,['任务字段','值'],rows,'CatalogExpansionCampaign',[36,76]);
 }
-function fieldsSheet(sheet){const rows=[['platform + goods_id','跨batch/source/campaign稳定身份','SQLite','URL不作为身份键'],['baseline_count','激活前正式1000 Pool','SQLite','扩容全过程冻结'],['new_non_electronic_unique','相对baseline净新增passed商品','Staging','目标500'],['manual_review_required','需人工判断','Staging','不计1500 Gate'],['exclusion_code','电子硬排除审计','Exclusion audit','不得进入Pool'],['Pool Version','baseline与新增的事务合并版本','SQLite','1500激活后1000 superseded'],['当前观察链接','本轮商品卡捕获的详情地址','Staging','优先用于打开商品；仍受Temu Session Context影响'],['身份/历史链接','goods_id canonical URL','SQLite','只用于身份和历史证据，不代表当前可售'],['商品主图','压缩后嵌入Excel','Artifact','不依赖点击图片链接'],['Excel','运营查看与交接','Artifact','SQLite是唯一正式数据源']];writeTable(sheet,['字段','定义','来源','口径说明'],rows,'CatalogExpansionFields',[38,52,24,66]);}
+function fieldsSheet(sheet,model){const delta=model.campaign.targetCount-model.campaign.baselinePoolCount;const rows=[['platform + goods_id','跨batch/source/campaign稳定身份','SQLite','URL不作为身份键'],['baseline_count',`激活前正式${model.campaign.baselinePoolCount} Pool`,'SQLite','扩容全过程冻结'],['new_non_electronic_unique','相对baseline净新增passed商品','Staging',`目标${delta}`],['manual_review_required','需人工判断','Staging',`不计${model.campaign.targetCount} Gate`],['exclusion_code','电子硬排除审计','Exclusion audit','不得进入Pool'],['Pool Version','baseline与新增的事务合并版本','SQLite',`${model.campaign.targetCount}激活后${model.campaign.baselinePoolCount} superseded`],['当前观察链接','本轮商品卡捕获的详情地址','Staging','优先用于打开商品；仍受Temu Session Context影响'],['身份/历史链接','goods_id canonical URL','SQLite','只用于身份和历史证据，不代表当前可售'],['商品主图','压缩后嵌入Excel','Artifact','不依赖点击图片链接'],['Excel','运营查看与交接','Artifact','SQLite是唯一正式数据源']];writeTable(sheet,['字段','定义','来源','口径说明'],rows,'CatalogExpansionFields',[38,52,24,66]);}
 
 function writeTable(sheet,headers,rows,name,widths){const end=col(headers.length);sheet.getRange(`A1:${end}1`).values=[headers];header(sheet.getRange(`A1:${end}1`));if(rows.length){const last=rows.length+1;sheet.getRange(`A2:${end}${last}`).values=rows;body(sheet.getRange(`A2:${end}${last}`));const table=sheet.tables.add(`A1:${end}${last}`,true,name);table.style='TableStyleMedium2';table.showFilterButton=true;}widths.forEach((w,i)=>sheet.getRange(`${col(i+1)}:${col(i+1)}`).format.columnWidth=w);sheet.freezePanes.freezeRows(1);}
 function writeLinks(sheet,column,urls,startRow,clickable){if(!urls.length)return;const range=sheet.getRange(`${column}${startRow}:${column}${startRow+urls.length-1}`);if(clickable)range.formulas=urls.map(url=>[`=HYPERLINK("${excel(url)}","${excel(url)}")`]);else range.values=urls.map(url=>[url]);range.format.font={color:'#0563C1',underline:true};range.format.wrapText=true;}
@@ -147,4 +161,13 @@ export async function prepareExpansionImages(items,{ baseDir,cacheDir,fetchImpl=
     }catch(error){failures.push({ goods_id:goodsId,error:error.code??error.message });}}
   }
   await Promise.all(Array.from({ length:Math.max(1,Math.min(concurrency,items.length||1)) },()=>worker()));return { imageDataByGoodsId,failures };
+}
+
+function reportLayout(model){const target=model.campaign.targetCount;const baseline=model.campaign.baselinePoolCount;const delta=target-baseline;
+  if(target===3000)return { currentPool:'当前3000商品池',newItems:'本轮净新增1500',sources:'Source贡献',campaign:'Campaign',
+    baselineOverlap:'Baseline/Overlap',fileName:'catalog-final-3000.xlsx',qaFileName:'catalog-final-3000-qa.json',
+    sheetNames:['当前3000商品池','本轮净新增1500','Staging','Source贡献','电子排除','Baseline/Overlap','数据质量','Campaign','字段说明'] };
+  return { currentPool:`当前${target}商品池`,newItems:`本轮新增${delta}`,sources:'来源贡献',campaign:'Campaign任务',baselineOverlap:null,
+    fileName:`catalog-expansion-${target}.xlsx`,qaFileName:`catalog-expansion-${target}-qa.json`,
+    sheetNames:[`当前${target}商品池`,`本轮新增${delta}`,'Staging','电子排除','来源贡献','数据质量','Campaign任务','字段说明'] };
 }

@@ -18,6 +18,7 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   const source=app.catalogService.createSource(campaign.id,{ sourceKey:'main-top-sales',sourceType:'category',sortOrder:'Top Sales',targetQuota:300,priority:1 });
   app.catalogService.createSource(campaign.id,{ sourceKey:'second-source',sourceType:'product_family',sortOrder:'Top Sales',targetQuota:50,priority:2 });
   app.catalogService.transitionCampaign(campaign.id,'running');
+  app.catalogService.updateBrowserContext(campaign.id,{ profileName:'T',profileDirectory:'Default',controlMode:'yingdao_browser_controller' });
   const poolBefore=coreCounts(app.db);const address=await app.listen({ port:0 });
   const post=async (route,payload) => { const response=await fetch(`${address.url}${route}`,{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify(payload) });return { response,body:await response.json() }; };
 
@@ -29,7 +30,7 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   call=await post('/api/catalog-rpa/source-opened',{ queue_id:queue.id,claim_token:queue.claimToken,page_url:'https://www.temu.com/de-en/motorcycles.html' });assert.equal(call.body.result.status,'waiting_page_ready');
   call=await post('/api/catalog-extension/checkpoint',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,status:'capturing',
     checkpoint:{ runner_state:'SCANNING',round:1,batch_id:'extension-batch-1',current_unique:0 } });
-  assert.equal(call.response.status,200);assert.equal(call.body.result.checkpoint.controlMode,'extension_auto_runner');assert.equal(call.body.result.claimToken,undefined);
+  assert.equal(call.response.status,200);assert.equal(call.body.result.checkpoint.controlMode,'yingdao_browser_controller');assert.equal(call.body.result.claimToken,undefined);
   call=await post('/api/catalog-extension/checkpoint',{ campaign_id:'wrong',source_id:source.id,queue_id:queue.id,status:'capturing',checkpoint:{ round:2 } });
   assert.equal(call.response.status,409);assert.equal(call.body.error.code,'CATALOG_RPA_CLAIM_MISMATCH');
   call=await post('/api/catalog-extension/manual-required',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,
