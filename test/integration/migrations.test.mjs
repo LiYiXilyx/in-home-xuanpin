@@ -16,21 +16,23 @@ test('all migrations apply once and a repeated run has no side effects', t => {
   const first = migrateDatabase({ databasePath });
   const sizeAfterFirst = fs.statSync(databasePath).size;
   const second = migrateDatabase({ databasePath });
-  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql', '014_review_queue.sql', '015_product_lifecycle.sql', '016_navigation_resolutions.sql', '017_catalog_scale_v2.sql', '018_catalog_refresh_baseline.sql', '019_catalog_expansion_1500.sql']);
+  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql', '014_review_queue.sql', '015_product_lifecycle.sql', '016_navigation_resolutions.sql', '017_catalog_scale_v2.sql', '018_catalog_refresh_baseline.sql', '019_catalog_expansion_1500.sql', '020_catalog_baseline_authority.sql']);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 19);
+  assert.equal(second.skipped.length, 20);
   assert.equal(fs.statSync(databasePath).size, sizeAfterFirst);
 
   const db = openDatabase(databasePath);
   try {
     const objects = db.prepare("SELECT name,type FROM sqlite_master WHERE type IN ('table','view')").all();
     const names = new Set(objects.map(item => item.name));
-    for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'market_analysis_runs', 'category_metrics', 'fine_classification_attempts', 'reviews', 'review_capture_coverage', 'review_session_epochs', 'review_session_control_checks', 'review_queue', 'navigation_resolutions', 'product_lifecycle_runs', 'product_lifecycle_metrics', 'catalog_campaigns', 'catalog_sources', 'catalog_source_runs', 'catalog_capture_batches', 'catalog_product_source_observations', 'catalog_staging_products', 'catalog_exclusion_observations', 'catalog_rpa_queue', 'catalog_pool_versions', 'catalog_pool_version_items', 'catalog_campaign_product_observations', 'catalog_campaign_baseline_items', 'catalog_navigation_risk_observations', 'catalog_refresh_materializations', 'catalog_refresh_audits', 'catalog_expansion_materializations', 'catalog_expansion_audits', 'catalog_pool_activation_history', 'v_current_products']) {
+    for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'market_analysis_runs', 'category_metrics', 'fine_classification_attempts', 'reviews', 'review_capture_coverage', 'review_session_epochs', 'review_session_control_checks', 'review_queue', 'navigation_resolutions', 'product_lifecycle_runs', 'product_lifecycle_metrics', 'catalog_campaigns', 'catalog_sources', 'catalog_source_runs', 'catalog_capture_batches', 'catalog_product_source_observations', 'catalog_staging_products', 'catalog_exclusion_observations', 'catalog_rpa_queue', 'catalog_pool_versions', 'catalog_pool_version_items', 'catalog_campaign_product_observations', 'catalog_campaign_baseline_items', 'catalog_navigation_risk_observations', 'catalog_refresh_materializations', 'catalog_refresh_audits', 'catalog_expansion_materializations', 'catalog_expansion_audits', 'catalog_baseline_consistency_audits', 'catalog_pool_activation_history', 'v_current_products']) {
       assert.ok(names.has(name), `${name} should exist`);
     }
     assert.ok(db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'source_url'));
     const membershipColumns=new Set(db.prepare('PRAGMA table_info(catalog_memberships)').all().map(column => column.name));
     for (const name of ['category_key','category_profile_version','campaign_id','source_id']) assert.ok(membershipColumns.has(name));
+    const campaignColumns=new Set(db.prepare('PRAGMA table_info(catalog_campaigns)').all().map(column => column.name));
+    for (const name of ['baseline_source','baseline_pool_version_id']) assert.ok(campaignColumns.has(name));
     const classificationColumns=new Set(db.prepare('PRAGMA table_info(product_classifications)').all().map(column => column.name));
     for (const name of ['level1','level2','level3','method','reasons_json']) assert.ok(classificationColumns.has(name));
     const attemptColumns=new Set(db.prepare('PRAGMA table_info(fine_classification_attempts)').all().map(column => column.name));

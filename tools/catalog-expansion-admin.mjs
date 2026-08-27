@@ -19,17 +19,24 @@ const { action,options }=parseArgs(process.argv.slice(2));
 const config=await loadConfig(options.config ?? 'config.json');const db=openDatabase(config.app.databasePath);
 try {
   const service=createCatalogCampaignService(db);
-  if (action==='create') {
+  if (action==='baseline-check') {
+    const profile=await loadCategoryProfile(path.resolve(options.profile ?? 'config/categories/motorcycle-accessories.json'));
+    print(service.getBaselineConsistency(profile.category_key));
+  } else if (action==='reconcile-memberships') {
+    if (options.confirm!=='ACTIVE_POOL_VERSION') throw new Error('reconcile-memberships要求 --confirm ACTIVE_POOL_VERSION。');
+    const profile=await loadCategoryProfile(path.resolve(options.profile ?? 'config/categories/motorcycle-accessories.json'));
+    print(service.reconcileActiveMembershipsToPool(profile.category_key));
+  } else if (action==='create') {
     const target=positiveInteger(options.target ?? 1500,'target');const expectedBaseline=positiveInteger(options.baseline ?? 1000,'baseline');
-    const activePool=db.prepare("SELECT id,product_count FROM catalog_pool_versions WHERE status='active' ORDER BY activated_at DESC LIMIT 1").get();
-    const activeMemberships=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_memberships WHERE active=1').get().count);
-    if (!activePool || Number(activePool.product_count)!==expectedBaseline || activeMemberships!==expectedBaseline) {
-      throw new Error(`Day5 baseline不一致：pool=${activePool?.product_count ?? 0}, active memberships=${activeMemberships}, expected=${expectedBaseline}`);
+    const profile=await loadCategoryProfile(path.resolve(options.profile ?? 'config/categories/motorcycle-accessories.json'));
+    const baseline=service.getBaselineConsistency(profile.category_key);
+    if (!baseline.activePoolVersionExists || baseline.activePoolVersionCount!==expectedBaseline || !baseline.consistent) {
+      const error=new Error(`Day5 baseline不一致：pool=${baseline.activePoolVersionCount}, memberships=${baseline.activeMembershipCount}, intersection=${baseline.intersectionCount}, expected=${expectedBaseline}`);
+      error.code='CATALOG_BASELINE_INCONSISTENT';throw error;
     }
     const existing=db.prepare("SELECT id,status FROM catalog_campaigns WHERE campaign_type='expansion' AND status NOT IN ('completed','failed','cancelled') ORDER BY created_at DESC LIMIT 1").get();
     if (existing) throw new Error(`已有未结束Expansion Campaign：${existing.id} (${existing.status})`);
-    const profile=await loadCategoryProfile(path.resolve(options.profile ?? 'config/categories/motorcycle-accessories.json'));
-    const campaign=service.createCampaign({ name:options.name ?? `catalog-expansion-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
+    const campaign=service.createCampaign({ id:options['campaign-id'] ?? null,name:options.name ?? `catalog-expansion-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
       campaignType:'expansion',profile,targetCount:target,baselinePoolCount:expectedBaseline,browserContext:{
         profileName:options['profile-name'] ?? 'T',profileDirectory:options['profile-directory'] ?? 'Default',
         controlMode:options['control-mode'] ?? 'yingdao_existing_chrome' } });
@@ -37,7 +44,7 @@ try {
     const sources=SOURCES.map(item => service.createSource(campaign.id,{ sourceKey:item.sourceKey,sourceType:item.sourceType,
       sortOrder:profile.sort_order,priority:item.priority,targetQuota:item.targetQuota,searchKeyword:item.keyword,
       navigationHint:{ label:item.label,entryMethod:item.entry ?? 'manual_product_family_navigation',searchKeyword:item.keyword ?? null } }));
-    print({ action,campaign:service.transitionCampaign(campaign.id,'running'),activePool,sources,
+    print({ action,campaign:service.transitionCampaign(campaign.id,'running'),baseline,sources,
       next:'运行 claim，然后用影刀把健康Chrome导航到返回Source并确认Top Sales。' });
   } else {
     const campaignId=required(options.campaign,'campaign');
@@ -59,7 +66,7 @@ try {
   }
 } finally { db.close(); }
 
-function parseArgs(argv) { const [action,...rest]=argv;if(!action)throw new Error('缺少操作：create/status/claim/complete-source/materialize/qa/activate/excel');const options={};for(let i=0;i<rest.length;i+=1){const token=rest[i];if(!token.startsWith('--'))throw new Error(`无法识别参数：${token}`);const key=token.slice(2);const value=rest[i+1];if(!value||value.startsWith('--'))throw new Error(`参数 --${key} 缺少值。`);options[key]=value;i+=1;}return { action,options }; }
+function parseArgs(argv) { const [action,...rest]=argv;if(!action)throw new Error('缺少操作：baseline-check/reconcile-memberships/create/status/claim/complete-source/materialize/qa/activate/excel');const options={};for(let i=0;i<rest.length;i+=1){const token=rest[i];if(!token.startsWith('--'))throw new Error(`无法识别参数：${token}`);const key=token.slice(2);const value=rest[i+1];if(!value||value.startsWith('--'))throw new Error(`参数 --${key} 缺少值。`);options[key]=value;i+=1;}return { action,options }; }
 function required(value,name){const result=String(value??'').trim();if(!result)throw new Error(`缺少 --${name}`);return result;}
 function positiveInteger(value,name){const result=Number(value);if(!Number.isInteger(result)||result<=0)throw new Error(`--${name} 必须是正整数。`);return result;}
 function print(value){console.log(JSON.stringify(value,null,2));}

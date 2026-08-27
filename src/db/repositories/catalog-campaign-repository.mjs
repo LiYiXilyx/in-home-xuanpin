@@ -22,19 +22,91 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     return getCampaign(id);
   }
 
+  function getBaselineConsistency(categoryKey) {
+    const activeVersions=db.prepare(`SELECT id,product_count FROM catalog_pool_versions
+      WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC`).all(categoryKey);
+    const activePool=activeVersions[0] ?? null;
+    const poolMetrics=activePool ? db.prepare(`SELECT COUNT(*) AS row_count,
+      COUNT(DISTINCT platform || CHAR(31) || goods_id) AS identity_count,
+      COUNT(DISTINCT goods_id) AS goods_id_count FROM catalog_pool_version_items WHERE pool_version_id=?`).get(activePool.id):
+      { row_count:0,identity_count:0,goods_id_count:0 };
+    const membershipMetrics=db.prepare(`SELECT COUNT(*) AS row_count,
+      COUNT(DISTINCT p.platform || CHAR(31) || p.external_product_id) AS identity_count
+      FROM catalog_memberships m JOIN products p ON p.id=m.product_id WHERE m.active=1`).get();
+    const intersectionCount=activePool ? Number(db.prepare(`SELECT COUNT(DISTINCT i.platform || CHAR(31) || i.goods_id) AS count
+      FROM catalog_pool_version_items i WHERE i.pool_version_id=? AND EXISTS(
+        SELECT 1 FROM catalog_memberships m JOIN products p ON p.id=m.product_id
+        WHERE m.active=1 AND p.platform=i.platform AND p.external_product_id=i.goods_id
+      )`).get(activePool.id).count):0;
+    const activePoolVersionCount=Number(poolMetrics.identity_count);
+    return { categoryKey,activePoolVersionExists:Boolean(activePool),activePoolVersionId:activePool?.id ?? null,
+      activePoolVersionRecordCount:activeVersions.length,activePoolDeclaredCount:Number(activePool?.product_count ?? 0),
+      activePoolRowCount:Number(poolMetrics.row_count),activePoolVersionCount,activePoolGoodsIdCount:Number(poolMetrics.goods_id_count),
+      activeMembershipRowCount:Number(membershipMetrics.row_count),activeMembershipCount:Number(membershipMetrics.identity_count),
+      intersectionCount,consistent:!activePool || (activeVersions.length===1 && Number(poolMetrics.row_count)===activePoolVersionCount
+        && Number(activePool.product_count)===activePoolVersionCount && intersectionCount===activePoolVersionCount) };
+  }
+
   function captureCampaignBaseline(campaignId) {
-    const timestamp=now();
-    db.prepare(`INSERT INTO catalog_campaign_baseline_items(
-      campaign_id,product_id,platform,goods_id,membership_id,captured_at
-    ) SELECT ?,p.id,p.platform,p.external_product_id,m.id,?
-      FROM products p
-      JOIN catalog_memberships m ON m.product_id=p.id AND m.active=1
-      WHERE m.id=(SELECT m2.id FROM catalog_memberships m2
-        WHERE m2.product_id=p.id AND m2.active=1 ORDER BY m2.last_seen_at DESC,m2.id DESC LIMIT 1)
-      ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp);
+    const timestamp=now();const campaign=getCampaign(campaignId);const consistency=getBaselineConsistency(campaign.categoryKey);
+    const baselineSource=consistency.activePoolVersionExists ? 'ACTIVE_POOL_VERSION':'LEGACY_ACTIVE_MEMBERSHIPS';
+    if (consistency.activePoolVersionExists) {
+      db.prepare(`INSERT INTO catalog_campaign_baseline_items(
+        campaign_id,product_id,platform,goods_id,membership_id,captured_at
+      ) SELECT ?,p.id,i.platform,i.goods_id,
+        (SELECT m.id FROM catalog_memberships m WHERE m.product_id=p.id AND m.active=1
+          ORDER BY m.last_seen_at DESC,m.id DESC LIMIT 1),?
+        FROM catalog_pool_version_items i JOIN products p
+          ON p.platform=i.platform AND p.external_product_id=i.goods_id
+        WHERE i.pool_version_id=?
+        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp,consistency.activePoolVersionId);
+    } else {
+      db.prepare(`INSERT INTO catalog_campaign_baseline_items(
+        campaign_id,product_id,platform,goods_id,membership_id,captured_at
+      ) SELECT ?,p.id,p.platform,p.external_product_id,m.id,?
+        FROM products p
+        JOIN catalog_memberships m ON m.product_id=p.id AND m.active=1
+        WHERE m.id=(SELECT m2.id FROM catalog_memberships m2
+          WHERE m2.product_id=p.id AND m2.active=1 ORDER BY m2.last_seen_at DESC,m2.id DESC LIMIT 1)
+        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp);
+    }
     const count=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_campaign_baseline_items WHERE campaign_id=?').get(campaignId).count);
-    db.prepare('UPDATE catalog_campaigns SET baseline_pool_count=?,updated_at=? WHERE id=?').run(count,timestamp,campaignId);
-    return count;
+    if (consistency.activePoolVersionExists && count!==consistency.activePoolVersionCount) {
+      throw new Error(`Active Pool baseline无法完整映射到products：${count}/${consistency.activePoolVersionCount}`);
+    }
+    db.prepare(`UPDATE catalog_campaigns SET baseline_pool_count=?,baseline_source=?,baseline_pool_version_id=?,updated_at=?
+      WHERE id=?`).run(count,baselineSource,consistency.activePoolVersionId,timestamp,campaignId);
+    db.prepare(`INSERT INTO catalog_baseline_consistency_audits(
+      campaign_id,category_key,baseline_source,active_pool_version_id,active_pool_version_count,
+      active_membership_count,intersection_count,consistent,checked_at
+    ) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(campaign_id) DO UPDATE SET
+      category_key=excluded.category_key,baseline_source=excluded.baseline_source,
+      active_pool_version_id=excluded.active_pool_version_id,active_pool_version_count=excluded.active_pool_version_count,
+      active_membership_count=excluded.active_membership_count,intersection_count=excluded.intersection_count,
+      consistent=excluded.consistent,checked_at=excluded.checked_at`).run(
+      campaignId,campaign.categoryKey,baselineSource,consistency.activePoolVersionId,consistency.activePoolVersionCount,
+      consistency.activeMembershipCount,consistency.intersectionCount,consistency.consistent ? 1:0,timestamp
+    );
+    return { count,baselineSource,baselinePoolVersionId:consistency.activePoolVersionId,consistency };
+  }
+
+  function getBaselineAudit(campaignId) {
+    return db.prepare('SELECT * FROM catalog_baseline_consistency_audits WHERE campaign_id=?').get(campaignId) ?? null;
+  }
+
+  function reconcileActiveMembershipsToPool(categoryKey) {
+    const before=getBaselineConsistency(categoryKey);
+    if (!before.activePoolVersionExists || before.activePoolVersionRecordCount!==1) throw new Error('需要且只能存在一个Active Pool Version。');
+    const membershipIds=db.prepare(`SELECT (SELECT m.id FROM catalog_memberships m JOIN products p ON p.id=m.product_id
+      WHERE p.platform=i.platform AND p.external_product_id=i.goods_id ORDER BY m.last_seen_at DESC,m.id DESC LIMIT 1) AS membership_id
+      FROM catalog_pool_version_items i WHERE i.pool_version_id=?`).all(before.activePoolVersionId).map(row => row.membership_id).filter(Boolean);
+    if (membershipIds.length!==before.activePoolVersionCount) throw new Error(`Active Pool无法完整映射到memberships：${membershipIds.length}/${before.activePoolVersionCount}`);
+    db.prepare('UPDATE catalog_memberships SET active=0 WHERE active=1').run();
+    const activate=db.prepare('UPDATE catalog_memberships SET active=1 WHERE id=?');
+    for (const id of membershipIds) activate.run(id);
+    const after=getBaselineConsistency(categoryKey);
+    if (!after.consistent || after.activeMembershipCount!==after.activePoolVersionCount) throw new Error('Active memberships与Active Pool Version对齐失败。');
+    return { before,after,activatedMembershipCount:membershipIds.length };
   }
 
   function isCampaignBaselineItem(campaignId,platform,goodsId) {
@@ -305,6 +377,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         AND NOT EXISTS(SELECT 1 FROM catalog_campaign_baseline_items b
           WHERE b.campaign_id=s.campaign_id AND b.platform=s.platform AND b.goods_id=s.goods_id)
     ) SELECT COUNT(*) AS total,COUNT(DISTINCT platform || CHAR(31) || goods_id) AS distinct_goods,
+      COUNT(DISTINCT goods_id) AS distinct_goods_id,
       SUM(CASE WHEN latest_title IS NOT NULL AND TRIM(latest_title)<>'' THEN 1 ELSE 0 END) AS title_count,
       SUM(CASE WHEN price_amount IS NOT NULL THEN 1 ELSE 0 END) AS price_count,
       SUM(CASE WHEN image_url IS NOT NULL AND TRIM(image_url)<>'' THEN 1 ELSE 0 END) AS image_count,
@@ -317,7 +390,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         AND EXISTS(SELECT 1 FROM catalog_exclusion_observations e WHERE e.campaign_id=s.campaign_id AND e.goods_id=s.goods_id)`).get(campaignId).count);
     const manualReviewCount=Number(db.prepare(`SELECT COUNT(*) AS count FROM catalog_staging_products
       WHERE campaign_id=? AND electronic_screening_status='manual_review_required'`).get(campaignId).count);
-    return { total,duplicateGoodsIdCount:total-Number(row.distinct_goods),electronicInCandidateCount,manualReviewCount,
+    return { total,distinctGoodsIdCount:Number(row.distinct_goods_id),duplicateGoodsIdCount:total-Number(row.distinct_goods),electronicInCandidateCount,manualReviewCount,
       titleCoverage:coverage(row.title_count),priceCoverage:coverage(row.price_count),imageCoverage:coverage(row.image_count),
       salesCoverage:coverage(row.sales_count),ratingCoverage:coverage(row.rating_count),reviewCountCoverage:coverage(row.review_count_count) };
   }
@@ -579,8 +652,13 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
           AND NOT EXISTS(SELECT 1 FROM catalog_campaign_baseline_items b
             WHERE b.campaign_id=s.campaign_id AND b.platform=s.platform AND b.goods_id=s.goods_id)
         ORDER BY s.first_seen_sequence LIMIT ?`).run(id,timestamp,campaign.id,campaign.targetCount-campaign.baselinePoolCount);
-      const itemCount=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_pool_version_items WHERE pool_version_id=?').get(id).count);
-      if (itemCount!==campaign.targetCount) throw new Error(`Expansion Pool数量错误：${itemCount}/${campaign.targetCount}`);
+      const poolGate=db.prepare(`SELECT COUNT(*) AS row_count,COUNT(DISTINCT goods_id) AS goods_id_count,
+        COUNT(DISTINCT platform || CHAR(31) || goods_id) AS identity_count
+        FROM catalog_pool_version_items WHERE pool_version_id=?`).get(id);
+      if (Number(poolGate.row_count)!==campaign.targetCount || Number(poolGate.goods_id_count)!==campaign.targetCount
+        || Number(poolGate.identity_count)!==campaign.targetCount) throw new Error(
+        `Expansion Pool唯一性错误：rows=${poolGate.row_count}, goods_id=${poolGate.goods_id_count}, identity=${poolGate.identity_count}, target=${campaign.targetCount}`
+      );
       db.prepare('UPDATE catalog_memberships SET active=0 WHERE active=1').run();
       db.prepare(`UPDATE catalog_memberships SET active=1 WHERE id IN (
         SELECT (SELECT m.id FROM catalog_memberships m JOIN products p ON p.id=m.product_id
@@ -714,7 +792,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     }));
   }
 
-  return { createCampaign,getCampaign,setCampaignBrowserContext,captureCampaignBaseline,isCampaignBaselineItem,hasCampaignStagingItem,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
+  return { createCampaign,getCampaign,setCampaignBrowserContext,getBaselineConsistency,captureCampaignBaseline,getBaselineAudit,reconcileActiveMembershipsToPool,isCampaignBaselineItem,hasCampaignStagingItem,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
     recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,getExpansionComparison,getExpansionQualityMetrics,
     materializeRefresh,materializeExpansion,saveRefreshAudit,getRefreshAudit,getRefreshMaterialization,
@@ -727,7 +805,8 @@ function mapCampaign(row) {
   if (!row) return null;
   return { id:row.id,name:row.name,campaignType:row.campaign_type,categoryKey:row.category_key,
     categoryProfileVersion:row.category_profile_version,targetGate:row.target_gate,targetCount:Number(row.target_count),
-    baselinePoolCount:Number(row.baseline_pool_count),status:row.status,qaStatus:row.qa_status,
+    baselinePoolCount:Number(row.baseline_pool_count),baselineSource:row.baseline_source ?? null,
+    baselinePoolVersionId:row.baseline_pool_version_id ?? null,status:row.status,qaStatus:row.qa_status,
     rawObservedCount:Number(row.raw_observed_count),electronicExcludedCount:Number(row.electronic_excluded_count),
     nonElectronicUniqueCount:Number(row.non_electronic_unique_count),businessEligibleCount:Number(row.business_eligible_count),
     reviewableUniqueCount:Number(row.reviewable_unique_count),sourceCount:Number(row.source_count),

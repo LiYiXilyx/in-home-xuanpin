@@ -21,10 +21,23 @@ const NON_EXHAUSTING_LOAD_STATES=new Set([
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
 
-  function createCampaign({ name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null }) {
+  function createCampaign({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null }) {
     const validated=validateCategoryProfile(profile);
+    if (campaignType==='expansion') {
+      const consistency=repository.getBaselineConsistency(validated.category_key);
+      if (consistency.activePoolVersionExists && !consistency.consistent) throw new AppError(
+        'Active Pool Version与active memberships不一致，拒绝继续Expansion。',{
+          code:'CATALOG_BASELINE_INCONSISTENT',details:consistency
+        }
+      );
+      if (consistency.activePoolVersionExists && baselinePoolCount>0 && consistency.activePoolVersionCount!==Number(baselinePoolCount)) {
+        throw new AppError('Active Pool Version数量与请求baseline不一致。',{
+          code:'CATALOG_BASELINE_INCONSISTENT',details:{ ...consistency,expectedBaseline:Number(baselinePoolCount) }
+        });
+      }
+    }
     return transaction(db,() => {
-      let campaign=repository.createCampaign({ name,campaignType,categoryKey:validated.category_key,
+      let campaign=repository.createCampaign({ id:id || undefined,name,campaignType,categoryKey:validated.category_key,
         categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
         targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated } });
       if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
@@ -378,7 +391,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         activeCandidateExact:comparison.activeCandidateCount===campaign.targetCount,
         snapshotsExact:materialization.snapshotsInserted===comparison.newUniqueNeeded,
         reviewsUnchanged:materialization.reviewsBefore===materialization.reviewsAfter,
-        duplicateGoodsId:quality.duplicateGoodsIdCount===0,electronicInCandidate:quality.electronicInCandidateCount===0,
+        duplicateGoodsId:quality.duplicateGoodsIdCount===0,distinctGoodsId:quality.distinctGoodsIdCount===campaign.targetCount,
+        electronicInCandidate:quality.electronicInCandidateCount===0,
         manualReviewExcluded:comparison.manualReviewCount===quality.manualReviewCount,
         titleCoverage:quality.titleCoverage>=0.95,priceCoverage:quality.priceCoverage>=0.95,imageCoverage:quality.imageCoverage>=0.95,
         salesCoverage:quality.salesCoverage>=0.90,ratingCoverage:quality.ratingCoverage>=0.90,reviewCountCoverage:quality.reviewCountCoverage>=0.90 };
@@ -422,7 +436,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       if (campaign.campaignType==='expansion') {
         const audit=repository.getExpansionAudit(campaign.id);const materialization=repository.getExpansionMaterialization(campaign.id);
         if (!audit || Number(audit.qa_passed)!==1 || !materialization || materialization.reviewsBefore!==materialization.reviewsAfter
-          || Number(audit.active_candidate_count)!==campaign.targetCount) {
+          || Number(audit.active_candidate_count)!==campaign.targetCount || Number(audit.duplicate_goods_id_count)!==0
+          || Number(audit.electronic_in_candidate_count)!==0) {
           throw new AppError('Expansion审计或数据物化未通过，拒绝激活Pool Version。',{ code:'CATALOG_POOL_SAFETY_REJECTED' });
         }
       }
@@ -453,6 +468,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
 
   return { createCampaign,transitionCampaign,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,recordNotSeenInCampaign,
+    getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
+    reconcileActiveMembershipsToPool:categoryKey => transaction(db,() => repository.reconcileActiveMembershipsToPool(categoryKey)),
     getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
     getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
