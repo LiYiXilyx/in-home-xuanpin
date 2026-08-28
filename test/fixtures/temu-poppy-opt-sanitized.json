@@ -1,0 +1,20 @@
+{
+  "result": {
+    "data": {
+      "goods_list": [
+        {"goods_id":"601099602102774","title":"Y10 Hard Wheat Motorcycle Helmet Headset","thumb_url":"https://img.kwcdn.com/product/fancy/sample-01.jpg"},
+        {"goods_id":"601099514149132","title":"210D Oxford Fabric Motorcycle Cover","thumb_url":"https://img.kwcdn.com/product/fancy/sample-02.jpg"},
+        {"goods_id":"601102992953649","title":"Motorcycle Bike Electric Car Cover","thumb_url":"https://img.kwcdn.com/product/fancy/sample-03.jpg"},
+        {"goods_id":"601101179368252","title":"High Quality Oxford Motorcycle Cover","thumb_url":"https://img.kwcdn.com/product/fancy/sample-04.jpg"},
+        {"goods_id":"601101125571790","title":"Heavy-Duty 210D Oxford Fabric Motorcycle Cover","thumb_url":"https://img.kwcdn.com/product/fancy/sample-05.jpg"},
+        {"goods_id":"601101051972183","title":"Universal Fuel Cap Strap","thumb_url":"https://img.kwcdn.com/product/fancy/sample-06.jpg"},
+        {"goods_id":"601101752583192","title":"Heavy-Duty ABS Anti-Theft Lock","thumb_url":"https://img.kwcdn.com/product/fancy/sample-07.jpg"},
+        {"goods_id":"601099523219339","title":"Motorcycle Back Seat Bag","thumb_url":"https://img.kwcdn.com/product/fancy/sample-08.jpg"},
+        {"goods_id":"601101443795535","title":"Motorcycle Handlebar Covers","thumb_url":"https://img.kwcdn.com/product/fancy/sample-09.jpg"},
+        {"goods_id":"601099527011263","title":"Adjustable Aluminum Alloy Bike Kickstand","thumb_url":"https://img.kwcdn.com/product/fancy/sample-10.jpg"}
+      ]
+    }
+  },
+  "success": true,
+  "message": null
+}

@@ -2,6 +2,7 @@ import { transaction } from '../../db/client.mjs';
 import { createOpportunityAnalysisRepository } from '../../db/repositories/opportunity-analysis-repository.mjs';
 import { classifyOpportunityProduct,OPPORTUNITY_TAXONOMY_VERSION } from './opportunity-classifier.mjs';
 import { analyzeOpportunitySegments,rankOpportunityProducts,OPPORTUNITY_SCORE_WEIGHTS,PRODUCT_SCORE_WEIGHTS } from './opportunity-metrics.mjs';
+import { buildGroupingQa,enrichOpportunityGrouping } from './opportunity-grouping.mjs';
 
 export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOString() }={}) {
   const repository=createOpportunityAnalysisRepository(db,{ now });
@@ -40,17 +41,27 @@ export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOSt
   }
 
   function reanalyze(snapshotId=null){const snapshot=snapshotId?repository.getSnapshot(snapshotId):repository.latestSnapshot();if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');return analyzeSnapshot(snapshot);}
+  function analyzeActivePool(categoryKey='motorcycle-accessories') {
+    const active=db.prepare(`SELECT * FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1`).get(categoryKey);
+    if(!active)throw new Error('当前没有Active Pool。');
+    const before=repository.coreCounts();
+    const snapshot=transaction(db,()=>repository.createSnapshot({sourcePoolVersionId:active.id,sourceCampaignId:active.campaign_id,
+      config:{taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,ruleVersion:'active-pool-rule-v2',sourceSemantics:'CURRENT_ACTIVE_POOL_ONLY'} }));
+    return analyzeSnapshot(snapshot,before);
+  }
 
   function getResult(snapshotId=null) {
     const snapshot=snapshotId?repository.getSnapshot(snapshotId):repository.latestSnapshot();
     if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');
-    const items=repository.listItems(snapshot.id);const segments=repository.listSegments(snapshot.id);const candidates=repository.listCandidates(snapshot.id);
-    const ranked=rankOpportunityProducts(items,segments,{ limit:5 });const segmentByType=new Map(segments.map(x=>[x.productType,x]));
-    const priceBands=new Map();for(const item of items.filter(x=>x.included&&Number.isFinite(x.priceAmount))){const a=priceBands.get(item.productType)??[];a.push(item.priceAmount);priceBands.set(item.productType,a);}
-    return { snapshot,items,segments,candidates:candidates.map(x=>{const prices=priceBands.get(x.productType)??[];return {...x,segment:segmentByType.get(x.productType),priceBand:prices.length?{min:Math.min(...prices),max:Math.max(...prices)}:null};}),candidateUniverse:ranked.scored,summary:snapshot.summary,coreCounts:repository.coreCounts() };
+    const storedItems=repository.listItems(snapshot.id);const segments=repository.listSegments(snapshot.id);const candidates=repository.listCandidates(snapshot.id);
+    const ranked=rankOpportunityProducts(storedItems,segments,{ limit:5 });const segmentByType=new Map(segments.map(x=>[x.productType,x]));
+    const priceBands=new Map();for(const item of storedItems.filter(x=>x.included&&Number.isFinite(x.priceAmount))){const a=priceBands.get(item.productType)??[];a.push(item.priceAmount);priceBands.set(item.productType,a);}
+    const items=storedItems.map(enrichOpportunityGrouping);const groupingQa=buildGroupingQa(items);
+    return { snapshot,items,segments,candidates:candidates.map(x=>{const prices=priceBands.get(x.productType)??[];return {...x,segment:segmentByType.get(x.productType),priceBand:prices.length?{min:Math.min(...prices),max:Math.max(...prices)}:null};}),candidateUniverse:ranked.scored,
+      summary:{...(snapshot.summary??{}),groupingQa},groupingQa,coreCounts:repository.coreCounts() };
   }
 
-  return { freezeAndAnalyze,reanalyze,getResult };
+  return { freezeAndAnalyze,reanalyze,analyzeActivePool,getResult };
 }
 
 function buildSummary(snapshot,items,segments,candidates,before,after) {

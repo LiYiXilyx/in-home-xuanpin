@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 
 const SIGNATURES = [
   { mime: 'image/png', extension: '.png', test: bytes => bytes.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) },
@@ -63,7 +64,7 @@ export async function cacheProductImage(product,options) {
         attempts.push({ strategy,attempt,result: 'completed' });
         return completed(product,payload.bytes,validation.signature,targetPath,options,strategy,attempts);
       } catch (error) {
-        attempts.push({ strategy,attempt,result: 'failed',error_code: error.code ?? `${strategy.toUpperCase()}_FETCH_FAILED` });
+        attempts.push({ strategy,attempt,result: 'failed',error_code: normalizeFailureCode(error) });
       }
     }
   }
@@ -97,6 +98,8 @@ export async function validateLocalImage(filePath,{ minimumBytes = 1024 } = {}) 
   try {
     const bytes = await fs.readFile(filePath);
     const validation = validateImagePayload(bytes,null,minimumBytes);
+    const metadata = await sharp(bytes,{ animated:true }).metadata();
+    if (!metadata.format || !metadata.width || !metadata.height) throw imageError('LOCAL_IMAGE_UNREADABLE','图片无法解析为有效位图。');
     return { valid: true,bytes,signature: validation.signature,sha256: sha256(bytes),byteLength: bytes.length };
   } catch (error) {
     return { valid: false,errorCode: error.code ?? 'LOCAL_IMAGE_INVALID' };
@@ -160,6 +163,13 @@ function failure(product,code,message,attempts) {
     local_path: null,absolute_path: null,content_type: null,byte_length: null,sha256: null,content_sha256: null,
     downloaded_at: null,fetch_strategy: 'failed',error_code: code,error_message: message,attempts
   };
+}
+function normalizeFailureCode(error) {
+  const code=String(error?.code ?? '');const message=String(error?.message ?? '');
+  if (code==='IMAGE_HTTP_ERROR') return 'IMAGE_HTTP_ERROR';
+  if (code.startsWith('IMAGE_MIME') || code.startsWith('IMAGE_SIGNATURE') || code==='IMAGE_TOO_SMALL' || code==='IMAGE_HTML_BODY') return 'IMAGE_INVALID_CONTENT';
+  if (code==='20' || /timeout|abort/i.test(`${error?.name ?? ''} ${message}`)) return 'IMAGE_TIMEOUT';
+  return 'IMAGE_DOWNLOAD_FAILED';
 }
 
 function resolveLocalPath(value,options) {

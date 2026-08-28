@@ -11,14 +11,17 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.equal(manifest.manifest_version,3);
   assert.deepEqual(manifest.permissions,['activeTab']);
   assert.deepEqual(manifest.host_permissions,['https://www.temu.com/*','http://127.0.0.1:37821/*']);
+  assert.equal(manifest.content_scripts.length,3);
   assert.deepEqual(manifest.content_scripts[0].matches,['https://www.temu.com/*']);
-  assert.deepEqual(manifest.content_scripts[0].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-auto-runner.js','content-script.js']);
+  assert.equal(manifest.content_scripts[0].world,'MAIN');assert.equal(manifest.content_scripts[0].run_at,'document_start');
+  assert.deepEqual(manifest.content_scripts[0].js,['catalog-network-endpoints.js','temu-network-interceptor.js']);
+  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-auto-runner.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
 });
 
 test('extension does not request or access browser secrets',() => {
-  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-auto-runner.js','content-script.js','popup.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
+  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
   assert.doesNotMatch(files,/\b(?:cookies|localStorage|sessionStorage|chrome\.history|chrome\.identity)\b/i);
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);
@@ -29,13 +32,15 @@ test('Catalog Auto Runner is isolated, checkpointed, bounded, and exposes operat
   for (const state of ['IDLE','SCANNING','BATCH_SUBMITTING','SCROLLING','LOAD_MORE_DETECTED','LOAD_MORE_TRIGGERED','WAITING_PROGRESS','MANUAL_REQUIRED','COMPLETED','FAILED']) assert.match(script,new RegExp(state));
   assert.match(script,/attempt<=2/);assert.match(script,/SAVE_CATALOG_CHECKPOINT/);assert.match(script,/CATALOG_MANUAL_REQUIRED/);
   assert.match(script,/首次开始/);assert.match(script,/暂停/);assert.match(script,/恢复当前进度/);assert.match(script,/停止/);
+  assert.match(script,/NETWORK_CAPTURE_DEBUG_BUILD='2026-08-27-C'/);assert.match(script,/Network Capture Debug Build:/);
   assert.doesNotMatch(script,/\b(?:cookie|localStorage|sessionStorage|authorization|token)\b/i);
 });
 
 test('accepted Extension-First build no longer loads the temporary A/B harness',() => {
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'browser-extension/manifest.json'),'utf8'));
-  assert.equal(manifest.content_scripts[0].js.includes('catalog-load-ab.js'),false);
-  assert.equal(manifest.content_scripts[0].js.includes('catalog-auto-runner.js'),true);
+  const scripts=manifest.content_scripts.flatMap(item=>item.js);
+  assert.equal(scripts.includes('catalog-load-ab.js'),false);
+  assert.equal(scripts.includes('catalog-auto-runner.js'),true);
 });
 
 test('Catalog extension is isolated from Review and routes only localhost batch messages',() => {

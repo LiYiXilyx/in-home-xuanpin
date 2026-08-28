@@ -98,8 +98,11 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         return { idempotentReplay:true,batch:registered.batch,campaign:repository.getCampaign(campaignId) };
       }
       let stagingCount=0,excludedCount=0,duplicateCount=0;
+      let serviceObserved=0,electronicExcluded=0,otherBusinessExcluded=0,eligibleGoods=0,acceptedGoods=0;
+      let stoppedDueToTarget=0,targetGateStopped=false;
       let acceptedNonElectronic=campaign.nonElectronicUniqueCount;
       for (const raw of cards) {
+        serviceObserved+=1;
         const goodsId=normalizeGoodsId(raw.goods_id ?? raw.goodsId);
         const platform='temu';
         const screening=screenElectronicRisk(raw);
@@ -114,21 +117,31 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
             classifierVersion:screening.classifierVersion,confidence:screening.confidence,detectedAt:capturedAt
           });
           repository.removeStagingForExclusion(campaignId,goodsId);
-          excludedCount+=1;
+          excludedCount+=1;electronicExcluded+=1;
           continue;
         }
+        if (screening.decision==='passed') eligibleGoods+=1;
         const baselineItem=campaign.campaignType==='expansion' && repository.isCampaignBaselineItem(campaign.id,platform,goodsId);
         const existingStaging=campaign.campaignType==='expansion' && repository.hasCampaignStagingItem(campaign.id,platform,goodsId);
         if ((campaign.campaignType==='refresh' || campaign.campaignType==='expansion') && screening.decision==='passed'
-          && acceptedNonElectronic>=campaign.targetCount && (campaign.campaignType==='refresh' || (!baselineItem && !existingStaging))) break;
+          && acceptedNonElectronic>=campaign.targetCount && (campaign.campaignType==='refresh' || (!baselineItem && !existingStaging))) {
+          stoppedDueToTarget+=1;targetGateStopped=true;break;
+        }
         const result=repository.upsertStaging(campaign,source,String(batchId),normalizeCard(raw,goodsId,capturedAt),screening.decision);
         if (result.inserted) {
           stagingCount+=1;
-          if (screening.decision==='passed' && (campaign.campaignType!=='expansion' || !baselineItem)) acceptedNonElectronic+=1;
+          if (screening.decision==='passed' && (campaign.campaignType!=='expansion' || !baselineItem)) {
+            acceptedNonElectronic+=1;acceptedGoods+=1;
+          }
         } else duplicateCount+=1;
       }
       const batch=repository.completeBatch(registered.batch.id,{ stagingCount,excludedCount,duplicateCount });
-      return { idempotentReplay:false,batch,campaign:repository.refreshCampaignCounts(campaignId) };
+      const refreshedCampaign=repository.refreshCampaignCounts(campaignId);
+      const audit={ campaignTarget:campaign.targetCount,targetReached:refreshedCampaign.nonElectronicUniqueCount>=campaign.targetCount,
+        serviceObserved,electronicExcluded,otherBusinessExcluded,eligibleGoods,acceptedGoods,stoppedDueToTarget,
+        unprocessedAfterTarget:targetGateStopped ? Math.max(0,cards.length-serviceObserved):0,failed:0,
+        campaignStagingDeduped:duplicateCount };
+      return { idempotentReplay:false,batch,campaign:refreshedCampaign,audit };
     });
   }
 

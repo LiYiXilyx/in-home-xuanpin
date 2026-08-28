@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/load.mjs';
 import { MigrationError } from '../shared/errors.mjs';
 import { openDatabase, transaction } from './client.mjs';
+import { assertTemuMutationAllowed } from '../modules/sourcing/machine-role.mjs';
 
 const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL('../../db/migrations', import.meta.url));
 
@@ -105,6 +106,7 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  if (!args.status) assertTemuMutationAllowed('Temu 生产库迁移');
   const config = await loadConfig(args.config);
   const result = args.status
     ? getMigrationStatus({ databasePath: config.app.databasePath })

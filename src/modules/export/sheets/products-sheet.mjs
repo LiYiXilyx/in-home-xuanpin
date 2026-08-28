@@ -3,37 +3,39 @@ import { manualValuesForProduct } from '../manual-values.mjs';
 
 export const PRODUCT_HEADERS=[
   '序号','商品主图','Top Sales rank','goods_id','商品标题','Temu链接','一级类目','子类目','价格','原价',
-  '折扣','销量','评分','评论数','商品状态','抓取时间','数据完整度','初步分类','人工备注'
+  '折扣','销量','评分','评论数','商品状态','抓取时间','数据完整度','初步分类','人工备注','canonical_url','URL来源'
 ];
 
 export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoodsId }) {
   sheet.getRange(`A1:${columnLetter(PRODUCT_HEADERS.length)}1`).values=[PRODUCT_HEADERS];
   applyHeader(sheet.getRange(`A1:${columnLetter(PRODUCT_HEADERS.length)}1`));
-  const widths=[7,14,14,18,44,54,18,32,12,12,10,12,9,12,12,20,13,18,36];
+  const widths=[7,14,14,18,44,54,18,32,12,12,10,12,9,12,12,20,13,18,36,54,24];
   widths.forEach((width,index) => { sheet.getRange(`${columnLetter(index+1)}:${columnLetter(index+1)}`).format.columnWidth=width; });
   sheet.freezePanes.freezeRows(1);
   if (products.length === 0) return { imageCount:0,hyperlinkCount:0 };
   const rows=products.map((product,index) => {
     const manual=manualValuesForProduct(manualState,product);
     return [
-      index+1,null,product.rank,product.goods_id,product.title,null,product.primary_category,product.subcategory,
+      index+1,imageDataByGoodsId.has(String(product.goods_id)) ? null : 'IMAGE_DOWNLOAD_FAILED',product.rank,product.goods_id,product.title,null,product.primary_category,product.subcategory,
       product.price_amount,product.original_price_amount,product.discount_percent,product.sales_count,product.rating,
       product.review_count,product.status,toDate(product.captured_at),null,
-      manual['初步分类'] || product.classification || '待分类',manual['人工备注'] || ''
+      manual['初步分类'] || product.classification || '待分类',manual['人工备注'] || '',null,product.url_source
     ];
   });
   const lastRow=products.length+1;
-  sheet.getRange(`A2:S${lastRow}`).values=rows;
+  sheet.getRange(`A2:U${lastRow}`).values=rows;
   sheet.getRange(`F2:F${lastRow}`).formulas=products.map(product => [
-    `=HYPERLINK("${excelString(product.product_url || product.source_url || product.canonical_url)}","${excelString(product.product_url || product.source_url || product.canonical_url)}")`
+    `=HYPERLINK("${excelString(product.display_url || product.product_url || product.canonical_url || '')}","${excelString(product.display_url || product.product_url || product.canonical_url || '')}")`
   ]);
+  sheet.getRange(`T2:T${lastRow}`).formulas=products.map(product => [product.canonical_url ? `=HYPERLINK("${excelString(product.canonical_url)}","${excelString(product.canonical_url)}")` : '']);
   sheet.getRange(`Q2:Q${lastRow}`).formulas=products.map((_,index) => {
     const row=index+2;
     return [`=COUNTA(C${row}:F${row},I${row},L${row}:N${row})/8`];
   });
-  applyBody(sheet.getRange(`A2:S${lastRow}`));
+  applyBody(sheet.getRange(`A2:U${lastRow}`));
   sheet.getRange(`F2:F${lastRow}`).format.font={ color:'#0563C1',underline:true };
   sheet.getRange(`F2:F${lastRow}`).format.wrapText=true;
+  sheet.getRange(`T2:T${lastRow}`).format={ font:{ color:'#0563C1',underline:true },wrapText:true };
   sheet.getRange(`A2:A${lastRow}`).format.numberFormat='#,##0';
   sheet.getRange(`C2:C${lastRow}`).format.numberFormat='#,##0';
   sheet.getRange(`I2:J${lastRow}`).format.numberFormat='€#,##0.00';
@@ -45,8 +47,8 @@ export function buildProductsSheet(sheet,products,{ manualState,imageDataByGoods
   sheet.getRange(`Q2:Q${lastRow}`).format.numberFormat='0%';
   sheet.getRange(`E2:E${lastRow}`).format.wrapText=true;
   sheet.getRange(`R2:S${lastRow}`).format.wrapText=true;
-  sheet.getRange(`A2:S${lastRow}`).format.rowHeight=72;
-  const table=sheet.tables.add(`A1:S${lastRow}`,true,'TemuOperationsProducts');
+  sheet.getRange(`A2:U${lastRow}`).format.rowHeight=72;
+  const table=sheet.tables.add(`A1:U${lastRow}`,true,'TemuOperationsProducts');
   table.style='TableStyleMedium2';
   table.showFilterButton=true;
   sheet.getRange(`Q2:Q${lastRow}`).conditionalFormats.add('cellIs',{

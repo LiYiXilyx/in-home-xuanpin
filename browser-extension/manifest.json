@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Temu Catalog 与评论采集",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "隔离采集当前Catalog列表商品卡或已匹配运营台任务的商品评论。",
   "permissions": ["activeTab"],
   "host_permissions": [
@@ -16,6 +16,17 @@
     "default_popup": "popup.html"
   },
   "content_scripts": [
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["catalog-network-endpoints.js","temu-network-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["catalog-network-endpoints.js","catalog-network-parser.js","catalog-network-cache.js","catalog-product-merger.js","catalog-network-bridge.js"],
+      "run_at": "document_start"
+    },
     {
       "matches": ["https://www.temu.com/*"],
       "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","catalog-auto-runner.js","content-script.js"],

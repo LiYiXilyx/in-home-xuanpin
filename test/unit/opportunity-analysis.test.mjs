@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyOpportunityProduct } from '../../src/modules/opportunity/opportunity-classifier.mjs';
 import { analyzeOpportunitySegments,rankOpportunityProducts,OPPORTUNITY_SCORE_WEIGHTS,PRODUCT_SCORE_WEIGHTS } from '../../src/modules/opportunity/opportunity-metrics.mjs';
+import { buildGroupingQa,sortOpportunityItems } from '../../src/modules/opportunity/opportunity-grouping.mjs';
 
 const base={priceAmount:20,salesCount:100,rating:4.5,reviewCount:10,imageUrl:'image',currentSourceUrl:'source',currency:'EUR'};
 
@@ -24,6 +25,33 @@ test('segment scoring uses fixed weights and sample gate',()=>{
 test('top3 concentration is diagnosed instead of treated as source exhaustion',()=>{
   const items=make('车把/横把','控制操纵',4,1);items[0].salesCount=1000;items[0].estimatedGmv=20000;
   const segment=analyzeOpportunitySegments(items)[0];assert.ok(segment.top3SalesShare>=0.65);assert.equal(segment.riskLevel,'high');assert.ok(segment.dominanceType);
+});
+
+test('clear cover and fastener entities receive formal taxonomy plus auditable grouping evidence',()=>{
+  const cover=classifyOpportunityProduct({...base,goodsId:'10',title:'Waterproof Motorcycle Cover for Outdoor Storage'});
+  assert.deepEqual([cover.level1Scene,cover.productType,cover.level3Segment,cover.similarProductCluster],['安全防护','车体防护','车罩','车罩']);
+  assert.match(cover.clusteringEvidence,/title_keyword:/);assert.equal(cover.imageEvidence,'not_assessed');assert.equal(cover.evidenceConflict,false);
+  const bolt=classifyOpportunityProduct({...base,goodsId:'20',title:'Stainless Steel Motorcycle Bolt Kit Universal Fasteners'});
+  assert.deepEqual([bolt.level1Scene,bolt.productType,bolt.level3Segment,bolt.similarProductCluster],['维修保养','紧固/密封件','螺栓','螺栓']);
+});
+
+test('image evidence is never fabricated and explicit evidence conflict forces review',()=>{
+  const missing=classifyOpportunityProduct({...base,imageUrl:null,title:'Universal Motorcycle Accessory'});
+  assert.equal(missing.imageEvidence,'unavailable');
+  const conflict=classifyOpportunityProduct({...base,title:'Waterproof Motorcycle Cover',imageEvidence:'bolt/screw kit',evidenceConflict:true});
+  assert.equal(conflict.evidenceConflict,true);assert.equal(conflict.manualReviewRequired,true);assert.ok(conflict.confidence<0.5);
+});
+
+test('detail grouping is deterministic, contiguous, and sales-descending inside one cluster',()=>{
+  const items=[
+    {...base,goodsId:'3',title:'Motorcycle Mount Bracket',salesCount:10},
+    {...base,goodsId:'2',title:'Waterproof Motorcycle Cover',salesCount:20},
+    {...base,goodsId:'1',title:'Waterproof Motorcycle Cover',salesCount:100},
+    {...base,goodsId:'4',title:'Motorcycle Bolt Kit',salesCount:30},
+  ];
+  const sorted=sortOpportunityItems(items),covers=sorted.filter(x=>x.similarProductCluster==='车罩');
+  assert.deepEqual(covers.map(x=>x.goodsId),['1','2']);
+  const qa=buildGroupingQa(items);assert.equal(qa.sameLevel2Contiguous,true);assert.equal(qa.sameLevel3Contiguous,true);assert.equal(qa.sameSimilarClusterContiguous,true);
 });
 
 function make(productType,level1Scene,count,start){return Array.from({length:count},(_,i)=>({platform:'temu',goodsId:`${productType}-${i}`,title:`${productType} ${i}`,included:true,productType,level1Scene,priceAmount:20+i,salesCount:start+i*10,rating:4+i/10,reviewCount:5+i,estimatedGmv:(20+i)*(start+i*10),warningCodes:[],fitmentType:'universal',logisticsType:'light_small',ipRisk:'unknown'}));}

@@ -1,3 +1,5 @@
+import { resolveEvidence } from '../../modules/evidence/evidence-repair.mjs';
+
 export function createReportRepository(db) {
   return {
     resolveJobId(requestedJobId = null) {
@@ -15,7 +17,10 @@ export function createReportRepository(db) {
 
     listProducts(jobId,{ sortDirection = 'asc' } = {}) {
       const direction = String(sortDirection).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
-      return db.prepare(`SELECT p.id AS product_id,p.external_product_id AS goods_id,p.source_url,p.canonical_url,
+      const rows=db.prepare(`SELECT p.id AS product_id,p.external_product_id AS goods_id,p.platform FROM catalog_memberships m
+        JOIN products p ON p.id=m.product_id WHERE m.active=1 ORDER BY m.current_rank ${direction},p.id ${direction}`).all();
+      const evidenceByKey=new Map(resolveEvidence(db,rows).map(item=>[`${item.platform}\u001f${item.goods_id}`,item]));
+      return db.prepare(`SELECT p.id AS product_id,p.external_product_id AS goods_id,p.platform,p.source_url,p.canonical_url,
           COALESCE(s.title,p.title) AS title,p.status,m.current_rank AS rank,
           m.primary_category,m.subcategory,s.price_amount,s.original_price_amount,s.discount_percent,
           s.sales_count,s.rating,s.review_count,s.captured_at,
@@ -30,11 +35,10 @@ export function createReportRepository(db) {
           (SELECT pi.content_sha256 FROM product_images pi WHERE pi.product_id=p.id
             AND pi.download_status='completed' AND pi.local_path IS NOT NULL
             ORDER BY CASE WHEN pi.source_url=s.image_url THEN 0 ELSE 1 END,pi.updated_at DESC,pi.id DESC LIMIT 1) AS image_sha256
-        FROM catalog_memberships m
-        JOIN products p ON p.id=m.product_id
-        JOIN product_snapshots s ON s.product_id=p.id AND s.job_id=?
+        FROM catalog_memberships m JOIN products p ON p.id=m.product_id
+        JOIN product_snapshots s ON s.id=(SELECT ps.id FROM product_snapshots ps WHERE ps.product_id=p.id ORDER BY ps.captured_at DESC,ps.id DESC LIMIT 1)
         WHERE m.active=1
-        ORDER BY m.current_rank ${direction},p.id ${direction}`).all(jobId).map(normalizeProduct);
+        ORDER BY m.current_rank ${direction},p.id ${direction}`).all().map(row=>normalizeProduct({ ...row,...evidenceByKey.get(`${row.platform}\u001f${row.goods_id}`) }));
     },
 
     listQuality(jobId) {
@@ -78,7 +82,9 @@ export function createReportRepository(db) {
 function normalizeProduct(row) {
   return {
     ...row,product_id:Number(row.product_id),goods_id:String(row.goods_id),rank:numberOrNull(row.rank),
-    product_url:row.source_url || row.canonical_url,
+    product_url:row.display_url ?? row.source_url ?? row.canonical_url,
+    display_url:row.display_url ?? row.source_url ?? row.canonical_url,
+    url_source:row.url_source ?? (row.source_url ? 'CURRENT_OBSERVATION' : row.canonical_url ? 'CANONICAL_FALLBACK' : 'MISSING'),
     price_amount:numberOrNull(row.price_amount),original_price_amount:numberOrNull(row.original_price_amount),
     discount_percent:numberOrNull(row.discount_percent),sales_count:numberOrNull(row.sales_count),
     rating:numberOrNull(row.rating),review_count:numberOrNull(row.review_count)

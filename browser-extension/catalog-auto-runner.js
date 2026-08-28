@@ -1,6 +1,7 @@
 'use strict';
 
 (() => {
+  const NETWORK_CAPTURE_DEBUG_BUILD='2026-08-27-C';
   const STATES=Object.freeze({ IDLE:'IDLE',SCANNING:'SCANNING',BATCH_SUBMITTING:'BATCH_SUBMITTING',SCROLLING:'SCROLLING',
     LOAD_MORE_DETECTED:'LOAD_MORE_DETECTED',LOAD_MORE_TRIGGERED:'LOAD_MORE_TRIGGERED',WAITING_PROGRESS:'WAITING_PROGRESS',
     MANUAL_REQUIRED:'MANUAL_REQUIRED',COMPLETED:'COMPLETED',FAILED:'FAILED',PAUSED:'PAUSED' });
@@ -79,11 +80,22 @@
           const submitted=await this.dependencies.submit();this.lastResult=submitted;
           const campaign=submitted.campaign;
           this.context={ ...this.context,campaign:{ ...this.context.campaign,...campaign } };
+          const networkAudit=globalThis.TemuCatalogNetworkCache?.diagnostics?.(before.goodsIds) ?? null;
           await this.checkpoint('capturing',this.metrics({ runner_state:STATES.BATCH_SUBMITTING,last_action:'batch_submitted',
             batch_id:submitted.batch?.batchId ?? null,current_unique:campaign.nonElectronicUniqueCount,
             raw_observed:campaign.rawObservedCount,non_electronic_unique:campaign.nonElectronicUniqueCount,
             excluded_unique:campaign.electronicExcludedCount,manual_review:campaign.manualReviewCount ?? null,
-            batch_duplicate_count:submitted.batch?.duplicateCount ?? 0,batch_idempotent_replay:Boolean(submitted.idempotentReplay) }));
+            campaign_staging_deduped:submitted.batch?.duplicateCount ?? 0,
+            campaign_target:submitted.audit?.campaignTarget ?? campaign.targetCount,
+            target_reached:Boolean(submitted.audit?.targetReached),service_observed:submitted.audit?.serviceObserved ?? null,
+            electronic_excluded:submitted.audit?.electronicExcluded ?? null,
+            other_business_excluded:submitted.audit?.otherBusinessExcluded ?? null,
+            eligible_goods:submitted.audit?.eligibleGoods ?? null,accepted_goods:submitted.audit?.acceptedGoods ?? null,
+            stopped_due_to_target:submitted.audit?.stoppedDueToTarget ?? null,
+            unprocessed_after_target:submitted.audit?.unprocessedAfterTarget ?? null,
+            network_duplicate_rows:networkAudit ? Math.max(0,Number(networkAudit.main_products_sent_count??0)-Number(networkAudit.network_unique_goods??0)):null,
+            cache_duplicate_goods:networkAudit?.cache_deduped_goods ?? null,
+            batch_idempotent_replay:Boolean(submitted.idempotentReplay) }));
           if (Number(campaign.nonElectronicUniqueCount)>=Number(this.sessionTarget)) {
             this.setState(STATES.COMPLETED,{ lastAction:'target_reached' });
             await this.checkpoint('capturing',this.metrics({ runner_state:STATES.COMPLETED,last_action:'target_reached',
@@ -253,6 +265,7 @@
     const track=document.createElement('div');Object.assign(track.style,{ height:'10px',margin:'6px 0 10px',borderRadius:'999px',background:'rgba(255,255,255,.2)',overflow:'hidden' });
     const bar=document.createElement('div');Object.assign(bar.style,{ height:'100%',width:'0%',background:'#22c55e',transition:'width .25s ease' });track.append(bar);
     const details=document.createElement('div');Object.assign(details.style,{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 12px',fontSize:'13px',color:'#dbeafe' });
+    const networkDetails=document.createElement('div');Object.assign(networkDetails.style,{ marginTop:'8px',fontSize:'12px',color:'#bfdbfe',whiteSpace:'pre-wrap' });
     const notice=document.createElement('div');Object.assign(notice.style,{ display:'none',marginTop:'10px',padding:'8px 10px',borderRadius:'7px',background:'#7f1d1d',color:'#fff',fontWeight:'700',whiteSpace:'pre-wrap' });
     const controls=document.createElement('div');controls.style.margin='11px 0 0';
     const make=(label,handler) => { const button=document.createElement('button');button.type='button';button.textContent=label;
@@ -269,7 +282,16 @@
       startButton.disabled=value.state!==STATES.IDLE;pauseButton.disabled=!active;resumeButton.disabled=![STATES.PAUSED,STATES.MANUAL_REQUIRED,STATES.FAILED].includes(value.state);stopButton.disabled=value.state===STATES.IDLE;
       for(const button of [startButton,pauseButton,resumeButton,stopButton])button.style.opacity=button.disabled?'.45':'1';resumeButton.style.background=resumeButton.disabled?'#e2e8f0':'#22c55e';
     });
-    panel.append(header,progressText,track,details,notice,controls);document.documentElement.append(panel,launcher);
+    const refreshNetworkDiagnostics=() => {
+      const parser=globalThis.TemuCatalogParser,rawCards=parser?.parseDocument(document,{baseUrl:location.href,enrich:false}) ?? [],cards=parser?.enrichCards(rawCards) ?? rawCards;
+      const diagnostics=globalThis.TemuCatalogNetworkCache?.diagnostics?.(rawCards.map(card=>card.goods_id)) ?? {};
+      const preview=cards.slice(0,10).map((card,index)=>({ goods_id:card.goods_id,dom:{title:rawCards[index]?.title??null,price_amount:rawCards[index]?.price_amount??null,sales_count:rawCards[index]?.sales_count??null,rating:rawCards[index]?.rating??null,review_count:rawCards[index]?.review_count??null},network:card.capture_transport==='NETWORK_ENRICHED'?{title:card.title,price_amount:card.price_amount,sales_count:card.sales_count,rating:card.rating,review_count:card.review_count}:null,merged:{title:card.title,price_amount:card.price_amount,sales_count:card.sales_count,rating:card.rating,review_count:card.review_count},source_url:card.href,
+        capture_transport:card.capture_transport,field_provenance:card.field_provenance }));
+      networkDetails.textContent=`Network Capture Debug Build: ${NETWORK_CAPTURE_DEBUG_BUILD}\nNetwork：${diagnostics.network_interceptor_ready?'已就绪':'未就绪'}｜Fetch ${diagnostics.total_fetch_seen??0}｜XHR ${diagnostics.total_xhr_seen??0}｜Allowlist ${diagnostics.allowlist_matched??0}｜MAIN消息 ${diagnostics.main_products_message_sent??0}/${diagnostics.main_products_sent_count??0}｜隔离接收 ${diagnostics.isolated_products_message_received??0}/${diagnostics.isolated_products_received_count??0}｜缓存 ${diagnostics.network_cache_size??0}｜增强 ${diagnostics.network_enriched_goods??0}｜拒绝 ${(diagnostics.bridge_schema_rejected??0)+(diagnostics.bridge_nonce_rejected??0)+(diagnostics.bridge_unknown_type??0)+(diagnostics.bridge_payload_rejected??0)}${diagnostics.bridge_last_reject_reason?`（${diagnostics.bridge_last_reject_reason}）`:''}`;
+      panel.dataset.networkDiagnostics=JSON.stringify(diagnostics);panel.dataset.networkPreview=JSON.stringify(preview);
+    };
+    refreshNetworkDiagnostics();setInterval(refreshNetworkDiagnostics,2000);
+    panel.append(header,progressText,track,details,networkDetails,notice,controls);document.documentElement.append(panel,launcher);
     setCollapsed(location.pathname==='/' || /-g-\d+\.html/i.test(location.pathname) || /(?:login|sign[-_]?in|register|verification)/i.test(location.pathname));
   }
 

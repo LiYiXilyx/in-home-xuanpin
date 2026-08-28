@@ -58,6 +58,37 @@ test('Scale Day4 refresh freezes old pool, adds exact snapshots, preserves not-s
   assert.equal(after.reviews,before.reviews);assert.equal(after.activeMemberships,before.activeMemberships);
 });
 
+test('target-bound capture conserves every accepted goods_id without requiring the full network batch to persist',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-catalog-target-audit-'));
+  const databasePath=path.join(directory,'target-audit.db');migrateDatabase({ databasePath });
+  const db=openDatabase(databasePath);t.after(() => { db.close();fs.rmSync(directory,{ recursive:true,force:true }); });
+  const now=sequenceClock();seedBaseline(db,now,['1001','1003']);
+  const before=counts(db);const profile=await loadCategoryProfile(profilePath);
+  const service=createCatalogCampaignService(db,{ now });
+  const campaign=service.createCampaign({ name:'target-bound-e2e',campaignType:'refresh',profile,targetCount:2 });
+  const source=service.createSource(campaign.id,{ sourceKey:'main-top-sales',sourceType:'category',sortOrder:'Top Sales',targetQuota:2 });
+  service.transitionCampaign(campaign.id,'running');
+
+  const captured=service.captureBatch({ campaignId:campaign.id,sourceId:source.id,batchId:'network-5',cards:[
+    card('1001','Mechanical cover'),card('9001','Bluetooth rechargeable USB headset'),card('1003','Mechanical bag'),
+    card('1004','Eligible item stopped by target'),card('1005','Unprocessed after target')
+  ] });
+  assert.deepEqual(captured.audit,{ campaignTarget:2,targetReached:true,serviceObserved:4,electronicExcluded:1,
+    otherBusinessExcluded:0,eligibleGoods:3,acceptedGoods:2,stoppedDueToTarget:1,unprocessedAfterTarget:1,
+    failed:0,campaignStagingDeduped:0 });
+  assert.equal(captured.batch.receivedCount,5);assert.equal(captured.batch.stagingCount,2);
+  assert.equal(Number(db.prepare('SELECT COUNT(DISTINCT goods_id) count FROM catalog_product_source_observations WHERE campaign_id=?').get(campaign.id).count),4);
+
+  db.prepare("UPDATE catalog_rpa_queue SET status='completed' WHERE campaign_id=?").run(campaign.id);
+  db.prepare("UPDATE catalog_sources SET status='completed' WHERE campaign_id=?").run(campaign.id);
+  const materialization=service.materializeRefresh(campaign.id);
+  const accepted=db.prepare("SELECT goods_id FROM catalog_staging_products WHERE campaign_id=? AND electronic_screening_status='passed' ORDER BY goods_id").all(campaign.id).map(row => row.goods_id);
+  const snapshots=db.prepare(`SELECT p.external_product_id AS goods_id FROM product_snapshots ps
+    JOIN products p ON p.id=ps.product_id WHERE ps.job_id=? ORDER BY p.external_product_id`).all(materialization.snapshotJobId).map(row => row.goods_id);
+  assert.deepEqual(snapshots,accepted);assert.equal(materialization.snapshotsInserted,2);assert.equal(materialization.productsInserted,0);
+  const after=counts(db);assert.equal(after.activeMemberships,before.activeMemberships);assert.equal(after.products,before.products);
+});
+
 function seedBaseline(db,now,goodsIds) {
   const jobs=createJobRepository(db,{ now });
   const job=jobs.createJob({ jobType:'catalog',siteCountry:'DE',language:'en',currency:'EUR',primaryCategory:'Automotive',subcategory:'Motorcycle Accessories',sortOrder:'Top Sales',targetCount:goodsIds.length });

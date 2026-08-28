@@ -19,3 +19,13 @@ test-results/
 .artifact-work/
 .docx-review/
 .tmp/
+
+# Dual-machine 1688 runtime and handoff artifacts (never commit)
+runtime/
+debug/
+handoff/
+outputs/1688-sourcing/
+browser-profile-1688*/
+chrome-profile-1688*/
+*.db-wal
+*.db-shm

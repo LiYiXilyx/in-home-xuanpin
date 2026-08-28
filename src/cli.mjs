@@ -7,6 +7,7 @@ import { seedDemo } from './demo.mjs';
 import { runBrowserOpenCommand } from './app/commands/browser-open.mjs';
 import { runCatalogCaptureCommand, runCatalogResumeCommand } from './app/commands/catalog-capture.mjs';
 import { runImageRepairCommand } from './app/commands/image-repair.mjs';
+import { runEvidenceRepairCommand } from './app/commands/evidence-repair.mjs';
 import { runExportCommand,runExportQaCommand } from './app/commands/export.mjs';
 import { runClassifyCommand } from './app/commands/classify.mjs';
 import { runAnalyzeMarketCommand,runMarketQaCommand } from './app/commands/analyze-market.mjs';
@@ -14,9 +15,12 @@ import { runFineClassifyCommand } from './app/commands/fine-classify.mjs';
 import { runDay9ReviewCaptureCommand,runDay9ReviewQaCommand } from './app/commands/review-capture.mjs';
 import { runLifecycleCommand,runLifecycleQaCommand } from './app/commands/lifecycle.mjs';
 import { runJobAction, runStatusCommand } from './app/commands/status.mjs';
+import { MACHINE_ROLES,getMachineRole } from './modules/sourcing/machine-role.mjs';
+
+const RUNNER_FORBIDDEN_COMMANDS=new Set(['init','browser-open','pause','resume','retry','cancel','capture','image-repair','classify','fine-classify','analyze-market','evidence-repair','lifecycle','review-capture','review-qa','current-review','refresh','crawl','reviews','demo']);
 
 function parseArgs(argv) {
-  const result = { command: argv[2] ?? 'help', config: 'config.json', rules: 'config/category-rules.example.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc', expectedActive: 1000, run: null, approve:false,checked:[] };
+  const result = { command: argv[2] ?? 'help', config: 'config.json', rules: 'config/category-rules.example.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc', expectedActive: 1000, run: null, approve:false,apply:false,checked:[] };
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === '--config') result.config = argv[++index];
     else if (argv[index] === '--rules') result.rules = argv[++index];
@@ -33,6 +37,7 @@ function parseArgs(argv) {
     else if (argv[index] === '--expected-active') result.expectedActive = Number(argv[++index]);
     else if (argv[index] === '--run') result.run = argv[++index];
     else if (argv[index] === '--approve') result.approve = true;
+    else if (argv[index] === '--apply') result.apply = true;
     else if (argv[index] === '--checked') result.checked = String(argv[++index] ?? '').split(',').map(item => item.trim()).filter(Boolean);
   }
   if (!Number.isInteger(result.batchSize) || result.batchSize < 1 || result.batchSize > 100) {
@@ -47,6 +52,8 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  const machineRole=getMachineRole({required:false});
+  if(machineRole===MACHINE_ROLES.RUNNER&&RUNNER_FORBIDDEN_COMMANDS.has(args.command))throw new Error(`1688_RUNNER 禁止执行 Temu 命令：${args.command}`);
   if (args.command === 'help') {
     console.log('用法：node src/cli.mjs <init|browser-open|status|pause|resume|retry|cancel|capture|classify|fine-classify|export|export-qa|analyze-market|market-qa|lifecycle|lifecycle-qa|review-capture|review-qa|current-review|refresh|crawl|reviews|demo> --config config.json');
     console.log('评论批次：node src/cli.mjs reviews --config config.json --batch-size 10 [--retry-failed] [--include-reviewed]');
@@ -102,6 +109,10 @@ async function main() {
   }
   if (args.command === 'market-qa') {
     await runMarketQaCommand(config,{ runId:args.run,expectedActiveCount:args.expectedActive });
+    return;
+  }
+  if (args.command === 'evidence-repair') {
+    await runEvidenceRepairCommand(config,{ apply:args.apply });
     return;
   }
   if (args.command === 'lifecycle') {

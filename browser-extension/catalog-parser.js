@@ -8,7 +8,7 @@
     catch { return null; }
   }
 
-  function parseDocument(documentValue,{ baseUrl=globalThis.location?.href ?? 'https://www.temu.com/',startSequence=1 }={}) {
+  function parseDocument(documentValue,{ baseUrl=globalThis.location?.href ?? 'https://www.temu.com/',startSequence=1,enrich=true }={}) {
     let elements=[];
     for (const selector of CARD_SELECTORS) {
       try { elements=[...documentValue.querySelectorAll(selector)]; } catch { elements=[]; }
@@ -19,7 +19,8 @@
       elements=links.map(findCardContainer);
     }
     elements=[...new Set(elements)];
-    return elements.map((element,index) => parseElement(element,{ baseUrl,sequence:startSequence+index })).filter(Boolean);
+    const cards=elements.map((element,index) => parseElement(element,{ baseUrl,sequence:startSequence+index })).filter(Boolean);
+    return enrich?enrichCards(cards):cards;
   }
 
   function parseElement(element,{ baseUrl,sequence }) {
@@ -75,5 +76,8 @@
   function attribute(text,name) { return decodeHtml(text.match(new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`,'i'))?.[1] ?? ''); }
   function decodeHtml(value) { return String(value).replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g,' '); }
 
-  globalThis.TemuCatalogParser=Object.freeze({ extractGoodsId,parseDocument,parseElement,parseHtmlFixture,parsePrices,parseReviewCount });
+  function enrichCards(cards) { const cache=globalThis.TemuCatalogNetworkCache,merger=globalThis.TemuCatalogProductMerger;
+    return cards.map(card=>merger?.mergeDomNetwork(card,cache?.get(card.goods_id))??card); }
+
+  globalThis.TemuCatalogParser=Object.freeze({ extractGoodsId,parseDocument,parseElement,parseHtmlFixture,parsePrices,parseReviewCount,enrichCards });
 })();
