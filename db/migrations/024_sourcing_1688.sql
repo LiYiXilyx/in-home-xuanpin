@@ -63,6 +63,7 @@ CREATE TABLE supplier_match_candidates (
 
 CREATE INDEX idx_supplier_match_candidates_goods
   ON supplier_match_candidates(temu_goods_id,captured_at DESC);
+
 CREATE TABLE supplier_match_selections (
   run_id TEXT NOT NULL,
   temu_goods_id TEXT NOT NULL,
@@ -74,3 +75,4 @@ CREATE TABLE supplier_match_selections (
   FOREIGN KEY(run_id,temu_goods_id,candidate_rank)
     REFERENCES supplier_match_candidates(run_id,temu_goods_id,candidate_rank) ON DELETE RESTRICT
 ) STRICT;
+
