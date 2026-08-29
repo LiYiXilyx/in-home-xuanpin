@@ -32,7 +32,7 @@ export async function runnerPreflight({runId,target,projectRoot=process.cwd(),te
   if(!Number.isInteger(target)||target<1||target>20)throw new Error('--target 必须是 1–20 的整数。');
   const paths=sourcingRuntimePaths({projectRoot,runId}),git=getGitInfo({cwd:projectRoot});
   if(!git.available)throw new Error('无法读取 Git 提交。');if(!git.statusClean)throw new Error('执行机工作区必须干净，确保运行可复现。');
-  const input=validateInputPackage(paths.inputDir,{expectedRunId:runId,expectedTarget:target});
+  const input=await validateInputPackage(paths.inputDir,{expectedRunId:runId,expectedTarget:target});
   if(input.manifest.git_commit!==git.commit)throw new Error(`输入包 Git 提交 ${input.manifest.git_commit} 与执行机 ${git.commit} 不一致。`);
   const temu=inspectTemuReadonly(path.resolve(temuDbPath),{expectedActive:2135});
   const sourcing=inspectSourcingDatabase(sourceDbPath);if(!sourcing.exists||sourcing.integrity!=='ok'||sourcing.schemaVersion!==2)throw new Error('1688 数据库未初始化、结构版本不正确或完整性检查失败；先运行 sourcing:1688:init-db。');

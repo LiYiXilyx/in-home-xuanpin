@@ -20,11 +20,11 @@ test('runner cannot mutate Temu and development cannot start formal sourcing',as
   await withRole(MACHINE_ROLES.DEVELOPMENT,()=>assert.rejects(()=>runnerPreflight({runId:'test-run',target:1,temuDbPath:'missing.db',checkChrome:false}),/仅允许 1688_RUNNER/));
 });
 
-test('input package is self-contained, hashed and identity-unique',()=>{
-  const root=temp(),image=path.join(root,'source.jpg');fs.writeFileSync(image,Buffer.from('verified-image'));
-  const inputDir=path.join(root,'input','run-001'),created=createInputPackage({runId:'run-001',gitCommit:'abc123',inputDir,goods:[{temu_goods_id:'g1',temu_title:'车罩',temu_image_path:image,level1:'户外'}]});
-  const checked=validateInputPackage(inputDir,{expectedRunId:'run-001',expectedTarget:1});assert.equal(checked.goods[0].temu_image_sha256,created.goods[0].temu_image_sha256);assert.ok(fs.existsSync(path.join(inputDir,checked.goods[0].temu_image_path)));
-  assert.throws(()=>createInputPackage({runId:'run-002',gitCommit:'abc',inputDir:path.join(root,'other'),goods:[{temu_goods_id:'x',temu_title:'a',temu_image_path:image},{temu_goods_id:'x',temu_title:'b',temu_image_path:image}]}),/重复/);
+test('input package is self-contained, hashed and identity-unique',async()=>{
+  const sharp=(await import('sharp')).default,root=temp(),image=path.join(root,'source.jpg');await sharp({create:{width:4,height:3,channels:3,background:'#336699'}}).jpeg().toFile(image);
+  const inputDir=path.join(root,'input','run-001'),created=await createInputPackage({runId:'run-001',gitCommit:'abc123',inputDir,goods:[{temu_goods_id:'g1',temu_title:'车罩',temu_image_path:image,level1:'户外'}]});
+  const checked=await validateInputPackage(inputDir,{expectedRunId:'run-001',expectedTarget:1});assert.equal(checked.goods[0].temu_image_sha256,created.goods[0].temu_image_sha256);assert.ok(fs.existsSync(path.join(inputDir,checked.goods[0].temu_image_path)));
+  await assert.rejects(()=>createInputPackage({runId:'run-002',gitCommit:'abc',inputDir:path.join(root,'other'),goods:[{temu_goods_id:'x',temu_title:'a',temu_image_path:image},{temu_goods_id:'x',temu_title:'b',temu_image_path:image}]}),/重复/);
 });
 
 test('run lock and sourcing run are append-only by run id',()=>{
