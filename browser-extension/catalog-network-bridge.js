@@ -24,9 +24,11 @@
     if(typeof payload.observed_at!=='string'){cache?.noteBridgeReject?.('schema','observed_at');return false;}
     if(!Array.isArray(products)||products.length<1||products.length>MAX_PRODUCTS_PER_MESSAGE){cache?.noteBridgeReject?.('schema','products_shape');return false;}
     const parser=globalThis.TemuCatalogNetworkParser;if(typeof parser?.analyzeProductRecords!=='function'){cache?.noteParseError?.({reason:'parser_unavailable',input_count:products.length});cache?.noteBridgeReject?.('schema','parser_unavailable');return false;}
-    let analysis;try{analysis=parser.analyzeProductRecords(products,{endpoint:payload.endpoint,base:location.href});}catch{cache?.noteParseError?.({reason:'parser_exception',input_count:products.length});return false;}
-    const normalized=analysis.records;if(analysis.invalid.length){cache?.noteParseError?.({reason:'invalid_goods_id',input_count:products.length,normalized_count:normalized.length,invalid:analysis.invalid});}
-    if(normalized.length<1){cache?.noteBridgeReject?.('schema','goods_id');return false;}
+    let analysis;try{analysis=parser.analyzeProductRecords(products,{endpoint:payload.endpoint,base:location.href,bridgeEndpointNormalized:endpointDiagnostic.normalized_endpoint});}catch{cache?.noteParseError?.({reason:'parser_exception',stage:'parser_exception',input_count:products.length});cache?.noteBridgeReject?.('schema','parser_exception');return false;}
+    cache?.noteParserStage?.(analysis.diagnostics);const normalized=analysis.records;
+    if(analysis.status==='endpoint_rejected'){cache?.noteParseError?.({reason:'endpoint_not_allowed',stage:'endpoint_gate',input_count:products.length,normalized_count:0});cache?.noteBridgeReject?.('schema','parser_endpoint_not_allowed');return false;}
+    if(analysis.invalid.length){cache?.noteParseError?.({reason:'invalid_goods_id',stage:'identity_normalization',input_count:products.length,normalized_count:normalized.length,invalid:analysis.invalid});}
+    if(normalized.length<1){const reason=analysis.status==='collection_empty'?'parser_collection_empty':analysis.status==='identity_rejected'?'invalid_goods_id':'parser_no_records';if(!analysis.invalid.length)cache?.noteParseError?.({reason,stage:analysis.stage,input_count:products.length,normalized_count:0});cache?.noteBridgeReject?.('schema',reason);return false;}
     cache?.noteParseSuccess?.();
     cache.observe({endpoint:'/api/poppy/v1/opt',observedAt:payload.observed_at,products:normalized});return true;
   }catch{globalThis.TemuCatalogNetworkCache?.noteBridgeReject?.('schema','exception');return false;}}

@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const NETWORK_RUNTIME_VERSION='track-a-runtime-v2',IDENTITY_CONTRACT_VERSION='track-a-id-v2';
+  const NETWORK_RUNTIME_VERSION='track-a-runtime-v2',IDENTITY_CONTRACT_VERSION='track-a-id-v2',PARSER_ENDPOINT_GATE_VERSION='track-a-parser-endpoint-v3';
   const GOODS_ID_MIN_LENGTH=1,GOODS_ID_MAX_LENGTH=16;
   const LIMITS=Object.freeze({maxDepth:6,maxArrayLength:300,maxObjects:2500});
   function parseNetworkResponse({url,body}) {
@@ -16,12 +16,18 @@
     return [...new Map(records.map(record=>[record.goods_id,record])).values()];
   }
   function parsePoppyOptResponse(body){const list=body?.result?.data?.goods_list;if(!Array.isArray(list))return [];const records=[];collectDirect(list,records);return [...new Map(records.map(record=>[record.goods_id,record])).values()];}
-  function parseProductRecords(products,{endpoint='/api/poppy/v1/opt',base='https://www.temu.com/'}={}){
-    if(!globalThis.TemuCatalogNetworkEndpoints?.isCatalogProductEndpoint(endpoint,base))return [];
+  function parseProductRecords(products,options={}){
+    if(!endpointStage(options).allowed)return [];
     if(!Array.isArray(products)||products.length>LIMITS.maxArrayLength)throw new Error('NETWORK_PRODUCT_BATCH_LIMIT');
     const records=[];collectDirect(products,records);return records;
   }
-  function analyzeProductRecords(products,options={}){const records=parseProductRecords(products,options),invalid=[];for(let index=0;index<(Array.isArray(products)?products.length:0);index++){const value=products[index],raw=value?.goods_id??value?.goodsId,id=normalizeGoodsId(raw);if(!id)invalid.push(identityDiagnostic(raw,index));}return {records,invalid};}
+  function analyzeProductRecords(products,options={}){
+    const inputCount=Array.isArray(products)?products.length:0,endpoint=endpointStage(options);
+    if(!endpoint.allowed)return analysisResult([],[],'endpoint_rejected','endpoint_gate',inputCount,endpoint,false);
+    if(!Array.isArray(products)||products.length>LIMITS.maxArrayLength)throw new Error('NETWORK_PRODUCT_BATCH_LIMIT');
+    const records=[];collectDirect(products,records);const invalid=[];for(let index=0;index<products.length;index++){const value=products[index],raw=value?.goods_id??value?.goodsId,id=normalizeGoodsId(raw);if(!id)invalid.push(identityDiagnostic(raw,index));}
+    const status=records.length?'ok':invalid.length?'identity_rejected':'collection_empty',stage=records.length?'complete':invalid.length?'identity_normalization':'product_collection';return analysisResult(records,invalid,status,stage,inputCount,endpoint,true);
+  }
   function normalizeProduct(value) {
     if(!plainObject(value))return null;const goodsId=normalizeGoodsId(value.goods_id??value.goodsId);if(!goodsId)return null;
     const price=number(first(value.price_amount,value.priceAmount,value.sale_price,value.salePrice,value.price?.amount,value.price?.value));
@@ -44,5 +50,11 @@
   function currency(v){const x=stringValue(v)?.toUpperCase();return x&&/^[A-Z]{3}$/.test(x)?x:null;}
   function normalizeGoodsId(value){if(value===null||value===undefined)return null;const id=String(value).trim();return id.length>=GOODS_ID_MIN_LENGTH&&id.length<=GOODS_ID_MAX_LENGTH&&/^\d+$/.test(id)?id:null;}
   function identityDiagnostic(value,index){const string=value===null||value===undefined?'':String(value),trimmed=string.trim();return {index,type:value===null?'null':typeof value,length:trimmed.length,digit_only:/^\d+$/.test(trimmed),prefix:trimmed.slice(0,4),suffix:trimmed.slice(-4)};}
-  globalThis.TemuCatalogNetworkParser=Object.freeze({NETWORK_RUNTIME_VERSION,IDENTITY_CONTRACT_VERSION,GOODS_ID_MIN_LENGTH,GOODS_ID_MAX_LENGTH,parseNetworkResponse,parsePoppyOptResponse,parseProductRecords,analyzeProductRecords,normalizeProduct,normalizeGoodsId,identityDiagnostic,boundedGenericExtractor,LIMITS});
+  function endpointStage({endpoint='/api/poppy/v1/opt',base='https://www.temu.com/',bridgeEndpointNormalized=null}={}){const helper=globalThis.TemuCatalogNetworkEndpoints,available=typeof helper?.isCatalogProductEndpoint==='function',normalized=normalizeEndpoint(endpoint,base,helper),bridgeAllowed=bridgeEndpointNormalized==='/api/poppy/v1/opt'&&normalized==='/api/poppy/v1/opt',helperAllowed=available&&helper.isCatalogProductEndpoint(endpoint,base);return {raw:safeEndpoint(endpoint,base),type:typeof endpoint,base:safeBase(base),normalized,allowed:Boolean(bridgeAllowed||helperAllowed),helperAvailable:available,source:bridgeAllowed?'bridge':helperAllowed?'helper':'none'};}
+  function normalizeEndpoint(value,base,helper){try{const url=new URL(String(value),String(base));if(url.protocol!=='https:'||url.hostname!=='www.temu.com')return null;const path=typeof helper?.normalizeTemuApiPath==='function'?helper.normalizeTemuApiPath(url.pathname):String(url.pathname).replace(/^\/[a-z]{2}(?:-[a-z]{2})?(?=\/api\/)/i,'');return path.replace(/\/+$/,'')||'/';}catch{return null;}}
+  function safeEndpoint(value,base){try{const url=new URL(String(value),String(base));return `${url.pathname}${redactedSearch(url.searchParams)}`;}catch{return String(value??'').slice(0,300);}}
+  function safeBase(value){try{const url=new URL(String(value));return `${url.protocol}//${url.hostname}${url.pathname}`;}catch{return '';}}
+  function redactedSearch(params){const keys=[...new Set([...params.keys()])].slice(0,20);return keys.length?`?${keys.map(key=>`${encodeURIComponent(key)}=<redacted>`).join('&')}`:'';}
+  function analysisResult(records,invalid,status,stage,inputCount,endpoint,collectAttempted){return {records,invalid,status,stage,diagnostics:{parser_endpoint_gate_version:PARSER_ENDPOINT_GATE_VERSION,parser_stage:stage,parser_status:status,parser_input_count:inputCount,parser_endpoint_raw:endpoint.raw,parser_endpoint_type:endpoint.type,parser_base:endpoint.base,parser_endpoint_normalized:endpoint.normalized,parser_endpoint_allowed:endpoint.allowed,parser_endpoint_helper_available:endpoint.helperAvailable,parser_endpoint_validation_source:endpoint.source,parser_collect_attempted:collectAttempted,parser_records_count:records.length,parser_invalid_identity_count:invalid.length}};}
+  globalThis.TemuCatalogNetworkParser=Object.freeze({NETWORK_RUNTIME_VERSION,IDENTITY_CONTRACT_VERSION,PARSER_ENDPOINT_GATE_VERSION,GOODS_ID_MIN_LENGTH,GOODS_ID_MAX_LENGTH,parseNetworkResponse,parsePoppyOptResponse,parseProductRecords,analyzeProductRecords,normalizeProduct,normalizeGoodsId,identityDiagnostic,boundedGenericExtractor,LIMITS});
 })();

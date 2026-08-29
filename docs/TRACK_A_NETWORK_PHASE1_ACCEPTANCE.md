@@ -1,7 +1,7 @@
 # Track A Phase 1 Acceptance Result
 
 Acceptance timestamp: 2026-08-29 (Asia/Shanghai)
-Verdict: **FAIL** (`LIVE_IDENTITY_CONTRACT_REJECTED_VALID_ROWS`)
+Verdict: **PASS**
 
 ## 1. Baseline
 
@@ -398,3 +398,105 @@ The 10-goods enrichment smoke was not run because Observe-only did not pass. Exi
 The post-retry read-only database check remained identical to baseline: products `2371`, memberships `2371`, active memberships `2135`, snapshots `4155`, reviews `147`; active Pool `catalog_pool_bdc90c9ae44740cea0e7a1b59476fd63` remained active with `2135` items; Opportunity `opportunity_snapshot_7f5cf83a3b7b469f9f4a3f0d5ecbf972` remained `awaiting_confirmation` with `5` candidates; migration max `024_sourcing_1688.sql`; SQLite integrity `ok`; foreign-key violations `0`.
 
 Final conditional verdict remains **MANUAL_REQUIRED**. Allowlist traffic is now proven, but the live parser/cache and 10-goods gates are not satisfied. No automatic hotfix was attempted.
+
+## Parser Endpoint Gate Root Cause Hotfix 3
+
+The `80 input / 0 records / 0 invalid identities` live shape was traced to the parser stage before product collection. The actual order was bridge envelope/schema validation, bridge exact endpoint normalization, `parser.analyzeProductRecords`, parser endpoint gate, product collection, identity analysis, then cache.
+
+MAIN sends `payload.endpoint` as the string `/api/poppy/v1/opt`, produced by `normalizeTemuApiPath(new URL(responseURL).pathname)`. The bridge normalizes that value to `/api/poppy/v1/opt` and accepts it before calling the parser. The parser then performed a second gate through an optional ISOLATED global helper.
+
+Local reproduction used the real category base URL, the exact payload endpoint and 20 live-format rows:
+
+| Runtime condition | Endpoint allowed | Records | Invalid identities |
+| --- | --- | ---: | ---: |
+| endpoint helper loaded | `true` | 20 | 0 |
+| endpoint helper unavailable | `false` | 0 | 0 |
+
+The second condition exactly reproduces the live zero-record/zero-invalid combination. Because bridge-accepted representations (`/api/poppy/v1/opt`, localized paths, same-host absolute URLs, safe query/trailing-slash forms) all pass the current helper when it is callable, the live early return identifies the optional ISOLATED endpoint-helper dependency as the failing gate. The goods identity contract was not changed.
+
+The previous 81-test regression missed this because the separate-world harness still explicitly loaded `catalog-network-endpoints.js` in ISOLATED before the parser, while the only test that omitted the helper called `normalizeGoodsId` directly and never exercised `bridge → analyzeProductRecords → endpoint gate`. Its base URL was also a fixed `/de-en/` root instead of the real category URL.
+
+The minimal fix keeps the bridge's exact endpoint gate authoritative for bridge-delivered product messages. The bridge passes its already-normalized canonical endpoint into the parser; the parser accepts that proof only when both values normalize exactly to `/api/poppy/v1/opt`. Standalone parser calls still require the endpoint helper and fail closed when it is unavailable. The allowlist was not expanded.
+
+Parser diagnostics now distinguish:
+
+- `endpoint_gate / endpoint_rejected`;
+- `product_collection / collection_empty`;
+- `identity_normalization / identity_rejected`;
+- `complete / ok`.
+
+The existing network diagnostics safely expose endpoint raw path with query values redacted, endpoint type, query-free base path, normalized endpoint, allowed/helper flags, validation source, collection-attempted flag, records count and invalid-identity count. The marker is `track-a-parser-endpoint-v3`.
+
+Browser-accurate regression continues to use separate MAIN and ISOLATED VM globals and manifest script order. It also reproduces the live missing-helper condition without bypassing the bridge. The projected bridge chain accepts one row, 20 rows, and 80 rows across four messages with zero parser errors; all 80 observations reach cache insertion. No live page refresh or retry was performed for this hotfix.
+
+## Live Parser Endpoint Gate Evidence
+
+The extension was reloaded and the healthy category page was refreshed before the operator naturally retriggered the product list. No direct API call, replay, request/response modification, Catalog Campaign, or SQLite write was performed.
+
+| Evidence | Final live result |
+| --- | --- |
+| Page | Germany / English / EUR / Motorcycles & Powersports Accessories / Top sales / healthy |
+| DOM goods | `40` |
+| Transport totals | XHR `163`; Fetch `0` |
+| Natural allowlist hits | `1` |
+| Endpoint | `/de-en/api/poppy/v1/opt` → `/api/poppy/v1/opt` |
+| HTTP / JSON / response bytes | `200 / yes / 321,955` |
+| MAIN messages / rows | `2 / 40` |
+| ISOLATED messages / rows | `2 / 40` |
+| Parser stage | `complete / ok` |
+| Endpoint allowed / validation | `true / bridge` |
+| Endpoint helper available | `false` (the fixed live condition) |
+| Last chunk records / invalid | `20 / 0` |
+| Total records | `40` |
+| Parser successes / errors | `2 / 0` |
+| Bridge rejected rows | `0` |
+| Cache insert attempts / inserted / deduped | `40 / 40 / 0` |
+| Unique / cache / enriched / network-only | `40 / 40 / 40 / 0` |
+| Merge conflicts | `0` |
+
+Runtime proof was exact in both worlds: MAIN and ISOLATED reported `track-a-runtime-v2 / track-a-id-v2`; the parser marker was `track-a-parser-endpoint-v3`. The prior `records=0, invalid=0, cache=0` failure is closed by real traffic while the optional ISOLATED endpoint helper remains unavailable: the bridge proof admitted the exact endpoint, collection completed, and both 20-row chunks entered cache.
+
+## Observe-only PASS
+
+**PASS.** Natural allowlist traffic was observed, the parser completed with records, the cache was populated, parser errors remained zero, and page behavior remained normal.
+
+## 10 Goods Enrichment
+
+All ten sampled IDs existed in the current DOM and were strictly equal to the corresponding cache identity. The candidate diagnostic uses the same MAIN `projectProduct` function as the cache payload: its real samples contained `title` and image only, so missing network price, sales, rating, and review-count values are recorded as `null`, not inferred. `Final` is the actual merged preview.
+
+| goods_id | Field | DOM | Network | Final | Provenance |
+| --- | --- | --- | --- | --- | --- |
+| `601099602102774` | title | `icon` | `Y10 Hard Wheat Motorcycle Helmet Headset` | `Y10 Hard Wheat Motorcycle Helmet Headset` | network |
+|  | price / sales / rating / reviews | `10.47 / 77000 / 4.7 / 3979` | `null / null / null / null` | `10.47 / 77000 / 4.7 / 3979` | dom / dom / dom / dom |
+| `601099514149132` | title | `item picture 210d oxford fabric motorcycle cover universal fit durable all weather weather non slip motorcycle cover for models` | `210D Oxford Fabric Motorcycle Cover, Universal Fit, Durable Outdoor Protection, All-Weather Weather Resistance, Non-Slip Motorcycle Cover for Various Models` | same as Network | network |
+|  | price / sales / rating / reviews | `8.8 / 76000 / 4.7 / 7551` | `null / null / null / null` | `8.8 / 76000 / 4.7 / 7551` | dom / dom / dom / dom |
+| `601102992953649` | title | `item picture motorcycle bike electric car cover rainproof dustproof uv and snowproof protective cover black motorcycle additions universal motorcycle and bike storage cover tear resistant design easy to clean` | `Motorcycle/Bike Electric Car Cover - Rainproof, Dustproof, UV And Snowproof Protective Cover, Black Motorcycle Additions, All-Season Universal Motorcycle And Bike Storage Cover, Outdoor Protection, Tear-Resistant Design, Easy to Clean` | same as Network | network |
+|  | price / sales / rating / reviews | `5.42 / 67000 / 4.5 / 3137` | `null / null / null / null` | `5.42 / 67000 / 4.5 / 3137` | dom / dom / dom / dom |
+| `601101179368252` | title | `item picture high quality oxford motorcycle weather protection suitable for vehicle models safe motorcycle storage reflective safety function uv resistant cover motorcycle cover` | `High quality Oxford motorcycle cover- all-weather protection, suitable for various vehicle models, durable, black, safe motorcycle storage| reflective safety function| UV resistant cover, motorcycle cover` | same as Network | network |
+|  | price / sales / rating / reviews | `11.94 / 52000 / 4.6 / 5361` | `null / null / null / null` | `11.94 / 52000 / 4.6 / 5361` | dom / dom / dom / dom |
+| `601101125571790` | title | `item picture 1pc heavy duty 210d oxford fabric motorcycle cover anti theft with reflective strips design weather applicable` | `1pc Heavy-Duty 210D Oxford Fabric Motorcycle Cover | Anti-Theft with Reflective Strips, Keyhole Design, Weather Protection for All Seasons, Universally Applicable` | same as Network | network |
+|  | price / sales / rating / reviews | `11.31 / 51000 / 4.7 / 4157` | `null / null / null / null` | `11.31 / 51000 / 4.7 / 4157` | dom / dom / dom / dom |
+| `601101051972183` | title | `item picture universal fuel cap strap durable stain resistant plastic gas lid tie for all vehicles` | `Universal Fuel Cap Strap - Durable Stain-Resistant Plastic Gas Lid Tie for All Vehicles` | same as Network | network |
+|  | price / sales / rating / reviews | `1.03 / 40000 / 4.6 / 4251` | `null / null / null / null` | `1.03 / 40000 / 4.6 / 4251` | dom / dom / dom / dom |
+| `601101752583192` | title | `item picture 1 2pcs heavy duty abs material anti theft lock with multi color options suitable for bicycles and motorcycles lightweight and portable providing for your` | `1-2pcs Heavy-Duty ABS Material Anti-Theft Lock with Multi-Color Options, Suitable for Bicycles And Motorcycles, Lightweight And Portable, Providing Strong Protection for Your Valuables` | same as Network | network |
+|  | price / sales / rating / reviews | `7.97 / 40000 / 4.6 / 3812` | `null / null / null / null` | `7.97 / 40000 / 4.6 / 3812` | dom / dom / dom / dom |
+| `601099523219339` | title | `item picture motorcycle back seat bag pu leather tail pack waterproof motorbike side bag retro mini universal roll bag` | `Motorcycle Back Seat Bag PU Leather Tail Pack Waterproof Motorbike Side Bag Retro Tactical Mini Universal Roll Bag` | same as Network | network |
+|  | price / sales / rating / reviews | `6.5 / 37000 / 4.7 / 1717` | `null / null / null / null` | `6.5 / 37000 / 4.7 / 1717` | dom / dom / dom / dom |
+| `601101443795535` | title | `item picture 2pcs set of motorcycle handlebar covers motorcycle decorative additions motorcycle bicycle brake lever covers handlebar rubber modification covers brake handlebar covers clutch handlebar rubber covers` | `2pcs Set of Motorcycle Handlebar Covers, Motorcycle Decorative Additions, Motorcycle Bicycle Brake Lever Covers, Handlebar Rubber Modification Covers, Brake Handlebar Covers, Clutch Handlebar Rubber Covers` | same as Network | network |
+|  | price / sales / rating / reviews | `1.18 / 34000 / 4.6 / 1653` | `null / null / null / null` | `1.18 / 34000 / 4.6 / 1653` | dom / dom / dom / dom |
+| `601099527011263` | title | `item picture bike kickstand adjustable strong aluminum alloy bicycle kickstand for 24 29 inch bikes` | `Bike Kickstand, Adjustable Strong Aluminum Alloy Bicycle Kickstand for 60.96-73.66 cm Bikes` | same as Network | network |
+|  | price / sales / rating / reviews | `5.31 / 33000 / 4.7 / 3230` | `null / null / null / null` | `5.31 / 33000 / 4.7 / 3230` | dom / dom / dom / dom |
+
+For all ten products, `source_url` is the current Temu DOM product URL with provenance `dom`; `capture_transport` is `NETWORK_ENRICHED`; endpoint is `/api/poppy/v1/opt`.
+
+## Provenance
+
+Strict identity equality was satisfied for all ten samples. Network titles safely replaced weak DOM labels; missing network numeric fields did not overwrite healthy DOM values. Source URLs remained DOM provenance. Formal transports were `NETWORK_ENRICHED` only for this sample; no `NETWORK_ONLY` observation entered a formal product, Catalog batch, Pool, Opportunity, or SQLite.
+
+## Data Integrity
+
+The final read-only database result exactly matched baseline: products `2371`, memberships `2371`, active memberships `2135`, snapshots `4155`, and reviews `147`. Active Pool `catalog_pool_bdc90c9ae44740cea0e7a1b59476fd63` remained `active` with declared/item count `2135 / 2135`. Opportunity Snapshot `opportunity_snapshot_7f5cf83a3b7b469f9f4a3f0d5ecbf972` remained `awaiting_confirmation` with `5` candidates. Migration max remained `024_sourcing_1688.sql`; SQLite integrity was `ok`; foreign-key violations were `0`.
+
+## Final Verdict
+
+**PASS.** Observe-only, real parser/cache, 10-goods enrichment, 86/86 Track A + Review regression, project checks, and formal-data integrity all passed. Track A Phase 1 is closed. Business work remains gated at `OPPORTUNITY_PRODUCT_CONFIRMATION`; Track B and Track C were not started.
