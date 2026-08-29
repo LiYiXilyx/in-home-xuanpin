@@ -23,11 +23,14 @@
     if(endpointDiagnostic.normalized_endpoint!=='/api/poppy/v1/opt'){cache?.noteEndpointReject?.(endpointDiagnostic);cache?.noteBridgeReject?.('schema','endpoint');return false;}
     if(typeof payload.observed_at!=='string'){cache?.noteBridgeReject?.('schema','observed_at');return false;}
     if(!Array.isArray(products)||products.length<1||products.length>MAX_PRODUCTS_PER_MESSAGE){cache?.noteBridgeReject?.('schema','products_shape');return false;}
-    const normalized=[];for(const product of products){const value=normalizeProduct(product);if(!value){cache?.noteBridgeReject?.('schema','goods_id');return false;}normalized.push(value);}
+    const parser=globalThis.TemuCatalogNetworkParser;if(typeof parser?.analyzeProductRecords!=='function'){cache?.noteParseError?.({reason:'parser_unavailable',input_count:products.length});cache?.noteBridgeReject?.('schema','parser_unavailable');return false;}
+    let analysis;try{analysis=parser.analyzeProductRecords(products,{endpoint:payload.endpoint,base:location.href});}catch{cache?.noteParseError?.({reason:'parser_exception',input_count:products.length});return false;}
+    const normalized=analysis.records;if(analysis.invalid.length){cache?.noteParseError?.({reason:'invalid_goods_id',input_count:products.length,normalized_count:normalized.length,invalid:analysis.invalid});}
+    if(normalized.length<1){cache?.noteBridgeReject?.('schema','goods_id');return false;}
+    cache?.noteParseSuccess?.();
     cache.observe({endpoint:'/api/poppy/v1/opt',observedAt:payload.observed_at,products:normalized});return true;
   }catch{globalThis.TemuCatalogNetworkCache?.noteBridgeReject?.('schema','exception');return false;}}
 
-  function normalizeProduct(value){if(!value||typeof value!=='object'||Array.isArray(value))return null;const goodsId=String(value.goods_id??'');if(!/^\d+$/.test(goodsId)&&!/^test_bridge_\d+$/.test(goodsId))return null;const result={goods_id:goodsId};for(const field of ['title','image_url','currency'])result[field]=typeof value[field]==='string'?value[field]:null;for(const field of ['price_amount','sales_count','rating','review_count']){const number=Number(value[field]);result[field]=value[field]!==null&&value[field]!==undefined&&Number.isFinite(number)&&number>=0&&(field!=='rating'||number<=5)?number:null;}return JSON.parse(JSON.stringify(result));}
   function normalizePayloadEndpoint(value){
     if(typeof value!=='string'||!value)return null;
     const raw=value.trim();if(!raw)return null;
@@ -44,5 +47,5 @@
   function redactedSearch(params){const keys=[...new Set([...params.keys()])].slice(0,50);return keys.length?`?${keys.map(key=>`${encodeURIComponent(key)}=<redacted>`).join('&')}`:'';}
   function utf8Bytes(value){return typeof TextEncoder==='function'?new TextEncoder().encode(value).byteLength:String(value).length;}
 
-  window.addEventListener('message',handle,false);globalThis.TemuCatalogNetworkBridge=Object.freeze({handle,normalizeProduct,normalizePayloadEndpoint,diagnosePayloadEndpoint,TYPES,SOURCE,VERSION,MAX_PAYLOAD_BYTES,MAX_PRODUCTS_PER_MESSAGE});
+  window.addEventListener('message',handle,false);globalThis.TemuCatalogNetworkBridge=Object.freeze({handle,normalizePayloadEndpoint,diagnosePayloadEndpoint,TYPES,SOURCE,VERSION,MAX_PAYLOAD_BYTES,MAX_PRODUCTS_PER_MESSAGE});
 })();

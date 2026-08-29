@@ -15,6 +15,8 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.deepEqual(manifest.content_scripts[0].matches,['https://www.temu.com/*']);
   assert.equal(manifest.content_scripts[0].world,'MAIN');assert.equal(manifest.content_scripts[0].run_at,'document_start');
   assert.deepEqual(manifest.content_scripts[0].js,['catalog-network-endpoints.js','temu-network-interceptor.js']);
+  assert.deepEqual(manifest.content_scripts[1].js,['catalog-network-endpoints.js','catalog-network-parser.js','catalog-network-cache.js','catalog-product-merger.js','catalog-network-bridge.js']);
+  assert.equal(manifest.content_scripts[1].run_at,'document_start');
   assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-auto-runner.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
