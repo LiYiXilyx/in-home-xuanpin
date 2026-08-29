@@ -2,6 +2,7 @@
 
 (() => {
   const MAX_CARDS_PER_BATCH=300;
+  const FULL_REFRESH_MODE='FULL_REFRESH_EXTENSION_AUTO';
   function error(code,message) { const value=new Error(message);value.code=code;return value; }
   function send(message) { return new Promise((resolve,reject) => chrome.runtime.sendMessage(message,response => { const runtimeError=chrome.runtime.lastError;if (runtimeError) reject(new Error(runtimeError.message));else resolve(response); })); }
 
@@ -28,23 +29,27 @@
       category_key:profile.category_key,category_profile_version:profile.category_profile_version,sort_order:profile.sort_order } };
   }
 
-  async function capture({ campaignId,sourceId,batchId=globalThis.crypto?.randomUUID?.() ?? `catalog-${Date.now()}` }) {
+  async function capture({ campaignId,sourceId,batchId=globalThis.crypto?.randomUUID?.() ?? `catalog-${Date.now()}`,cards=null,captureMode=null,pageBinding=null }) {
     const lookup=campaignId && sourceId ? await send({ type:'GET_CATALOG_CONTEXT',campaignId,sourceId }):await send({ type:'GET_CATALOG_CURRENT' });
     if (!lookup?.ok) throw error(lookup?.errorCode ?? 'CATALOG_CONTEXT_MISMATCH',lookup?.error ?? '无法读取Catalog上下文。');
     campaignId=campaignId ?? lookup.context.campaign.id;sourceId=sourceId ?? lookup.context.source.id;
-    const inspected=inspectContext(lookup.context);
-    const chunks=splitCards(inspected.cards);const capturedAt=new Date().toISOString();const results=[];
+    const inspected=inspectContext(lookup.context);let selected=selectRequestedCards(inspected.cards,cards);
+    if (lookup.context.campaign.browserControlMode===FULL_REFRESH_MODE) {
+      selected=selected.filter(card => Number.isInteger(card.sales_count) && card.sales_count>=0 && Boolean(card.raw_sales_text));
+      if (!selected.length) throw error('FULL_REFRESH_SALES_EVIDENCE_REQUIRED','当前页面没有同时具备 raw_sales_text 与有效 sales_count 的商品卡。');
+    }
+    const chunks=splitCards(selected);const capturedAt=new Date().toISOString();const results=[];
     for (let index=0;index<chunks.length;index+=1) {
       const chunkBatchId=chunks.length===1 ? batchId:`${batchId}:part-${index+1}-of-${chunks.length}`;
       const payload={ campaign_id:campaignId,source_id:sourceId,batch_id:chunkBatchId,category_key:lookup.context.profile.category_key,
         category_profile_version:lookup.context.profile.category_profile_version,page_url:location.href,page_title:document.title,
-        captured_at:capturedAt,page_context:inspected.pageContext,cards:chunks[index] };
+        captured_at:capturedAt,page_context:inspected.pageContext,capture_mode:captureMode,page_binding:pageBinding,cards:chunks[index] };
       const saved=await send({ type:'SAVE_CATALOG_BATCH',payload });
       if (!saved?.ok) throw error(saved?.errorCode ?? 'CATALOG_BATCH_FAILED',saved?.error ?? `Catalog分片 ${index+1}/${chunks.length} 保存失败。`);
       results.push(saved.result);
     }
     const result=aggregateResults(batchId,results);
-    if (lookup.context.queue?.id) {
+    if (lookup.context.queue?.id && captureMode!=='MANUAL_NAVIGATION_PASSIVE_CAPTURE') {
       const before=Number(lookup.context.campaign.nonElectronicUniqueCount ?? 0);
       const after=Number(result.campaign?.nonElectronicUniqueCount ?? before);
       const checkpoint=await send({ type:'SAVE_CATALOG_CHECKPOINT',payload:{
@@ -58,6 +63,33 @@
       result.checkpoint=checkpoint.result;
     }
     return result;
+  }
+
+  async function capturePassive({ campaignId,sourceId,maxCards=300,goodsIds=null,pageBinding=null,batchId=globalThis.crypto?.randomUUID?.() ?? `passive-${Date.now()}` }={}) {
+    const parser=globalThis.TemuCatalogParser,cache=globalThis.TemuCatalogNetworkCache,merger=globalThis.TemuCatalogProductMerger;
+    if (!parser || !cache || !merger) throw error('PASSIVE_CAPTURE_NOT_READY','Passive Network parser/cache/merger尚未就绪。');
+    const rawCards=parser.parseDocument(document,{ baseUrl:location.href,enrich:false });const records=new Map(cache.snapshot().map(record=>[String(record.goods_id),record]));
+    const cards=[];const limit=Math.max(0,Math.min(MAX_CARDS_PER_BATCH,Number(maxCards)||0));const requested=Array.isArray(goodsIds)?new Set(goodsIds.map(String)):null;
+    for (const dom of rawCards) {
+      if(requested&&!requested.has(String(dom.goods_id)))continue;
+      const record=records.get(String(dom.goods_id));if (!record || String(record.goods_id)!==String(dom.goods_id)) continue;
+      const merged=merger.mergeDomNetwork(dom,record);if (!merged) continue;
+      cards.push({ ...merged,network_observed:true,network_endpoint:record.endpoint??null,network_observed_at:record.lastSeenAt??null,
+        bound_url:pageBinding?.bound_url??null,bound_at:pageBinding?.bound_at??null,bound_category:pageBinding?.bound_category??null,bound_sort:pageBinding?.bound_sort??null });
+      if (cards.length>=limit) break;
+    }
+    if (!cards.length) throw error('NO_PASSIVE_NETWORK_DOM_MATCH','当前尚无 Network cache 与真实 DOM goods_id 的严格交集，请继续人工导航。');
+    const result=await capture({ campaignId,sourceId,batchId,cards,captureMode:'MANUAL_NAVIGATION_PASSIVE_CAPTURE',pageBinding });
+    return { ...result,passiveGoodsIds:cards.map(card=>String(card.goods_id)),passiveCandidateCount:cards.length };
+  }
+
+  function selectRequestedCards(domCards,requested) {
+    if (requested===null || requested===undefined) return domCards;
+    if (!Array.isArray(requested) || !requested.length) throw error('NO_PRODUCT_CARDS','本轮没有可提交的Passive商品。');
+    const domIds=new Set(domCards.map(card=>String(card.goods_id)));
+    const selected=requested.filter(card=>card && domIds.has(String(card.goods_id)));
+    if (!selected.length) throw error('NO_PRODUCT_CARDS','Passive商品已不在当前真实DOM。');
+    return selected;
   }
 
   function splitCards(cards,max=MAX_CARDS_PER_BATCH) { const chunks=[];for(let index=0;index<cards.length;index+=max)chunks.push(cards.slice(index,index+max));return chunks; }
@@ -83,7 +115,7 @@
     document.documentElement.append(button);
   }
 
-  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,splitCards,aggregateResults,MAX_CARDS_PER_BATCH });
+  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,splitCards,aggregateResults,selectRequestedCards,MAX_CARDS_PER_BATCH });
   const visibleCards=globalThis.TemuCatalogParser?.parseDocument(document,{ baseUrl:location.href }) ?? [];
   if (visibleCards.length) installButton();
 })();

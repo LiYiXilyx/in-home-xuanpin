@@ -6,7 +6,7 @@ import path from 'node:path';
 import { classifyPageSignals, detectChallenge } from '../../src/browser/challenge-handler.mjs';
 import { findInstalledChrome } from '../../src/browser/chrome-locator.mjs';
 import { findCurrentOperatorTemuPage, requireCurrentOperatorTemuPage } from '../../src/browser/operator-page.mjs';
-import { closeBrowserSession,connectOperatorSession,openBrowserSession,resolveBrowserLocale } from '../../src/browser/cdp-session.mjs';
+import { closeBrowserSession,connectOperatorSession,openBrowserSession,resolveBrowserLocale,verifyFixedBrowserSession } from '../../src/browser/cdp-session.mjs';
 
 test('challenge handler returns stable operator-facing error codes', () => {
   assert.equal(classifyPageSignals({ url: 'https://www.temu.com/bgn_verification.html', text: 'Verify you are human' }).code, 'CAPTCHA_OR_LOGIN');
@@ -102,4 +102,31 @@ test('external CDP with no context still never closes the user browser',async ()
     fetchImpl:async () => ({ ok:true }),chromium:{ connectOverCDP:async () => ({ contexts:() => [],close:async () => { closeCalls+=1; } }) }
   }),error => error.code === 'NO_TEMU_PAGE');
   assert.equal(closeCalls,0);
+});
+
+test('fixed external CDP accepts only the launcher-owned profile marker',async () => {
+  const config={
+    configPath:path.join(os.tmpdir(),'fixed-temu','config.json'),
+    browser:{
+      mode:'external_cdp',cdpEndpoint:'http://127.0.0.1:9222',
+      executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',
+      profileDir:'C:/Users/Operator/AppData/Local/Google/Chrome/User Data',profileDirectory:'Profile 10',
+      fixedProfile:{ enabled:true,sessionFile:'runtime/temu-controlled-chrome-session.json',
+        executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',
+        userDataDir:'C:/Users/Operator/AppData/Local/Google/Chrome/User Data',profileDirectory:'Profile 10' }
+    }
+  };
+  const marker={ process_id:1234,cdp_endpoint:config.browser.cdpEndpoint,
+    chrome_executable:config.browser.executablePath,user_data_dir:config.browser.profileDir,
+    profile_directory:config.browser.profileDirectory };
+  const verified=await verifyFixedBrowserSession(config,{
+    readFile:async () => JSON.stringify(marker),isProcessAlive:processId => processId === 1234
+  });
+  assert.equal(verified.process_id,1234);
+  await assert.rejects(verifyFixedBrowserSession(config,{
+    readFile:async () => { throw new Error('missing'); },isProcessAlive:() => true
+  }),error => error.code === 'FIXED_BROWSER_SESSION_UNVERIFIED' && error.details.reason === 'SESSION_MARKER_MISSING');
+  await assert.rejects(verifyFixedBrowserSession(config,{
+    readFile:async () => JSON.stringify({ ...marker,profile_directory:'Default' }),isProcessAlive:() => true
+  }),error => error.code === 'FIXED_BROWSER_SESSION_UNVERIFIED' && error.details.reason === 'SESSION_MARKER_MISMATCH');
 });

@@ -5,7 +5,10 @@
   const STATES=Object.freeze({ IDLE:'IDLE',SCANNING:'SCANNING',BATCH_SUBMITTING:'BATCH_SUBMITTING',SCROLLING:'SCROLLING',
     LOAD_MORE_DETECTED:'LOAD_MORE_DETECTED',LOAD_MORE_TRIGGERED:'LOAD_MORE_TRIGGERED',WAITING_PROGRESS:'WAITING_PROGRESS',
     MANUAL_REQUIRED:'MANUAL_REQUIRED',COMPLETED:'COMPLETED',FAILED:'FAILED',PAUSED:'PAUSED' });
-  const LOAD_PATTERN=/^(?:See more|Try again|Try more|Load more|Show more)(?:\s+(?:items|products))?$/i;
+  const LOAD_PATTERN=/^(?:See more|Load more|Show more)(?:\s+(?:items|products))?$/i;
+  const TRY_AGAIN_PATTERN=/^(?:Try again|Try more)$/i;
+  const TARGET_CATEGORY='Motorcycles & Powersports Accessories';
+  const TARGET_SORT='Top sales';
   const VERIFY_PATTERN=/captcha|verify you are human|security verification|slide to verify|验证码|安全验证/i;
   const UNHEALTHY_PATTERN=/Oops!\s*The items are gone|No results for|Please check your network connection and try again/i;
   const STATE_UI=Object.freeze({ IDLE:['未开始','#64748b'],SCANNING:['正在扫描商品卡','#0ea5e9'],BATCH_SUBMITTING:['正在保存数据','#2563eb'],
@@ -167,7 +170,10 @@
 
     async guardPage(signals) {
       if (signals.verification) { await this.manual('CAPTCHA_OR_LOGIN','检测到 CAPTCHA / Security Verification。');return true; }
+      if (signals.tryAgain) { await this.manual('LISTING_CONTEXT_UNHEALTHY','检测到 Try again，已暂停并等待人工恢复。');return true; }
       if (signals.unhealthy || signals.cardCount===0) { await this.manual('LISTING_CONTEXT_UNHEALTHY','商品列表上下文异常或商品卡归零。');return true; }
+      if (signals.contextHealthy===false) { await this.manual('LISTING_CONTEXT_UNHEALTHY',
+        `页面上下文不符合 Germany / English / EUR / ${TARGET_CATEGORY} / ${TARGET_SORT}。`);return true; }
       return false;
     }
     async manual(code,message,checkpoint={}) {
@@ -198,12 +204,17 @@
     return style.display!=='none' && style.visibility!=='hidden' && Number(style.opacity)!==0 && rect.width>0 && rect.height>0; }
   function scanDom() {
     const parser=globalThis.TemuCatalogParser;const cards=parser?.parseDocument(document,{ baseUrl:location.href }) ?? [];
-    const text=String(document.body?.innerText ?? '');const goodsIds=new Set(cards.map(card => card.goods_id).filter(Boolean));
+    const text=String(document.body?.innerText ?? ''),lower=text.toLowerCase();const goodsIds=new Set(cards.map(card => card.goods_id).filter(Boolean));
     const root=document.scrollingElement || document.documentElement;
-    return { goodsIds,cardCount:cards.length,scrollHeight:Number(root?.scrollHeight ?? 0),
+    const category=String(document.querySelector('h1')?.textContent??'').replace(/\s+/g,' ').trim(),sort=detectSortLabel();
+    const germany=/\/de-en\//i.test(location.pathname)||/germany/i.test(lower),english=String(document.documentElement.lang??'').toLowerCase().startsWith('en')||/\/de-en\//i.test(location.pathname),eur=/€|\bEUR\b/i.test(text);
+    return { goodsIds,cardCount:cards.length,scrollHeight:Number(root?.scrollHeight ?? 0),category,sort,germany,english,eur,
       verification:VERIFY_PATTERN.test(text) || /\/bgn_verification\.html/i.test(location.href)
         || [...document.querySelectorAll('iframe')].some(frame => /\/bgn_verification\.html/i.test(frame.src ?? '')),
-      unhealthy:UNHEALTHY_PATTERN.test(text) || cards.length===0,loading:/\bloading\s*(?:\.\.\.|…)?/i.test(text) };
+      unhealthy:UNHEALTHY_PATTERN.test(text) || cards.length===0,
+      tryAgain:[...document.querySelectorAll('button,[role="button"],a')].some(element=>visible(element)&&TRY_AGAIN_PATTERN.test(String(element.innerText??element.textContent??'').trim())),
+      contextHealthy:germany&&english&&eur&&category===TARGET_CATEGORY&&new RegExp(`^${TARGET_SORT}$`,'i').test(sort),
+      loading:/\bloading\s*(?:\.\.\.|…)?/i.test(text) };
   }
   function findLoadControl() { return [...document.querySelectorAll('button,[role="button"],a')]
     .find(element => visible(element) && LOAD_PATTERN.test(String(element.innerText ?? element.textContent ?? '').trim())); }
@@ -233,18 +244,23 @@
   }
 
   function detectSortLabel() {
-    const text=String(document.body?.innerText ?? '');const match=text.match(/Sort by:\s*(Top\s*sales|Relevance)/i);
-    return match ? match[1].replace(/\s+/g,' '):'未识别';
+    const controls=[...new Set([...document.querySelectorAll('[role="button"][aria-controls="sort-select-down-list"]'),
+      ...document.querySelectorAll('button,[role="button"]')])];
+    const control=controls.find(node=>visible(node)&&String(node.innerText??node.textContent??'').split(/\r?\n/).some(line=>/^Sort by:/i.test(line.trim())));
+    const line=String(control?.innerText??control?.textContent??'').split(/\r?\n/).map(value=>value.replace(/\s+/g,' ').trim()).find(value=>/^Sort by:/i.test(value));
+    return line ? line.replace(/^Sort by:\s*/i,'').trim():'未识别';
   }
   function humanAction(action) { return ({ checkpoint_restored:'已恢复上次进度',scan:'扫描商品卡',batch_submit:'准备保存',batch_submitted:'数据已保存',
-    scroll_bottom:'滚动加载',scroll_progress:'发现新商品',load_more_detected:'发现 See more / Try again',load_more_triggered:'已触发加载',
+    scroll_bottom:'滚动加载',scroll_progress:'发现新商品',load_more_detected:'发现 See more / Load more',load_more_triggered:'已触发加载',
     waiting_progress:'等待页面返回新商品',load_more_progress:'加载成功',load_more_retryable:'加载未新增，准备重试',manual_required:'等待人工处理',
     target_reached:'已达到目标',pause_requested:'正在暂停',pause:'已暂停',stop_requested:'已停止',failed:'运行失败',start:'开始采集',resume_checkpoint:'从 checkpoint 继续' })[action] ?? action ?? '-'; }
   function uiSummary(value,sortLabel='未识别') {
     const campaign=value.campaign ?? {};const target=Number(value.sessionTarget ?? campaign.targetCount ?? 0);const current=Number(campaign.nonElectronicUniqueCount ?? 0);
     const [stateLabel,stateColor]=STATE_UI[value.state] ?? [value.state,'#64748b'];
+    const refresh=campaign.refreshProgress??{};
     return { stateLabel,stateColor,target,current,percent:target ? Math.min(100,Math.round(current/target*100)):0,
       raw:Number(campaign.rawObservedCount ?? 0),excluded:Number(campaign.electronicExcludedCount ?? 0),round:Number(value.round ?? 0),
+      existingRefreshed:Number(refresh.intersection_count??0),newProducts:Number(refresh.new_goods_count??0),remaining:Math.max(0,target-current),
       action:humanAction(value.lastAction),sortLabel,sortHealthy:/^Top\s*sales$/i.test(sortLabel) };
   }
 
@@ -275,7 +291,7 @@
     runner.subscribe(value => { const summary=uiSummary(value,detectSortLabel());const campaign=value.campaign??{};
       title.textContent=`Catalog ${summary.target||''} ${campaign.campaignType==='expansion'?'扩容':'刷新'}`.replace(/\s+/g,' ').trim();badge.textContent=summary.stateLabel;badge.style.background=summary.stateColor;
       progressText.textContent=`已采集 ${summary.current} / ${summary.target}（${summary.percent}%）`;bar.style.width=`${summary.percent}%`;
-      details.innerHTML=`<span>电子排除：<b>${summary.excluded}</b></span><span>原始观察：<b>${summary.raw}</b></span><span>运行轮次：<b>${summary.round}</b></span><span>当前排序：<b>${summary.sortLabel}</b></span><span style="grid-column:1 / -1">当前动作：<b>${summary.action}</b></span>`;
+      details.innerHTML=`<span>已刷新旧品：<b>${summary.existingRefreshed}</b></span><span>本轮新商品：<b>${summary.newProducts}</b></span><span>剩余：<b>${summary.remaining}</b></span><span>电子排除：<b>${summary.excluded}</b></span><span>原始观察：<b>${summary.raw}</b></span><span>运行轮次：<b>${summary.round}</b></span><span>当前排序：<b>${summary.sortLabel}</b></span><span style="grid-column:1 / -1">当前动作：<b>${summary.action}</b></span>`;
       const warnings=[];if(!summary.sortHealthy)warnings.push('⚠ 请把页面排序改成 Top sales');if(value.state===STATES.MANUAL_REQUIRED)warnings.push(`⚠ 需要人工处理：${value.errorMessage ?? '请检查 Try again、验证码或 Oops'}`);if(value.errorCode)warnings.push(`错误代码：${value.errorCode}`);
       notice.textContent=warnings.join('\n');notice.style.display=warnings.length?'block':'none';
       const active=[STATES.SCANNING,STATES.BATCH_SUBMITTING,STATES.SCROLLING,STATES.LOAD_MORE_DETECTED,STATES.LOAD_MORE_TRIGGERED,STATES.WAITING_PROGRESS].includes(value.state);
@@ -297,5 +313,7 @@
 
   const module=Object.freeze({ CatalogAutoRunner,STATES,difference,scanDom,findLoadControl,waitForProgress,uiSummary,humanAction });
   globalThis.TemuCatalogAutoRunnerModule=module;
-  if (typeof document!=='undefined' && typeof chrome!=='undefined') { const runner=new CatalogAutoRunner(realDependencies());globalThis.TemuCatalogAutoRunner=runner;installUi(runner);runner.restore().catch(() => {}); }
+  if (typeof document!=='undefined' && typeof chrome!=='undefined') { (async()=>{const dependencies=realDependencies();let context=null;try{context=await dependencies.getContext();}catch{}
+    if(context?.campaign?.browserControlMode==='MANUAL_NAVIGATION_PASSIVE_CAPTURE'&&globalThis.TemuCatalogManualPassiveRunnerModule){await globalThis.TemuCatalogManualPassiveRunnerModule.bootstrap(context);return;}
+    const runner=new CatalogAutoRunner(dependencies);globalThis.TemuCatalogAutoRunner=runner;installUi(runner);runner.restore().catch(()=>{});})().catch(()=>{}); }
 })();

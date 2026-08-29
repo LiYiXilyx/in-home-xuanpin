@@ -54,9 +54,25 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   assert.equal(app.db.prepare('SELECT status FROM catalog_sources WHERE id=?').get(source.id).status,'completed');
   const sourceRun=app.db.prepare('SELECT * FROM catalog_source_runs WHERE source_id=?').get(source.id);assert.equal(sourceRun.scroll_rounds,2);assert.equal(sourceRun.load_more_count,1);assert.equal(sourceRun.stop_reason,'SMOKE_FIXTURE_COMPLETE');
   assert.deepEqual(coreCounts(app.db),poolBefore);assert.equal(count(app.db,'catalog_pool_versions'),0);
+
+  const passiveCampaign=app.catalogService.createCampaign({ name:'manual-passive-guard',campaignType:'smoke',profile,browserContext:{ profileName:'Temu1店',profileDirectory:'Profile 10',controlMode:'MANUAL_NAVIGATION_PASSIVE_CAPTURE' } });
+  const passiveSource=app.catalogService.createSource(passiveCampaign.id,{ sourceKey:'manual-navigation-passive',sourceType:'category',sortOrder:'Top Sales',targetQuota:50,priority:1 });
+  app.catalogService.transitionCampaign(passiveCampaign.id,'running');
+  call=await post('/api/catalog/batches',passiveBatch(passiveCampaign.id,passiveSource.id,'manual-missing-proof',{ captureMode:null,networkObserved:false }));
+  assert.equal(call.response.status,400);assert.equal(call.body.error.code,'MANUAL_PASSIVE_CAPTURE_REQUIRED');
+  const wrongBinding=passiveBatch(passiveCampaign.id,passiveSource.id,'manual-wrong-page');wrongBinding.page_binding.bound_category='Automotive';
+  call=await post('/api/catalog/batches',wrongBinding);assert.equal(call.response.status,400);assert.equal(call.body.error.code,'PAGE_CONTEXT_LOST');
+  call=await post('/api/catalog/batches',passiveBatch(passiveCampaign.id,passiveSource.id,'manual-valid-proof'));
+  assert.equal(call.response.status,200);assert.equal(call.body.result.audit.acceptedGoods,1);
+  const passiveContext=app.catalogService.getCaptureContext(passiveCampaign.id,passiveSource.id);
+  assert.equal(passiveContext.campaign.browserControlMode,'MANUAL_NAVIGATION_PASSIVE_CAPTURE');assert.equal(passiveContext.campaign.browserProfileDirectory,'Profile 10');
+  assert.equal(passiveContext.campaign.cdpRequired,false);assert.equal(passiveContext.campaign.extensionPassiveRequired,true);assert.equal(passiveContext.campaign.localServerEndpoint,'http://127.0.0.1:37821');
+  assert.equal(app.db.prepare('SELECT json_extract(raw_json,\'$.network_endpoint\') endpoint FROM catalog_staging_products WHERE campaign_id=?').get(passiveCampaign.id).endpoint,'/api/poppy/v1/opt');
+  assert.deepEqual(coreCounts(app.db),poolBefore);
 });
 
 function batch(campaignId,sourceId,batchId) { return { campaign_id:campaignId,source_id:sourceId,batch_id:batchId,category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',page_url:'https://www.temu.com/de-en/motorcycle-accessories.html',page_title:'Motorcycle Accessories',captured_at:'2026-08-26T06:00:00.000Z',page_context:{ site_country:'DE',language:'en',currency:'EUR',category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',sort_order:'Top Sales' },cards:[card('3001','Mechanical Tail Bag',1),card('3002','USB Rechargeable LED Headlight',2),card('3003','Motorcycle Cover',3)] }; }
 function card(goodsId,title,rank) { return { goods_id:goodsId,href:`https://www.temu.com/de-en/item-g-${goodsId}.html`,title,image_url:`https://img.test/${goodsId}.jpg`,price_amount:12,sales_count:10,rating:4.8,review_count:2,listing_rank:rank,dom_sequence:rank,badge_text:null,raw_card_text:title }; }
+function passiveBatch(campaignId,sourceId,batchId,{captureMode='MANUAL_NAVIGATION_PASSIVE_CAPTURE',networkObserved=true}={}) { const payload=batch(campaignId,sourceId,batchId),binding={ bound_url:payload.page_url,bound_at:'2026-08-26T05:59:00.000Z',bound_category:'Motorcycles & Powersports Accessories',bound_sort:'Top sales',bound_goods_count:1 };payload.capture_mode=captureMode;payload.page_binding=binding;payload.cards=[{ ...card('9001','Mechanical Tail Bag',1),capture_transport:'NETWORK_ENRICHED',network_observed:networkObserved,network_endpoint:'/api/poppy/v1/opt',network_observed_at:'2026-08-26T06:00:00.000Z',bound_url:binding.bound_url,bound_at:binding.bound_at,bound_category:binding.bound_category,bound_sort:binding.bound_sort,field_provenance:{ goods_id:'identity',source_url:'dom',title:'network' } }];return payload; }
 function count(db,table) { return Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count); }
 function coreCounts(db) { return { products:count(db,'products'),activeMemberships:Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_memberships WHERE active=1').get().count),snapshots:count(db,'product_snapshots'),reviews:count(db,'reviews') }; }

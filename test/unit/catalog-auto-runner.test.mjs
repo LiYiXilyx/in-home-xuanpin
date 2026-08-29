@@ -11,7 +11,7 @@ vm.runInContext(source,sandbox);
 const { CatalogAutoRunner,STATES,uiSummary }=sandbox.TemuCatalogAutoRunnerModule;
 
 function signals(ids=['1'],extra={}) { return { goodsIds:new Set(ids),cardCount:ids.length,scrollHeight:1000,
-  verification:false,unhealthy:false,loading:false,...extra }; }
+  verification:false,unhealthy:false,tryAgain:false,contextHealthy:true,loading:false,...extra }; }
 function fixture({ target=1,currentUnique=0,initial=signals(),submitCounts=[1],afterScroll=null,progress=[],queueStatus='capturing',label='See more',checkpoint={} }={}) {
   let current=initial;let submitIndex=0;let contextReads=0;const checkpoints=[];const manual=[];const resumes=[];let triggerCount=0;
   const context=() => ({ campaign:{ id:'campaign-1',status:contextReads++===0 ? (queueStatus==='manual_required'?'manual_required':'running'):'running',
@@ -49,14 +49,18 @@ test('See more DOM progress is accepted only when a new goods id appears',async 
   assert.equal(progress.checkpoint.new_goods_count,1);assert.equal(progress.checkpoint.button_label,'See more');
 });
 
-test('Try again is retried once and then enters manual_required without source exhaustion',async () => {
-  const noProgress=signals(['1'],{ loadingObserved:true });
-  const value=fixture({ target:3,submitCounts:[1],progress:[noProgress,noProgress],label:'Try again' });
+test('Try again pauses immediately for manual recovery and is never clicked',async () => {
+  const value=fixture({ target:3,initial:signals(['1'],{ tryAgain:true }),submitCounts:[1],label:'Try again' });
   const result=await new CatalogAutoRunner(value.deps).start();
-  assert.equal(result.state,STATES.MANUAL_REQUIRED);assert.equal(value.triggerCount,2);assert.equal(value.manual.length,1);
-  assert.equal(value.manual[0].error_code,'LOAD_MORE_RETRYABLE_EXHAUSTED');
-  assert.equal(value.manual[0].checkpoint.load_state,'LOAD_MORE_RETRYABLE');
+  assert.equal(result.state,STATES.MANUAL_REQUIRED);assert.equal(value.triggerCount,0);assert.equal(value.manual.length,1);
+  assert.equal(value.manual[0].error_code,'LISTING_CONTEXT_UNHEALTHY');
   assert.equal(JSON.stringify(value.manual[0]).includes('SOURCE_EXHAUSTED'),false);
+});
+
+test('wrong locale, category, currency, or sort pauses before submission',async () => {
+  const value=fixture({ initial:signals(['1'],{ contextHealthy:false }) });const result=await new CatalogAutoRunner(value.deps).start();
+  assert.equal(result.state,STATES.MANUAL_REQUIRED);assert.equal(value.manual[0].error_code,'LISTING_CONTEXT_UNHEALTHY');
+  assert.equal(value.checkpoints.some(item=>item.checkpoint.last_action==='batch_submitted'),false);
 });
 
 test('CAPTCHA and unhealthy listing stop before batch submission',async () => {

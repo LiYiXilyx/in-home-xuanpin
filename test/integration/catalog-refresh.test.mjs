@@ -9,6 +9,7 @@ import { migrateDatabase } from '../../src/db/migrate.mjs';
 import { createJobRepository } from '../../src/db/repositories/job-repository.mjs';
 import { createCatalogCampaignService } from '../../src/modules/catalog-scale/catalog-campaign-service.mjs';
 import { buildCatalogRefreshReportModel } from '../../src/modules/catalog-scale/catalog-refresh-report.mjs';
+import { buildFullRefreshReport } from '../../src/modules/catalog-scale/catalog-full-refresh-report.mjs';
 import { loadCategoryProfile } from '../../src/modules/catalog-scale/category-profile.mjs';
 
 const profilePath=fileURLToPath(new URL('../../config/categories/motorcycle-accessories.json',import.meta.url));
@@ -89,6 +90,33 @@ test('target-bound capture conserves every accepted goods_id without requiring t
   const after=counts(db);assert.equal(after.activeMemberships,before.activeMemberships);assert.equal(after.products,before.products);
 });
 
+test('Full Refresh reuses product identity, ignores a paused queue, and preserves deterministic sales evidence',async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-full-refresh-'));
+  const databasePath=path.join(directory,'full-refresh.db');migrateDatabase({databasePath});
+  const db=openDatabase(databasePath);t.after(()=>{db.close();fs.rmSync(directory,{recursive:true,force:true});});
+  const now=sequenceClock();seedBaseline(db,now,['1001']);const before=counts(db),profile=await loadCategoryProfile(profilePath);
+  const service=createCatalogCampaignService(db,{now});
+  const old=service.createCampaign({name:'paused-expansion',campaignType:'expansion',profile,baselinePoolCount:1,targetCount:2});
+  const oldSource=service.createSource(old.id,{sourceKey:'old',sourceType:'category',sortOrder:'Top Sales'});service.transitionCampaign(old.id,'running');service.claimNextSource(old.id);service.transitionCampaign(old.id,'paused');
+  assert.equal(service.getRpaQueueForSource(oldSource.id).status,'opening');
+  const campaign=service.createCampaign({name:'full-refresh-50-fixture',campaignType:'refresh',profile,targetCount:1,
+    browserContext:{profileName:'Temu1店',profileDirectory:'Profile 10',controlMode:'FULL_REFRESH_EXTENSION_AUTO'}});
+  const source=service.createSource(campaign.id,{sourceKey:'top-sales',sourceType:'category',sortOrder:'Top Sales',targetQuota:1});service.transitionCampaign(campaign.id,'running');
+  const claimed=service.claimNextSource(campaign.id);assert.equal(service.currentRpaContext().campaign.id,campaign.id);
+  const raw={...card('1001','Refreshed legacy product'),sales_count:77000,raw_sales_text:'77K+ sold',parsed_sales_count:77000,final_sales_count:77000,sales_provenance:'dom',capture_transport:'DOM'};
+  service.captureExtensionBatch({campaign_id:campaign.id,source_id:source.id,batch_id:'full-refresh-1',category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',
+    page_url:'https://www.temu.com/de-en/motorcycles--accessories-o3-585.html',page_title:'Motorcycles & Powersports Accessories',captured_at:now(),
+    page_context:{site_country:'DE',language:'en',currency:'EUR',category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',sort_order:'Top Sales'},cards:[raw]});
+  assert.throws(()=>service.captureExtensionBatch({campaign_id:campaign.id,source_id:source.id,batch_id:'full-refresh-bad',category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',
+    page_url:'https://www.temu.com/de-en/motorcycles--accessories-o3-585.html',captured_at:now(),page_context:{site_country:'DE',language:'en',currency:'EUR',category_key:'motorcycle-accessories',category_profile_version:'motorcycle-accessories-v1',sort_order:'Top Sales'},cards:[card('2001','Missing raw sales')]}),error=>error.code==='FULL_REFRESH_SALES_EVIDENCE_REQUIRED');
+  service.completeRpaSource({queue_id:claimed.queue.id,claim_token:claimed.queue.claimToken,stop_reason:'TARGET_GATE_REACHED'});
+  const materialization=service.materializeRefresh(campaign.id),report=buildFullRefreshReport(db,campaign.id);
+  assert.equal(materialization.productsInserted,0);assert.equal(materialization.snapshotsInserted,1);assert.equal(counts(db).products,before.products);
+  assert.equal(report.activePoolRefreshed,1);assert.equal(report.nonBaselineObserved,0);assert.equal(report.existingProductsRefreshed,1);assert.equal(report.newProductsCreated,0);assert.equal(report.rows[0].raw_sales_text,'77K+ sold');
+  assert.equal(report.rows[0].old_sales_count,77);assert.equal(report.rows[0].new_sales_count,77000);
+  assert.equal(report.rows[0].sales_quality_flag,'LIKELY_OLD_PARSE_ERROR');assert.equal(report.rows[0].sales_change_classification,'SUSPICIOUS_CORRECTION');
+});
+
 function seedBaseline(db,now,goodsIds) {
   const jobs=createJobRepository(db,{ now });
   const job=jobs.createJob({ jobType:'catalog',siteCountry:'DE',language:'en',currency:'EUR',primaryCategory:'Automotive',subcategory:'Motorcycle Accessories',sortOrder:'Top Sales',targetCount:goodsIds.length });
@@ -99,8 +127,8 @@ function seedBaseline(db,now,goodsIds) {
     db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,primary_category,subcategory,source_page_url,
       sort_order,current_rank,active,first_seen_at,last_seen_at,last_job_id) VALUES(?,'DE','en','EUR','Automotive','Motorcycle Accessories',
       ?,'Top Sales',?,1,?,?,?)`).run(Number(product.lastInsertRowid),`https://www.temu.com/old-${goodsId}`,index+1,timestamp,timestamp,job.id);
-    db.prepare(`INSERT INTO product_snapshots(job_id,product_id,captured_at,source_url,title)
-      VALUES(?,?,?,?,?)`).run(job.id,Number(product.lastInsertRowid),timestamp,`https://www.temu.com/old-${goodsId}`,'Legacy mechanical product');
+    db.prepare(`INSERT INTO product_snapshots(job_id,product_id,captured_at,source_url,title,sales_count)
+      VALUES(?,?,?,?,?,77)`).run(job.id,Number(product.lastInsertRowid),timestamp,`https://www.temu.com/old-${goodsId}`,'Legacy mechanical product');
   }
 }
 function card(goodsId,title) { return { goods_id:goodsId,title,href:`https://www.temu.com/de-en/item-g-${goodsId}.html`,

@@ -12,7 +12,22 @@ export function validateConfig(config) {
   if (!['managed_profile','external_cdp'].includes(config.browser.mode)) fail('browser.mode','必须是 managed_profile 或 external_cdp');
   if (config.browser.mode === 'managed_profile') requireString(config.browser.profileDir, 'browser.profileDir');
   if (config.browser.mode === 'external_cdp') requireString(config.browser.cdpEndpoint, 'browser.cdpEndpoint');
+  if (config.browser.fixedProfile?.enabled) {
+    for (const field of ['sessionFile','executablePath','userDataDir','profileDirectory']) {
+      requireString(config.browser.fixedProfile[field],`browser.fixedProfile.${field}`);
+    }
+    if (config.browser.fixedProfile.captureMode!==undefined) requireString(config.browser.fixedProfile.captureMode,'browser.fixedProfile.captureMode');
+    if (config.browser.fixedProfile.localServerEndpoint!==undefined) requireString(config.browser.fixedProfile.localServerEndpoint,'browser.fixedProfile.localServerEndpoint');
+    for (const field of ['cdpRequired','extensionPassiveRequired']) if (config.browser.fixedProfile[field]!==undefined && typeof config.browser.fixedProfile[field]!=='boolean') fail(`browser.fixedProfile.${field}`,'必须是布尔值');
+  }
   requireObject(config.catalog, 'catalog');
+  if (config.catalog.manualPassiveCapture?.enabled) {
+    if (config.catalog.manualPassiveCapture.cdpRequired!==false) fail('catalog.manualPassiveCapture.cdpRequired','正式被动采集必须为 false');
+    if (config.catalog.manualPassiveCapture.extensionPassiveRequired!==true) fail('catalog.manualPassiveCapture.extensionPassiveRequired','正式被动采集必须为 true');
+    requireString(config.catalog.manualPassiveCapture.localServerEndpoint,'catalog.manualPassiveCapture.localServerEndpoint');
+    if (config.catalog.manualPassiveCapture.localServerEndpoint!=='http://127.0.0.1:37821') fail('catalog.manualPassiveCapture.localServerEndpoint','必须固定为 http://127.0.0.1:37821');
+    if (!Array.isArray(config.catalog.manualPassiveCapture.stageTargets) || config.catalog.manualPassiveCapture.stageTargets.map(Number).join(',')!=='50,300,3000') fail('catalog.manualPassiveCapture.stageTargets','必须严格为 50,300,3000');
+  }
   requireObject(config.export, 'export');
   requireObject(config.reviews, 'reviews');
   requireObject(config.fineClassification, 'fineClassification');

@@ -17,6 +17,9 @@ export const CATALOG_LOAD_STATES=Object.freeze([
 const NON_EXHAUSTING_LOAD_STATES=new Set([
   'LOAD_MORE_RETRYABLE','MANUAL_VERIFICATION_REQUIRED','LISTING_CONTEXT_UNHEALTHY'
 ]);
+const MANUAL_PASSIVE_CAPTURE_MODE='MANUAL_NAVIGATION_PASSIVE_CAPTURE';
+const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
+const LOCAL_EXTENSION_MODES=new Set([MANUAL_PASSIVE_CAPTURE_MODE,FULL_REFRESH_EXTENSION_MODE]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
@@ -152,7 +155,14 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (campaign.status!=='running') throw new AppError('Catalog Campaign当前未运行。',{ code:'CAMPAIGN_NOT_ACTIVE' });
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
     return { campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
-      categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount },
+      categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+      browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
+      browserControlMode:campaign.browserControlMode,baselinePoolCount:campaign.baselinePoolCount,
+      cdpRequired:!LOCAL_EXTENSION_MODES.has(campaign.browserControlMode),
+      extensionPassiveRequired:LOCAL_EXTENSION_MODES.has(campaign.browserControlMode),
+      localServerEndpoint:LOCAL_EXTENSION_MODES.has(campaign.browserControlMode)?'http://127.0.0.1:37821':null,
+      rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
+      nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount },
     source,profile };
   }
 
@@ -175,9 +185,14 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (!Array.isArray(input.cards) || input.cards.length===0) throw new AppError('当前页面没有有效商品卡。',{ code:'NO_PRODUCT_CARDS' });
     if (input.cards.length>500) throw new AppError('Catalog batch商品卡数量超过500。',{ code:'CATALOG_BATCH_INVALID' });
     const cards=input.cards.map((card,index) => validateExtensionCard(card,index));
+    if (context.campaign.browserControlMode===MANUAL_PASSIVE_CAPTURE_MODE) validateManualPassiveBatch(input.capture_mode,cards,input.page_binding,pageUrl);
+    if (context.campaign.browserControlMode===FULL_REFRESH_EXTENSION_MODE && cards.some(card =>
+      !card.raw_sales_text || card.parsed_sales_count===null || card.final_sales_count===null || card.sales_count===null
+    )) throw new AppError('Full Refresh批次只接受保留原始销量文本且成功解析的商品。',{ code:'FULL_REFRESH_SALES_EVIDENCE_REQUIRED' });
     const result=captureBatch({ campaignId,sourceId,batchId,pageUrl,pageTitle:optionalString(input.page_title,'page_title',500),
       capturedAt,cards,categoryKey,categoryProfileVersion:profileVersion,pageContext });
-    return { ...result,campaign:{ ...result.campaign,manualReviewCount:null } };
+    return { ...result,campaign:{ ...result.campaign,manualReviewCount:null,
+      refreshProgress:result.campaign.campaignType==='refresh' ? repository.getRefreshComparison(result.campaign.id):null } };
   }
 
   function getStatus(campaignId) {
@@ -229,7 +244,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   }
 
   function currentRpaContext() {
-    const queues=repository.listActiveRpaQueues();
+    const queues=repository.listActiveRpaQueues().filter(queue => ['running','manual_required'].includes(requireCampaign(queue.campaignId).status));
     if (!queues.length) throw new AppError('没有已领取的Catalog RPA来源。',{ code:'CATALOG_RPA_NOT_CLAIMED' });
     if (queues.length>1) throw new AppError('存在多个活跃Catalog RPA来源，拒绝猜测当前上下文。',{ code:'CATALOG_RPA_CONTEXT_AMBIGUOUS' });
     return rpaContext(queues[0],{ exposeClaimToken:false });
@@ -560,17 +575,25 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount,
         reviewableUniqueCount:campaign.reviewableUniqueCount,manualReviewCount:null,
         browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
-        browserControlMode:campaign.browserControlMode },source,profile };
+        browserControlMode:campaign.browserControlMode,
+        cdpRequired:!LOCAL_EXTENSION_MODES.has(campaign.browserControlMode),
+        extensionPassiveRequired:LOCAL_EXTENSION_MODES.has(campaign.browserControlMode),
+        localServerEndpoint:LOCAL_EXTENSION_MODES.has(campaign.browserControlMode)?'http://127.0.0.1:37821':null,
+        refreshProgress:campaign.campaignType==='refresh' ? repository.getRefreshComparison(campaign.id):null },source,profile };
   }
 }
 
 function normalizeCard(raw,goodsId,capturedAt) {
+  const salesCount=integerOrNull(raw.sales_count ?? raw.salesCount);
+  const evidence={ ...raw,raw_sales_text:raw.raw_sales_text ?? null,
+    parsed_sales_count:integerOrNull(raw.parsed_sales_count ?? salesCount),final_sales_count:salesCount,
+    sales_provenance:raw.sales_provenance ?? raw.field_provenance?.sales_count ?? (salesCount===null?'missing':'dom') };
   return { platform:'temu',goodsId,title:raw.title ?? null,sourceUrl:raw.source_url ?? raw.sourceUrl ?? raw.href ?? null,
     canonicalUrl:canonicalProductUrl(goodsId),imageUrl:raw.image_url ?? raw.imageUrl ?? null,
     priceAmount:numberOrNull(raw.price_amount ?? raw.priceAmount),currency:raw.currency ?? null,
-    salesCount:integerOrNull(raw.sales_count ?? raw.salesCount),rating:numberOrNull(raw.rating),
+    salesCount,rating:numberOrNull(raw.rating),
     reviewCount:integerOrNull(raw.review_count ?? raw.reviewCount),businessEligible:raw.business_eligible ?? raw.businessEligible,
-    reviewable:raw.reviewable,qualityStatus:raw.quality_status ?? 'pending',capturedAt,raw };
+    reviewable:raw.reviewable,qualityStatus:raw.quality_status ?? 'pending',capturedAt,raw:evidence };
 }
 function normalizeGoodsId(value) { const result=String(value ?? '').trim();if (!/^\d+$/.test(result)) throw new AppError('Catalog card缺少有效goods_id。',{ code:'INVALID_GOODS_ID' });return result; }
 function numberOrNull(value) { const result=Number(value);return value===null || value===undefined || value==='' || !Number.isFinite(result) ? null:result; }
@@ -607,9 +630,30 @@ function validateExtensionCard(value,index) {
     sales_count:optionalInteger(value.sales_count,'sales_count'),rating:optionalNumber(value.rating,'rating',{ min:0,max:5 }),
     review_count:optionalInteger(value.review_count,'review_count'),listing_rank:optionalPositiveInteger(value.listing_rank,'listing_rank'),
     dom_sequence:optionalPositiveInteger(value.dom_sequence,'dom_sequence'),badge_text:optionalString(value.badge_text,'badge_text',1000),
-    raw_card_text:optionalString(value.raw_card_text,'raw_card_text',10_000) };
-  if (result.href) validatePageUrl(result.href);
+    raw_card_text:optionalString(value.raw_card_text,'raw_card_text',10_000),capture_transport:optionalString(value.capture_transport,'capture_transport',64),
+    raw_sales_text:optionalString(value.raw_sales_text,'raw_sales_text',128),parsed_sales_count:optionalInteger(value.parsed_sales_count,'parsed_sales_count'),
+    final_sales_count:optionalInteger(value.final_sales_count,'final_sales_count'),sales_provenance:optionalString(value.sales_provenance,'sales_provenance',64),
+    network_observed:value.network_observed===true,network_endpoint:optionalString(value.network_endpoint,'network_endpoint',1000),
+    network_observed_at:value.network_observed_at ? isoTimestamp(value.network_observed_at,'network_observed_at'):null,
+    bound_url:optionalString(value.bound_url,'bound_url',2048),bound_at:value.bound_at?isoTimestamp(value.bound_at,'bound_at'):null,
+    bound_category:optionalString(value.bound_category,'bound_category',256),bound_sort:optionalString(value.bound_sort,'bound_sort',128),
+    field_provenance:value.field_provenance && typeof value.field_provenance==='object' && !Array.isArray(value.field_provenance) ? value.field_provenance:null };
+  if (result.href) validatePageUrl(result.href);if(result.bound_url)result.bound_url=validatePageUrl(result.bound_url);
   return result;
+}
+function validateManualPassiveBatch(captureMode,cards,pageBinding,pageUrl) {
+  if (captureMode!==MANUAL_PASSIVE_CAPTURE_MODE) throw new AppError('Manual Passive Campaign只接受被动Network批次。',{ code:'MANUAL_PASSIVE_CAPTURE_REQUIRED' });
+  plainObject(pageBinding,'page_binding');const binding={ bound_url:validatePageUrl(pageBinding.bound_url),bound_at:isoTimestamp(pageBinding.bound_at,'page_binding.bound_at'),
+    bound_category:requiredString(pageBinding.bound_category,'page_binding.bound_category',256),bound_sort:requiredString(pageBinding.bound_sort,'page_binding.bound_sort',128),
+    bound_goods_count:optionalPositiveInteger(pageBinding.bound_goods_count,'page_binding.bound_goods_count') };
+  if(binding.bound_url!==pageUrl||binding.bound_category!=='Motorcycles & Powersports Accessories'||binding.bound_sort.toLowerCase()!=='top sales'||!binding.bound_goods_count)throw new AppError(
+    'Manual Passive页面绑定上下文无效或已经丢失。',{code:'PAGE_CONTEXT_LOST'});
+  for (const card of cards) {
+    if (card.network_observed!==true || card.network_endpoint!=='/api/poppy/v1/opt' || !card.network_observed_at
+      || !['DOM','NETWORK_ENRICHED'].includes(card.capture_transport)||card.bound_url!==binding.bound_url||card.bound_at!==binding.bound_at
+      || card.bound_category!==binding.bound_category||card.bound_sort?.toLowerCase()!==binding.bound_sort.toLowerCase()) throw new AppError(
+      `goods_id ${card.goods_id} 缺少合格的被动Network证据。`,{ code:'MANUAL_PASSIVE_EVIDENCE_REQUIRED' });
+  }
 }
 function plainObject(value,label) { if (!value || typeof value!=='object' || Array.isArray(value)) throw new AppError(`${label}必须是对象。`,{ code:'CATALOG_BATCH_INVALID' }); }
 function requiredString(value,field,maxLength) { const result=String(value ?? '').trim();if (!result || result.length>maxLength) throw new AppError(`${field}无效。`,{ code:'CATALOG_BATCH_INVALID' });return result; }

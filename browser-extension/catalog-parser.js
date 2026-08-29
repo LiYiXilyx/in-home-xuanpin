@@ -35,8 +35,10 @@
     const title=firstText(link.getAttribute('aria-label'),image?.getAttribute('alt'),link.innerText);
     const prices=parsePrices(rawText);
     const badgeText=[...element.querySelectorAll('[class*="badge"],[data-badge],[aria-label*="badge" i]')].map(item => clean(item.innerText || item.textContent)).filter(Boolean).join(' | ') || null;
+    const sales=parseSalesEvidence(rawText);
     return { goods_id:goodsId,href,title,image_url:absoluteUrl(image?.currentSrc || image?.src || image?.getAttribute('src'),baseUrl),
-      price_amount:prices[0] ?? null,original_price_amount:prices[1] ?? null,sales_count:parseCompactCount(rawText,/([\d.,]+)\s*([KMB])?\+?\s*sold\b/i),
+      price_amount:prices[0] ?? null,original_price_amount:prices[1] ?? null,sales_count:sales.parsed_sales_count,
+      raw_sales_text:sales.raw_sales_text,parsed_sales_count:sales.parsed_sales_count,final_sales_count:sales.parsed_sales_count,sales_provenance:sales.raw_sales_text?'dom':'missing',
       rating:parseRating(rawText,element),review_count:parseReviewCount(rawText),listing_rank:sequence,dom_sequence:sequence,
       badge_text:badgeText,raw_card_text:rawText };
   }
@@ -49,9 +51,11 @@
       const imageTag=body.match(/<img\b([^>]*)>/i)?.[1] ?? '';
       const rawText=clean(decodeHtml(body.replace(/<[^>]+>/g,' ')));const prices=parsePrices(rawText);
       const ariaText=[...body.matchAll(/aria-label\s*=\s*["']([^"']*)["']/gi)].map(item => decodeHtml(item[1])).join(' ');
+      const sales=parseSalesEvidence(rawText);
       cards.push({ goods_id:goodsId,href:absoluteUrl(href,baseUrl),title:firstText(attribute(anchor[1],'aria-label'),attribute(imageTag,'alt'),decodeHtml(anchor[2].replace(/<[^>]+>/g,' '))),
         image_url:absoluteUrl(attribute(imageTag,'src'),baseUrl),price_amount:prices[0] ?? null,original_price_amount:prices[1] ?? null,
-        sales_count:parseCompactCount(rawText,/([\d.,]+)\s*([KMB])?\+?\s*sold\b/i),rating:parseRating(`${ariaText} ${rawText}`),review_count:parseReviewCount(rawText),
+        sales_count:sales.parsed_sales_count,raw_sales_text:sales.raw_sales_text,parsed_sales_count:sales.parsed_sales_count,
+        final_sales_count:sales.parsed_sales_count,sales_provenance:sales.raw_sales_text?'dom':'missing',rating:parseRating(`${ariaText} ${rawText}`),review_count:parseReviewCount(rawText),
         listing_rank:startSequence+cards.length,dom_sequence:startSequence+cards.length,badge_text:null,raw_card_text:rawText });
     }
     return cards;
@@ -67,6 +71,10 @@
     const value=match ? localizedNumber(match[1]):null;return value!==null && value>=0 && value<=5 ? value:null;
   }
   function parseReviewCount(text) { return parseCompactCount(text,/\(?([\d.,]+)\s*([KMB])?\s*(?:reviews?|ratings?)\)?/i); }
+  function parseSalesEvidence(text) {
+    const pattern=/([\d.,]+)\s*([KMB])?\+?\s*sold\b/i;const match=String(text).match(pattern);
+    return { raw_sales_text:match?.[0]?.trim() ?? null,parsed_sales_count:parseCompactCount(text,pattern) };
+  }
   function parseCompactCount(text,pattern) { const match=String(text).match(pattern);if (!match) return null;const compact=String(match[1]);const value=!match[2] && /^\d{1,3}(?:[.,]\d{3})+$/.test(compact) ? Number(compact.replace(/[.,]/g,'')):localizedNumber(compact);const multiplier={ K:1e3,M:1e6,B:1e9 }[String(match[2] ?? '').toUpperCase()] ?? 1;return Number.isFinite(value) ? Math.round(value*multiplier):null; }
   function findCardContainer(link) { let element=link.parentElement;for (let depth=0;element && depth<6;depth+=1,element=element.parentElement) { const productLinks=element.querySelectorAll('a[href*="goods_id="],a[href*="-g-"]').length;if (productLinks===1 && element.querySelector('img')) return element;if (productLinks>1) break; }return link.parentElement ?? link; }
   function localizedNumber(value) { let text=String(value).replace(/\s/g,'');if (text.includes(',') && text.includes('.')) text=text.lastIndexOf(',')>text.lastIndexOf('.') ? text.replace(/\./g,'').replace(',','.'):text.replace(/,/g,'');else if (text.includes(',')) text=/,\d{1,2}$/.test(text) ? text.replace(',','.'):text.replace(/,/g,'');const result=Number(text);return Number.isFinite(result) ? result:null; }
@@ -79,5 +87,5 @@
   function enrichCards(cards) { const cache=globalThis.TemuCatalogNetworkCache,merger=globalThis.TemuCatalogProductMerger;
     return cards.map(card=>merger?.mergeDomNetwork(card,cache?.get(card.goods_id))??card); }
 
-  globalThis.TemuCatalogParser=Object.freeze({ extractGoodsId,parseDocument,parseElement,parseHtmlFixture,parsePrices,parseReviewCount,enrichCards });
+  globalThis.TemuCatalogParser=Object.freeze({ extractGoodsId,parseDocument,parseElement,parseHtmlFixture,parsePrices,parseReviewCount,parseCompactCount,parseSalesEvidence,enrichCards });
 })();

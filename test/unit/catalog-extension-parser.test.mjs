@@ -18,6 +18,9 @@ test('Catalog Extension parses the sanitized product-card fixture with stable fi
   assert.equal(cards[0].image_url,'https://img.example.test/601234567890123.webp');
   assert.equal(cards[0].price_amount,12.49);
   assert.equal(cards[0].sales_count,1200);
+  assert.match(cards[0].raw_sales_text,/1\.2K\+ sold/i);
+  assert.equal(cards[0].parsed_sales_count,1200);
+  assert.equal(cards[0].final_sales_count,1200);
   assert.equal(cards[0].rating,4.8);
   assert.equal(cards[0].review_count,321);
   assert.equal(cards[1].price_amount,19.99);
@@ -29,4 +32,7 @@ test('Catalog Extension parses the sanitized product-card fixture with stable fi
   assert.equal(context.TemuCatalogParser.extractGoodsId('https://www.temu.com/de-en/item-g-123456.html?x=1'),'123456');
   assert.equal(context.TemuCatalogParser.extractGoodsId('https://example.test/no-product'),null);
   assert.equal(context.TemuCatalogParser.parseReviewCount('4.7 out of five stars 4.507 reviews'),4507);
+  for (const [text,count] of [['77K+ sold',77000],['7.7K+ sold',7700],['1.2K+ sold',1200],['2M+ sold',2000000],['12,345 sold',12345],['7,7K+ sold',7700]]) {
+    const evidence=context.TemuCatalogParser.parseSalesEvidence(text);assert.equal(evidence.parsed_sales_count,count,text);assert.equal(evidence.raw_sales_text,text);
+  }
 });

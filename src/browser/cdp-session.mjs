@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { spawn as spawnProcess } from 'node:child_process';
 import { chromium as defaultChromium } from 'playwright';
 import { AppError } from '../shared/errors.mjs';
@@ -29,6 +30,7 @@ export async function connectOperatorSession(config, dependencies = {}) {
       code: 'CDP_UNREACHABLE', retriable: true, details: { endpoint }
     });
   }
+  if (external) await verifyFixedBrowserSession(config, dependencies);
   try {
     const browser = await chromium.connectOverCDP(endpoint);
     const context = browser.contexts()[0];
@@ -86,6 +88,56 @@ export async function openBrowserSession(config, dependencies = {}) {
     args: ['--disable-gpu', '--disable-gpu-shader-disk-cache'], locale: resolveBrowserLocale(config), viewport: { width: 1440, height: 900 }
   });
   return { browser: null, context, persistent: true, launchedByUs: true };
+}
+
+export async function verifyFixedBrowserSession(config, dependencies = {}) {
+  const fixed=config.browser?.fixedProfile;
+  if (!fixed?.enabled) return null;
+  const baseDir=config.configPath ? path.dirname(config.configPath):process.cwd();
+  const sessionFile=path.resolve(baseDir,String(fixed.sessionFile ?? ''));
+  const readFile=dependencies.readFile ?? fs.readFile;
+  let marker;
+  try {
+    marker=JSON.parse(await readFile(sessionFile,'utf8'));
+  } catch (error) {
+    throw fixedSessionError('SESSION_MARKER_MISSING',{ sessionFile },error);
+  }
+  const expected={
+    cdp_endpoint:configuredCdpEndpoint(config),
+    chrome_executable:fixed.executablePath ?? config.browser?.executablePath,
+    user_data_dir:fixed.userDataDir ?? config.browser?.profileDir,
+    profile_directory:fixed.profileDirectory ?? config.browser?.profileDirectory
+  };
+  for (const [field,value] of Object.entries(expected)) {
+    const actual=marker?.[field];
+    const matches=field.endsWith('_endpoint')
+      ? String(actual ?? '') === String(value ?? '')
+      : field === 'profile_directory'
+        ? String(actual ?? '') === String(value ?? '')
+        : samePath(actual,value);
+    if (!matches) throw fixedSessionError('SESSION_MARKER_MISMATCH',{ field,sessionFile });
+  }
+  const processId=Number(marker?.process_id);
+  const isProcessAlive=dependencies.isProcessAlive ?? defaultIsProcessAlive;
+  if (!Number.isInteger(processId) || processId < 1 || !isProcessAlive(processId)) {
+    throw fixedSessionError('SESSION_PROCESS_NOT_RUNNING',{ sessionFile });
+  }
+  return { ...marker,session_file:sessionFile };
+}
+
+function defaultIsProcessAlive(processId) {
+  try { process.kill(processId,0);return true; } catch { return false; }
+}
+
+function samePath(left,right) {
+  if (!left || !right) return false;
+  return path.resolve(String(left)).toLowerCase() === path.resolve(String(right)).toLowerCase();
+}
+
+function fixedSessionError(reason,details,cause) {
+  return new AppError('9222 不是固定 Temu Chrome launcher 启动的已验证会话。请关闭 Chrome 后运行 npm run browser:temu。',{
+    code:'FIXED_BROWSER_SESSION_UNVERIFIED',retriable:true,details:{ reason,...details },cause
+  });
 }
 
 export function resolveBrowserLocale(config) {
