@@ -17,9 +17,10 @@ export const CATALOG_LOAD_STATES=Object.freeze([
 const NON_EXHAUSTING_LOAD_STATES=new Set([
   'LOAD_MORE_RETRYABLE','MANUAL_VERIFICATION_REQUIRED','LISTING_CONTEXT_UNHEALTHY'
 ]);
-const MANUAL_PASSIVE_CAPTURE_MODE='MANUAL_NAVIGATION_PASSIVE_CAPTURE';
+const MANUAL_PASSIVE_CAPTURE_MODE='MANUAL_BIND_PASSIVE_CAPTURE';
+const MANUAL_PASSIVE_CAPTURE_ALIASES=new Set([MANUAL_PASSIVE_CAPTURE_MODE,'MANUAL_NAVIGATION_PASSIVE_CAPTURE']);
 const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
-const LOCAL_EXTENSION_MODES=new Set([MANUAL_PASSIVE_CAPTURE_MODE,FULL_REFRESH_EXTENSION_MODE]);
+const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFRESH_EXTENSION_MODE]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
@@ -154,6 +155,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (source.campaignId!==campaign.id || source.categoryKey!==campaign.categoryKey) throw new AppError('Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
     if (campaign.status!=='running') throw new AppError('Catalog Campaign当前未运行。',{ code:'CAMPAIGN_NOT_ACTIVE' });
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
+    const activePool=db.prepare("SELECT id FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1").get(campaign.categoryKey);
     return { campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
       categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
       browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
@@ -163,7 +165,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       localServerEndpoint:LOCAL_EXTENSION_MODES.has(campaign.browserControlMode)?'http://127.0.0.1:37821':null,
       rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
       nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount },
-    source,profile };
+    source,profile,poolVersionId:activePool?.id??null };
   }
 
   function captureExtensionBatch(input) {
@@ -185,7 +187,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (!Array.isArray(input.cards) || input.cards.length===0) throw new AppError('当前页面没有有效商品卡。',{ code:'NO_PRODUCT_CARDS' });
     if (input.cards.length>500) throw new AppError('Catalog batch商品卡数量超过500。',{ code:'CATALOG_BATCH_INVALID' });
     const cards=input.cards.map((card,index) => validateExtensionCard(card,index));
-    if (context.campaign.browserControlMode===MANUAL_PASSIVE_CAPTURE_MODE) validateManualPassiveBatch(input.capture_mode,cards,input.page_binding,pageUrl);
+    if (MANUAL_PASSIVE_CAPTURE_ALIASES.has(context.campaign.browserControlMode)) validateManualPassiveBatch(input.capture_mode,cards,input.page_binding,{pageUrl,pageContext,context});
     if (context.campaign.browserControlMode===FULL_REFRESH_EXTENSION_MODE && cards.some(card =>
       !card.raw_sales_text || card.parsed_sales_count===null || card.final_sales_count===null || card.sales_count===null
     )) throw new AppError('Full Refresh批次只接受保留原始销量文本且成功解析的商品。',{ code:'FULL_REFRESH_SALES_EVIDENCE_REQUIRED' });
@@ -641,12 +643,24 @@ function validateExtensionCard(value,index) {
   if (result.href) validatePageUrl(result.href);if(result.bound_url)result.bound_url=validatePageUrl(result.bound_url);
   return result;
 }
-function validateManualPassiveBatch(captureMode,cards,pageBinding,pageUrl) {
+function validateManualPassiveBatch(captureMode,cards,pageBinding,{pageUrl,pageContext,context}) {
   if (captureMode!==MANUAL_PASSIVE_CAPTURE_MODE) throw new AppError('Manual Passive Campaign只接受被动Network批次。',{ code:'MANUAL_PASSIVE_CAPTURE_REQUIRED' });
-  plainObject(pageBinding,'page_binding');const binding={ bound_url:validatePageUrl(pageBinding.bound_url),bound_at:isoTimestamp(pageBinding.bound_at,'page_binding.bound_at'),
+  if(!pageBinding)throw new AppError('Manual Capture 必须先绑定当前页面。',{code:'PAGE_BINDING_REQUIRED'});
+  plainObject(pageBinding,'page_binding');const profile=context.profile;const binding={ status:requiredString(pageBinding.status,'page_binding.status',32),
+    binding_version:requiredString(pageBinding.binding_version,'page_binding.binding_version',64),binding_generation:optionalPositiveInteger(pageBinding.binding_generation,'page_binding.binding_generation'),
+    campaign_id:requiredString(pageBinding.campaign_id,'page_binding.campaign_id',128),source_id:requiredString(pageBinding.source_id,'page_binding.source_id',128),
+    category_key:requiredString(pageBinding.category_key,'page_binding.category_key',128),category_profile_version:requiredString(pageBinding.category_profile_version,'page_binding.category_profile_version',128),
+    site_country:requiredString(pageBinding.site_country,'page_binding.site_country',32),language:requiredString(pageBinding.language,'page_binding.language',32),currency:requiredString(pageBinding.currency,'page_binding.currency',32),
+    sort_order:requiredString(pageBinding.sort_order,'page_binding.sort_order',128),bound_url:validatePageUrl(pageBinding.bound_url),bound_at:isoTimestamp(pageBinding.bound_at,'page_binding.bound_at'),
     bound_category:requiredString(pageBinding.bound_category,'page_binding.bound_category',256),bound_sort:requiredString(pageBinding.bound_sort,'page_binding.bound_sort',128),
-    bound_goods_count:optionalPositiveInteger(pageBinding.bound_goods_count,'page_binding.bound_goods_count') };
-  if(binding.bound_url!==pageUrl||binding.bound_category!=='Motorcycles & Powersports Accessories'||binding.bound_sort.toLowerCase()!=='top sales'||!binding.bound_goods_count)throw new AppError(
+    bound_goods_count:optionalPositiveInteger(pageBinding.bound_goods_count,'page_binding.bound_goods_count'),context_fingerprint:requiredString(pageBinding.context_fingerprint,'page_binding.context_fingerprint',128) };
+  const expectedFingerprint=fingerprint([binding.bound_url,binding.site_country,binding.language,binding.currency,binding.category_key,binding.bound_category,binding.bound_sort]);
+  if(binding.status!=='BOUND'||binding.binding_version!=='manual-bind-v1'||binding.campaign_id!==context.campaign.id||binding.source_id!==context.source.id
+    ||binding.category_key!==profile.category_key||binding.category_profile_version!==profile.category_profile_version
+    ||binding.site_country!==profile.site_country||binding.language!==profile.language||binding.currency!==profile.currency
+    ||binding.sort_order.toLowerCase()!==profile.sort_order.toLowerCase()||binding.bound_sort.toLowerCase()!==profile.sort_order.toLowerCase()
+    ||!profile.page_health.category_names.includes(binding.bound_category)||binding.bound_url!==pageUrl||binding.context_fingerprint!==expectedFingerprint
+    ||pageContext.categoryKey!==binding.category_key||pageContext.categoryProfileVersion!==binding.category_profile_version||!binding.bound_goods_count)throw new AppError(
     'Manual Passive页面绑定上下文无效或已经丢失。',{code:'PAGE_CONTEXT_LOST'});
   for (const card of cards) {
     if (card.network_observed!==true || card.network_endpoint!=='/api/poppy/v1/opt' || !card.network_observed_at
@@ -655,6 +669,7 @@ function validateManualPassiveBatch(captureMode,cards,pageBinding,pageUrl) {
       `goods_id ${card.goods_id} 缺少合格的被动Network证据。`,{ code:'MANUAL_PASSIVE_EVIDENCE_REQUIRED' });
   }
 }
+function fingerprint(value){let hash=2166136261;for(const char of JSON.stringify(value)){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return (hash>>>0).toString(16).padStart(8,'0');}
 function plainObject(value,label) { if (!value || typeof value!=='object' || Array.isArray(value)) throw new AppError(`${label}必须是对象。`,{ code:'CATALOG_BATCH_INVALID' }); }
 function requiredString(value,field,maxLength) { const result=String(value ?? '').trim();if (!result || result.length>maxLength) throw new AppError(`${field}无效。`,{ code:'CATALOG_BATCH_INVALID' });return result; }
 function optionalString(value,field,maxLength) { if (value===undefined || value===null || value==='') return null;if (typeof value!=='string' || value.length>maxLength) throw new AppError(`${field}类型或长度无效。`,{ code:'CATALOG_BATCH_INVALID' });return value.trim() || null; }

@@ -109,6 +109,13 @@ async function reportStrongReviewSafetySignal() {
 }
 
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
+  const manualActions={GET_MANUAL_CAPTURE_STATE:null,MANUAL_DETECT_CURRENT:'detectCurrentPage',MANUAL_BIND_CURRENT:'bindCurrentPage',MANUAL_CAPTURE_CURRENT:'captureCurrentPage'};
+  if (Object.hasOwn(manualActions,message?.type)) {
+    const runner=globalThis.TemuCatalogManualPassiveRunner;if(!runner){sendResponse({ok:false,error:{code:'MANUAL_RUNNER_NOT_READY',message:'Manual Bind Runner 未就绪。'}});return undefined;}
+    const method=manualActions[message.type];if(!method){sendResponse({ok:true,result:runner.snapshot()});return undefined;}
+    runner[method]().then(result=>sendResponse({ok:true,result})).catch(error=>sendResponse({ok:false,error:{code:error.code,message:error.message}}));return true;
+  }
+  if(message?.type==='YINGDAO_EXPORT_SEAM'){const context=globalThis.TemuCatalogManualPassiveRunner?.context;sendResponse({ok:true,result:{integrationSeam:'YingDao Task Export V1',categoryKey:context?.campaign?.categoryKey??null,poolVersionId:context?.poolVersionId??null}});return undefined;}
   if (message?.type === 'GET_CURRENT_PAGE') {
     sendResponse(currentPage());
     return undefined;

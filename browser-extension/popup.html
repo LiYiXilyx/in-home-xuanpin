@@ -9,11 +9,26 @@
   </style>
 </head>
 <body>
-  <h1>当前 Temu 商品</h1>
-  <div class="row"><span class="label">goods_id</span><span class="value" id="goods-id">读取中…</span></div>
-  <div class="row"><span class="label">匹配当前任务</span><span class="value" id="matched">读取中…</span></div>
-  <div class="row"><span class="label">cutoff_date</span><span class="value" id="cutoff-date">—</span></div>
-  <button id="start" type="button" disabled>开始采集</button>
+  <section id="catalog-panel" hidden>
+    <h1>Manual Bind Passive Capture</h1>
+    <div class="row"><span class="label">Category</span><span class="value" id="catalog-category">—</span></div>
+    <div class="row"><span class="label">Campaign</span><span class="value" id="catalog-campaign">—</span></div>
+    <div class="row"><span class="label">Profile</span><span class="value" id="catalog-profile">—</span></div>
+    <div class="row"><span class="label">页面健康</span><span class="value" id="page-health">NOT_DETECTED</span></div>
+    <div class="row"><span class="label">Bind 状态</span><span class="value" id="bind-status">UNBOUND</span></div>
+    <div class="row"><span class="label">target / unique</span><span class="value" id="catalog-progress">0 / 0</span></div>
+    <div class="row"><span class="label">新增/重复/失败</span><span class="value" id="catalog-counts">0 / 0 / 0</span></div>
+    <div class="row"><span class="label">CAPTCHA/error</span><span class="value" id="catalog-error">—</span></div>
+    <button id="detect-page" type="button">检测当前页面</button><button id="bind-page" type="button" disabled>绑定当前页面</button>
+    <button id="capture-page" type="button" disabled>采集当前页面</button><button id="yingdao-export" type="button" disabled>导出影刀任务</button>
+  </section>
+  <section id="review-panel">
+    <h1>当前 Temu 商品</h1>
+    <div class="row"><span class="label">goods_id</span><span class="value" id="goods-id">读取中…</span></div>
+    <div class="row"><span class="label">匹配当前任务</span><span class="value" id="matched">读取中…</span></div>
+    <div class="row"><span class="label">cutoff_date</span><span class="value" id="cutoff-date">—</span></div>
+    <button id="start" type="button" disabled>开始采集</button>
+  </section>
   <div id="status" role="status" aria-live="polite">正在检查当前页面和本地运营台…</div>
   <script src="popup.js"></script>
 </body>

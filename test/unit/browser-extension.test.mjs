@@ -17,13 +17,13 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.deepEqual(manifest.content_scripts[0].js,['catalog-network-endpoints.js','temu-network-interceptor.js']);
   assert.deepEqual(manifest.content_scripts[1].js,['catalog-network-endpoints.js','catalog-network-parser.js','catalog-network-cache.js','catalog-product-merger.js','catalog-network-bridge.js']);
   assert.equal(manifest.content_scripts[1].run_at,'document_start');
-  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
+  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
 });
 
 test('extension does not request or access browser secrets',() => {
-  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
+  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
   assert.doesNotMatch(files,/\b(?:cookies|localStorage|sessionStorage|chrome\.history|chrome\.identity)\b/i);
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);
@@ -39,15 +39,23 @@ test('Catalog Auto Runner is isolated, checkpointed, bounded, and exposes operat
   assert.doesNotMatch(script,/\b(?:cookie|localStorage|sessionStorage|authorization|token)\b/i);
 });
 
-test('Manual Passive Runner exposes staged gates without automatic navigation controls',() => {
+test('Manual Bind Passive Runner exposes dynamic state and has no automatic capture or navigation controls',() => {
   const script=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-passive-runner.js'),'utf8');
-  for (const state of ['UNBOUND','PAGE_BOUND','PAGE_CONTEXT_LOST','CAPTURING','PAUSED','TARGET_REACHED','COMPLETED','FAILED']) assert.match(script,new RegExp(state));
-  for (const metric of ['accepted_unique','remaining','observed','eligible','existing','new','excluded','failed','last_batch','campaign_status']) assert.match(script,new RegExp(metric));
-  assert.match(script,/MANUAL_NAVIGATION_PASSIVE_CAPTURE/);assert.match(script,/qa_50_status/);assert.match(script,/qa_300_status/);
-  assert.match(script,/capturePassive/);assert.match(script,/records\.has\(String\(card\.goods_id\)\)/);assert.match(script,/绑定当前页面/);assert.match(script,/重新绑定当前页面/);
-  assert.match(script,/setInterval:\(handler,delay\)=>globalThis\.setInterval\(handler,delay\)/);assert.match(script,/clearInterval:timer=>globalThis\.clearInterval\(timer\)/);
-  assert.match(script,/bound_url/);assert.match(script,/bound_at/);assert.match(script,/bound_category/);assert.match(script,/bound_sort/);
+  for (const state of ['UNBOUND','PAGE_READY','PAGE_BOUND','PAGE_CONTEXT_LOST','CAPTURING','PAUSED','TARGET_REACHED','COMPLETED','FAILED']) assert.match(script,new RegExp(state));
+  for (const metric of ['Category:','Campaign:','Profile:','页面健康:','Bind:','target:','unique progress:','本次新增/重复/失败:','CAPTCHA/error:']) assert.match(script,new RegExp(metric));
+  assert.match(script,/MANUAL_BIND_PASSIVE_CAPTURE/);assert.match(script,/qa_50_status/);assert.match(script,/qa_300_status/);
+  assert.match(script,/capturePassive/);assert.match(script,/records\.has\(String\(card\.goods_id\)\)/);assert.match(script,/检测当前页面/);assert.match(script,/绑定当前页面/);assert.match(script,/采集当前页面/);assert.match(script,/导出影刀任务/);
+  assert.doesNotMatch(script,/setInterval|clearInterval/);
+  const binding=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-binding.js'),'utf8');
+  assert.match(binding,/bound_url/);assert.match(binding,/bound_at/);assert.match(binding,/bound_category/);assert.match(binding,/bound_sort/);assert.match(binding,/context_fingerprint/);
   assert.doesNotMatch(script,/location\.(?:assign|replace|reload)/);assert.doesNotMatch(script,/\.click\s*\(/);assert.doesNotMatch(script,/scrollTo\s*\(/);assert.doesNotMatch(script,/scrollTop\s*=/);
+});
+
+test('operator popup renders dynamic Manual Bind fields and reserves only a scoped YingDao seam',()=>{
+  const html=fs.readFileSync(path.join(root,'browser-extension/popup.html'),'utf8'),script=fs.readFileSync(path.join(root,'browser-extension/popup.js'),'utf8');
+  for(const label of ['Category','Campaign','Profile','页面健康','Bind 状态','target / unique','新增/重复/失败','CAPTCHA/error','导出影刀任务'])assert.match(html,new RegExp(label));
+  assert.match(script,/context\.poolVersionId/);assert.match(script,/campaign\.categoryKey/);assert.match(script,/YingDao Task Export V1 接口已预留/);
+  assert.doesNotMatch(`${html}\n${script}`,/德国站·摩托配件·Top Sales|D:\\工作项目/);
 });
 
 test('accepted Extension-First build no longer loads the temporary A/B harness',() => {
