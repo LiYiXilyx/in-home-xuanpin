@@ -1,4 +1,5 @@
-import { buildCreatePayload,calculateTarget,createRequestIdentity,operatorErrorMessage } from './operator-campaign.js';
+import { buildCreatePayload,buildInitialActivationPayload,buildInitialCreatePayload,buildInitialQaPayload,
+  calculateTarget,createRequestIdentity,initialOperatorViewModel,operatorErrorMessage } from './operator-campaign.js';
 
 const $=selector => document.querySelector(selector);
 const elements={
@@ -6,6 +7,7 @@ const elements={
   operatorHeaderContext:$('#operatorHeaderContext'),operatorCampaignForm:$('#operatorCampaignForm'),
   operatorCategory:$('#operatorCategory'),operatorProfile:$('#operatorProfile'),operatorMode:$('#operatorMode'),
   operatorActivePool:$('#operatorActivePool'),operatorRequestedNew:$('#operatorRequestedNew'),
+  operatorRequestedNewField:$('#operatorRequestedNewField'),operatorCalculatedTargetField:$('#operatorCalculatedTargetField'),
   operatorCalculatedTarget:$('#operatorCalculatedTarget'),operatorCampaignName:$('#operatorCampaignName'),
   createOperatorCampaign:$('#createOperatorCampaign'),operatorCampaignError:$('#operatorCampaignError'),
   operatorCurrentCampaign:$('#operatorCurrentCampaign'),operatorCurrentCategory:$('#operatorCurrentCategory'),
@@ -13,6 +15,8 @@ const elements={
   operatorCurrentBaseline:$('#operatorCurrentBaseline'),operatorCurrentTarget:$('#operatorCurrentTarget'),
   operatorCurrentUnique:$('#operatorCurrentUnique'),operatorCurrentRemaining:$('#operatorCurrentRemaining'),
   operatorCurrentStatus:$('#operatorCurrentStatus'),operatorCurrentBinding:$('#operatorCurrentBinding'),
+  initialPoolActions:$('#initialPoolActions'),initialQuantityMode:$('#initialQuantityMode'),initialQaStatus:$('#initialQaStatus'),
+  runInitialQa:$('#runInitialQa'),activateInitialPool:$('#activateInitialPool'),initialActivationResult:$('#initialActivationResult'),
   notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),newBrowser:$('#newBrowser'),connectExisting:$('#connectExisting'),validatePage:$('#validatePage'),
   pageReadiness:$('#pageReadiness'),browserMode:$('#browserMode'),profileName:$('#profileName'),cdpPort:$('#cdpPort'),healthCountry:$('#healthCountry'),
   healthLanguage:$('#healthLanguage'),healthCurrency:$('#healthCurrency'),loginStatus:$('#loginStatus'),productListVisible:$('#productListVisible'),
@@ -25,7 +29,7 @@ const elements={
   retry:$('#retry'),sessionRecoveryControls:$('#sessionRecoveryControls'),validateSessionRecovery:$('#validateSessionRecovery'),resumeReviewCapture:$('#resumeReviewCapture'),sessionStatus:$('#sessionStatus'),export:$('#export'),openExcel:$('#openExcel'),clearExcel:$('#clearExcel'),openFolder:$('#openFolder'),toast:$('#toast')
 };
 const startButtons=[...document.querySelectorAll('[data-start]')];
-let state=null,toastTimer,operatorProfiles=[],selectedOperatorProfile=null,operatorRequestId=null;
+let state=null,toastTimer,operatorProfiles=[],selectedOperatorProfile=null,operatorRequestId=null,currentOperatorCampaign=null;
 
 async function api(url,options={}) {
   const response=await fetch(url,{ method:options.method ?? 'GET',headers:{ 'Content-Type':'application/json' },body:options.body ? JSON.stringify(options.body) : undefined });
@@ -53,7 +57,8 @@ async function loadOperatorProfiles() {
 function renderOperatorProfileOptions() {
   const profiles=operatorProfiles.filter(profile=>profile.category_key===elements.operatorCategory.value);
   elements.operatorProfile.replaceChildren(...profiles.map(profile=>option(profile.category_profile_version,
-    `${profile.category_profile_version}${profile.available ? '':'（不可用）'}`,!profile.available)));
+    `${profile.category_profile_version}${profile.available||profile.initial_pool_available ? '':'（不可用）'}`,
+    !profile.available&&!profile.initial_pool_available)));
   selectedOperatorProfile=profiles.find(profile=>profile.category_profile_version===elements.operatorProfile.value) ?? profiles[0] ?? null;
   if (selectedOperatorProfile && !elements.operatorProfile.value) elements.operatorProfile.value=selectedOperatorProfile.category_profile_version;
   renderOperatorSelection();
@@ -63,9 +68,13 @@ function renderOperatorSelection() {
   selectedOperatorProfile=operatorProfiles.find(profile=>profile.category_key===elements.operatorCategory.value
     && profile.category_profile_version===elements.operatorProfile.value) ?? null;
   elements.operatorActivePool.textContent=number(selectedOperatorProfile?.active_pool_count);
+  const initial=Boolean(selectedOperatorProfile?.initial_pool_available&&!selectedOperatorProfile?.expansion_available);
+  elements.operatorRequestedNewField.hidden=initial;elements.operatorCalculatedTargetField.hidden=initial;
+  elements.operatorRequestedNew.required=!initial;
   const target=calculateTarget(selectedOperatorProfile,Number(elements.operatorRequestedNew.value));
   elements.operatorCalculatedTarget.textContent=target===null ? '—':number(target);
-  elements.createOperatorCampaign.disabled=!selectedOperatorProfile?.available;
+  elements.createOperatorCampaign.disabled=!(selectedOperatorProfile?.available||selectedOperatorProfile?.initial_pool_available);
+  elements.createOperatorCampaign.textContent=initial?'创建首次采集任务':'创建采集任务';
   renderOperatorHeader(selectedOperatorProfile);
 }
 
@@ -81,9 +90,11 @@ async function createOperatorCampaign(event) {
   elements.operatorCampaignError.hidden=true;
   operatorRequestId ??= createRequestIdentity({randomUUID:()=>crypto.randomUUID()});
   try {
-    const body=buildCreatePayload({profile:selectedOperatorProfile,requestedNewCount:Number(elements.operatorRequestedNew.value),
-      campaignName:elements.operatorCampaignName.value,requestId:operatorRequestId});
-    const result=await api('/api/catalog/operator-campaigns',{method:'POST',body});
+    const initial=Boolean(selectedOperatorProfile?.initial_pool_available&&!selectedOperatorProfile?.expansion_available);
+    const body=initial?buildInitialCreatePayload({profile:selectedOperatorProfile,campaignName:elements.operatorCampaignName.value,
+      requestId:operatorRequestId}):buildCreatePayload({profile:selectedOperatorProfile,
+      requestedNewCount:Number(elements.operatorRequestedNew.value),campaignName:elements.operatorCampaignName.value,requestId:operatorRequestId});
+    const result=await api(initial?'/api/catalog/operator/initial-campaigns':'/api/catalog/operator-campaigns',{method:'POST',body});
     renderOperatorCurrent(result.result);
     operatorRequestId=null;
     toast('采集任务已创建，等待在 Temu 页面检测并绑定。');
@@ -91,7 +102,7 @@ async function createOperatorCampaign(event) {
     elements.operatorCampaignError.textContent=operatorErrorMessage(error);
     elements.operatorCampaignError.hidden=false;
   } finally {
-    elements.createOperatorCampaign.disabled=!selectedOperatorProfile?.available;
+    elements.createOperatorCampaign.disabled=!(selectedOperatorProfile?.available||selectedOperatorProfile?.initial_pool_available);
   }
 }
 
@@ -106,21 +117,39 @@ async function refreshOperatorCurrent() {
 }
 
 function renderOperatorCurrent(current) {
+  currentOperatorCampaign=current;
   elements.operatorCurrentCampaign.hidden=!current;
   if (!current) return;
   elements.operatorCurrentCategory.textContent=current.category_key;
   elements.operatorCurrentName.textContent=current.campaign_name ?? '—';
   elements.operatorCurrentId.textContent=current.campaign_id;
   elements.operatorCurrentBaseline.textContent=number(current.baseline_count);
-  elements.operatorCurrentTarget.textContent=number(current.target_count);
+  elements.operatorCurrentTarget.textContent=current.campaign_type==='initial'?'不限数量':number(current.target_count);
   elements.operatorCurrentUnique.textContent=number(current.current_unique);
-  elements.operatorCurrentRemaining.textContent=number(current.remaining);
+  elements.operatorCurrentRemaining.textContent=current.campaign_type==='initial'?'—':number(current.remaining);
   elements.operatorCurrentStatus.textContent=current.status;
   elements.operatorCurrentBinding.textContent=current.binding_status==='UNBOUND' ? '等待页面绑定 · UNBOUND':current.binding_status;
+  const initial=current.campaign_type==='initial';elements.initialPoolActions.hidden=!initial;
+  if(initial){const view=initialOperatorViewModel(current);elements.initialQuantityMode.textContent=`采集模式：${view.modeLabel}`;
+    elements.initialQaStatus.textContent=`QA：${view.qaStatus} · 覆盖 ${view.qaCandidateCount} · 当前 ${view.currentCount} · 未QA ${view.unreviewedDelta}`;
+    elements.runInitialQa.disabled=!view.qaEnabled;elements.activateInitialPool.disabled=!view.activationEnabled;}
   const profile=operatorProfiles.find(item=>item.category_key===current.category_key
     && item.category_profile_version===current.category_profile_version);
   if (profile) renderOperatorHeader(profile);
 }
+
+async function runInitialQa(){if(!currentOperatorCampaign)return;elements.runInitialQa.disabled=true;elements.initialQaStatus.textContent='QA：RUNNING…';
+  try{const profile=operatorProfiles.find(item=>item.category_key===currentOperatorCampaign.category_key&&item.category_profile_version===currentOperatorCampaign.category_profile_version);
+    const body=buildInitialQaPayload({campaignId:currentOperatorCampaign.campaign_id,profile,requestId:createRequestIdentity({randomUUID:()=>crypto.randomUUID()})});
+    await api(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(currentOperatorCampaign.campaign_id)}/qa-runs`,{method:'POST',body});await refreshOperatorCurrent();}
+  catch(error){elements.operatorCampaignError.textContent=operatorErrorMessage(error);elements.operatorCampaignError.hidden=false;await refreshOperatorCurrent();}}
+async function activateInitial(){if(!currentOperatorCampaign)return;elements.activateInitialPool.disabled=true;
+  try{const profile=operatorProfiles.find(item=>item.category_key===currentOperatorCampaign.category_key&&item.category_profile_version===currentOperatorCampaign.category_profile_version);
+    const body=buildInitialActivationPayload({campaignId:currentOperatorCampaign.campaign_id,profile,requestId:createRequestIdentity({randomUUID:()=>crypto.randomUUID()})});
+    const response=await api(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(currentOperatorCampaign.campaign_id)}/activate`,{method:'POST',body});
+    const result=response.result;elements.initialActivationResult.hidden=false;elements.initialActivationResult.textContent=`首个商品池已建立\nPool Version：${result.pool_version_id}\nCategory：${result.category_key}\nCount：${result.pool_count}\nActivated At：${result.activated_at}\nSource Campaign：${result.source_campaign_id}`;
+    await loadOperatorProfiles();}
+  catch(error){elements.operatorCampaignError.textContent=operatorErrorMessage(error);elements.operatorCampaignError.hidden=false;await refreshOperatorCurrent();}}
 
 function option(value,label,disabled=false) {
   const element=document.createElement('option');element.value=value;element.textContent=label;element.disabled=disabled;return element;
@@ -315,6 +344,7 @@ elements.resetTestData.addEventListener('click',() => {
 elements.openFolder.addEventListener('click',() => action('/api/open/folder','正在打开结果目录…'));
 
 elements.operatorCampaignForm.addEventListener('submit',createOperatorCampaign);
+elements.runInitialQa.addEventListener('click',runInitialQa);elements.activateInitialPool.addEventListener('click',activateInitial);
 elements.operatorCategory.addEventListener('change',()=>{operatorRequestId=null;renderOperatorProfileOptions();});
 elements.operatorProfile.addEventListener('change',()=>{operatorRequestId=null;renderOperatorSelection();});
 for (const input of [elements.operatorRequestedNew,elements.operatorCampaignName]) input.addEventListener('input',()=>{

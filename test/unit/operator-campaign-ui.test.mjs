@@ -25,3 +25,10 @@ test('request identity is explicit and validation rejects malformed create input
   assert.throws(()=>buildCreatePayload({profile,requestedNewCount:1.5,campaignName:'Task',requestId:'id'}),/正整数/);
   assert.throws(()=>buildCreatePayload({profile,requestedNewCount:1,campaignName:'',requestId:'id'}),/任务名称/);
 });
+
+test('Initial safety errors provide action without force or bypass language',()=>{
+  for(const code of ['INITIAL_POOL_EMPTY','INITIAL_POOL_QA_STALE','INITIAL_POOL_QA_REQUIRED',
+    'INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS',
+    'INITIAL_CATEGORY_STATE_INCONSISTENT']){const message=operatorErrorMessage({code});assert.match(message,new RegExp(code));
+    assert.doesNotMatch(message,/强制|绕过|bypass/i);}
+});

@@ -27,6 +27,9 @@ h1 { font-size:27px;letter-spacing:-.04em; }
 .operator-current-grid div { padding:10px;border:1px solid #e5e1d9;border-radius:10px;background:#faf8f3; }
 .operator-current-grid dt { margin-bottom:5px;color:var(--muted);font-size:10px;font-weight:700; }
 .operator-current-grid dd { margin:0;font-size:12px;font-weight:800;overflow-wrap:anywhere; }
+.initial-pool-actions { display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:12px;padding:12px;border:1px solid #d8dee8;border-radius:10px;background:#f7f9fc; }
+.initial-pool-actions p { flex:1 1 220px;font-size:12px;font-weight:700; }
+.initial-pool-result { margin-top:10px;padding:12px;border:1px solid #a9d4c3;border-radius:10px;background:#ebf7f1;color:#126246;font-size:12px;font-weight:700;white-space:pre-wrap; }
 .controls { display:flex;flex-wrap:wrap;gap:11px;padding:15px;margin-bottom:14px; }
 .control-group { display:flex;flex:1 1 250px;align-items:center;flex-wrap:wrap;gap:7px;padding:9px;border-radius:12px;background:#f7f5ef; }
 .group-title { flex:1 0 100%;color:var(--muted);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em; }

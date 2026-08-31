@@ -23,8 +23,8 @@
         <label>Category Profile<select id="operatorProfile" required></select></label>
         <label>采集模式<input id="operatorMode" value="MANUAL_BIND_PASSIVE_CAPTURE" readonly></label>
         <label>当前 Active Pool 数量<output id="operatorActivePool">0</output></label>
-        <label>本次新增目标数量<input id="operatorRequestedNew" type="number" min="1" step="1" required></label>
-        <label>Campaign Target<output id="operatorCalculatedTarget">—</output></label>
+        <label id="operatorRequestedNewField">本次新增目标数量<input id="operatorRequestedNew" type="number" min="1" step="1"></label>
+        <label id="operatorCalculatedTargetField">Campaign Target<output id="operatorCalculatedTarget">—</output></label>
         <label>任务名称<input id="operatorCampaignName" maxlength="200" required></label>
         <button id="createOperatorCampaign" class="primary" type="submit">创建采集任务</button>
       </form>
@@ -42,6 +42,13 @@
           <div><dt>Status</dt><dd id="operatorCurrentStatus">—</dd></div>
           <div><dt>Bind</dt><dd id="operatorCurrentBinding">等待页面绑定</dd></div>
         </dl>
+        <div id="initialPoolActions" class="initial-pool-actions" hidden>
+          <p id="initialQuantityMode">采集模式：不限数量 / OPEN_ENDED</p>
+          <p id="initialQaStatus">QA：NOT_RUN</p>
+          <button id="runInitialQa" type="button">运行首池 QA</button>
+          <button id="activateInitialPool" class="primary" type="button" disabled>建立首个商品池</button>
+        </div>
+        <div id="initialActivationResult" class="initial-pool-result" hidden></div>
       </section>
     </section>
 
