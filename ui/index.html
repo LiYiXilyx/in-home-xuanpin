@@ -10,11 +10,40 @@
   <main class="shell">
     <section id="environmentBanner" class="test-banner" hidden>测试模式 · 独立测试数据库 · 不写入正式 300 商品库</section>
     <header class="topbar">
-      <div><p class="eyebrow">德国站 · 摩托配件 · Top Sales</p><h1 id="consoleTitle">Temu 选品运营台</h1></div>
+      <div><p id="operatorHeaderContext" class="eyebrow">Germany / English / EUR · Multi-Category</p><h1 id="consoleTitle">Temu 选品运营台</h1></div>
       <div class="connection"><span id="browserPulse" class="pulse offline"></span><span id="browserStatus">Chrome 检查中</span></div>
     </header>
 
     <section id="notice" class="notice" aria-live="polite"></section>
+
+    <section class="panel operator-campaign-panel" aria-labelledby="operatorCampaignTitle">
+      <div class="section-title"><div><p class="eyebrow">MANUAL BIND</p><h2 id="operatorCampaignTitle">新建采集任务</h2></div><span>创建后仍需在 Temu 页面人工检测、绑定和采集</span></div>
+      <form id="operatorCampaignForm" class="operator-form">
+        <label>Category<select id="operatorCategory" required></select></label>
+        <label>Category Profile<select id="operatorProfile" required></select></label>
+        <label>采集模式<input id="operatorMode" value="MANUAL_BIND_PASSIVE_CAPTURE" readonly></label>
+        <label>当前 Active Pool 数量<output id="operatorActivePool">0</output></label>
+        <label>本次新增目标数量<input id="operatorRequestedNew" type="number" min="1" step="1" required></label>
+        <label>Campaign Target<output id="operatorCalculatedTarget">—</output></label>
+        <label>任务名称<input id="operatorCampaignName" maxlength="200" required></label>
+        <button id="createOperatorCampaign" class="primary" type="submit">创建采集任务</button>
+      </form>
+      <p id="operatorCampaignError" class="operator-error" role="alert" hidden></p>
+      <section id="operatorCurrentCampaign" class="operator-current" hidden>
+        <h3>当前采集任务</h3>
+        <dl class="operator-current-grid">
+          <div><dt>Category</dt><dd id="operatorCurrentCategory">—</dd></div>
+          <div><dt>Campaign Name</dt><dd id="operatorCurrentName">—</dd></div>
+          <div><dt>Campaign ID（诊断）</dt><dd id="operatorCurrentId">—</dd></div>
+          <div><dt>Baseline</dt><dd id="operatorCurrentBaseline">0</dd></div>
+          <div><dt>Target</dt><dd id="operatorCurrentTarget">0</dd></div>
+          <div><dt>Current Unique</dt><dd id="operatorCurrentUnique">0</dd></div>
+          <div><dt>Remaining</dt><dd id="operatorCurrentRemaining">0</dd></div>
+          <div><dt>Status</dt><dd id="operatorCurrentStatus">—</dd></div>
+          <div><dt>Bind</dt><dd id="operatorCurrentBinding">等待页面绑定</dd></div>
+        </dl>
+      </section>
+    </section>
 
     <section class="controls panel">
       <div class="control-group">
