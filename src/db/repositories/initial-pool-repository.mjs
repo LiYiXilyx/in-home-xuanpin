@@ -167,10 +167,17 @@ export function createInitialPoolRepository(db, { now = () => new Date().toISOSt
         sourceId:row.source_id,firstBatchId:row.first_batch_id,stagingProductId:row.staging_product_id,
         activationPayload:JSON.parse(row.activation_payload_json),rowHash:row.row_hash}));
   }
+  function findActivationReplay(requestId) {
+    return mapActivation(db.prepare('SELECT * FROM catalog_initial_pool_activation_requests WHERE request_id=?').get(requestId));
+  }
+  function findActivationByCampaign(campaignId) {
+    return mapActivation(db.prepare('SELECT * FROM catalog_initial_pool_activation_requests WHERE campaign_id=?').get(campaignId));
+  }
 
   return { getInitialEligibility, recordInitialEligibilityAudit, initializeCandidateState,
     findInitialByRequestId, getCandidateState,listCandidateItems,applyCandidateItems,freezeQaCandidate,recordBatchContext,
     listBatchContexts,findQaByRequest,createRunningQaRun,getQaRun,finalizeQaRun,getLatestQaRun,getLatestPassedQa,listQaCandidateItems,
+    findActivationReplay,findActivationByCampaign,
     createQaRunId: () => createId('initial_qa') };
 }
 
@@ -197,3 +204,6 @@ function mapQaRun(row) {
     checks:JSON.parse(row.checks_json),failureCodes:JSON.parse(row.failure_codes_json),startedAt:row.started_at,
     completedAt:row.completed_at,durationMs:row.duration_ms===null?null:Number(row.duration_ms),createdAt:row.created_at}:null;
 }
+function mapActivation(row){return row?{requestId:row.request_id,campaignId:row.campaign_id,categoryKey:row.category_key,
+  categoryProfileVersion:row.category_profile_version,qaRunId:row.qa_run_id,candidateRevision:Number(row.candidate_revision),
+  candidateHash:row.candidate_hash,parametersHash:row.parameters_hash,poolVersionId:row.pool_version_id,createdAt:row.created_at}:null;}

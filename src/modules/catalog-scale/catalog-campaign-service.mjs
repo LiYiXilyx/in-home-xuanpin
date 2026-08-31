@@ -9,6 +9,7 @@ import { INITIAL_TARGET_STORAGE_SENTINEL, getCampaignQuantityPolicy, initialQuan
 import { hasTaxonomyPipelineImplementation } from './taxonomy-pipeline-capability.mjs';
 import { buildInitialActivationPayload } from './initial-candidate-hash.mjs';
 import { evaluateInitialPoolQa } from './initial-pool-qa.mjs';
+import { createInitialActivationCoordinator } from './initial-activation-coordinator.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
@@ -28,7 +29,7 @@ const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
 const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFRESH_EXTENSION_MODE]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk,
-  evaluateInitialQa=evaluateInitialPoolQa }={}) {
+  evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={} }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
   const initialRepository=createInitialPoolRepository(db,{ now });
 
@@ -267,6 +268,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   function captureBatch({ campaignId,sourceId,batchId,pageUrl=null,pageTitle=null,capturedAt=now(),cards=[],
     categoryKey=null,categoryProfileVersion=null,pageContext=null,pageBinding=null,captureMode=null }) {
     const campaign=requireCampaign(campaignId);
+    if(activationCoordinator.isActivating(campaign.id))throw new AppError('首池正在建立，禁止写入新批次。',{
+      code:'INITIAL_POOL_ACTIVATION_IN_PROGRESS',retriable:true});
     const source=requireSource(sourceId);
     if (source.campaignId!==campaign.id || source.categoryKey!==campaign.categoryKey) throw new AppError('Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
     if (!['running','pending'].includes(campaign.status)) throw new AppError('当前Campaign状态不能接收批次。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
@@ -462,6 +465,42 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       currentCandidateHash:current.currentHash,unreviewedDelta:Math.max(0,current.candidateCount-run.candidateCount),
       checks:run.checks,failureCodes:run.failureCodes,durationMs:run.durationMs};
   }
+
+  function activateInitialPool(input) {
+    plainObject(input,'Initial activation request');const campaignId=requiredString(input.campaignId,'campaignId',128);
+    const categoryKey=requiredString(input.categoryKey,'categoryKey',128),profileVersion=requiredString(input.categoryProfileVersion,'categoryProfileVersion',128);
+    const requestId=requiredString(input.requestId,'requestId',128),parametersHash=hash({campaignId,categoryKey,profileVersion});
+    return activationCoordinator.run(campaignId,()=>transaction(db,()=>{
+      const campaign=requireCampaign(campaignId);
+      if(campaign.campaignType!=='initial'||campaign.categoryKey!==categoryKey||campaign.categoryProfileVersion!==profileVersion)
+        throw new AppError('Initial activation identity不匹配。',{code:'INITIAL_CAMPAIGN_IDENTITY_INVALID'});
+      const replay=initialRepository.findActivationReplay(requestId);
+      if(replay){if(replay.campaignId!==campaign.id||replay.parametersHash!==parametersHash)throw new AppError(
+        'Activation request_id参数冲突。',{code:'INITIAL_ACTIVATION_REQUEST_CONFLICT'});return activationResult(replay.poolVersionId,true);}
+      const existing=initialRepository.findActivationByCampaign(campaign.id);
+      if(existing)return activationResult(existing.poolVersionId,true);
+      if(db.prepare('SELECT 1 FROM catalog_pool_versions WHERE category_key=? LIMIT 1').get(categoryKey))throw new AppError(
+        '该Category已存在Pool。',{code:'INITIAL_POOL_ALREADY_EXISTS'});
+      const current=initialRepository.getCandidateState(campaign.id),qa=initialRepository.getLatestPassedQa(campaign.id);
+      if(!qa)throw new AppError('首池必须先通过QA。',{code:'INITIAL_POOL_QA_REQUIRED'});
+      if(qa.candidateHash!==current.currentHash||qa.candidateRevision!==current.currentRevision||qa.candidateCount!==current.candidateCount)
+        throw new AppError('首池QA已过期。',{code:'INITIAL_POOL_QA_STALE'});
+      const profile=validateCategoryProfile(campaign.config?.categoryProfile),candidateItems=initialRepository.listQaCandidateItems(qa.id);
+      const rerun=evaluateInitialQa({db,campaign,profile,qaRun:qa,candidateItems,
+        batchContexts:initialRepository.listBatchContexts(campaign.id),eligibility:initialRepository.getInitialEligibility(profile),
+        membershipEvidence:initialMembershipEvidence(candidateItems),integrityCheck:()=>db.prepare('PRAGMA integrity_check').get().integrity_check,
+        foreignKeyCheck:()=>db.prepare('PRAGMA foreign_key_check').all(),nowMs:()=>Date.now()});
+      if(!rerun.passed)throw new AppError('Activation前mandatory QA复核失败。',{code:'INITIAL_POOL_QA_FAILED',details:rerun});
+      activationHooks.afterFinalValidation?.({service:api,campaign,qa,current});
+      const pool=repository.materializeInitialPool({campaign,profile,qaRun:qa,candidateItems,requestId,parametersHash,hooks:activationHooks});
+      return {poolVersionId:pool.id,categoryKey:pool.categoryKey,productCount:pool.productCount,status:pool.status,
+        activatedAt:pool.activatedAt,sourceCampaignId:campaign.id,idempotentReplay:false};
+    }));
+  }
+  function activationResult(poolVersionId,idempotentReplay){const row=db.prepare('SELECT * FROM catalog_pool_versions WHERE id=?').get(poolVersionId);
+    if(!row)throw new AppError('Activation replay Pool不存在。',{code:'INITIAL_ACTIVATION_REQUEST_CONFLICT'});
+    return {poolVersionId:row.id,categoryKey:row.category_key,productCount:Number(row.product_count),status:row.status,
+      activatedAt:row.activated_at,sourceCampaignId:row.campaign_id,idempotentReplay};}
 
   function recordExpansionCheckpoint(campaignId,milestoneCount) {
     return transaction(db,() => {
@@ -796,16 +835,17 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return context;
   }
 
-  return { createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
+  const api={ createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
     recordExpansionCheckpoint,recordNotSeenInCampaign,
     getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
     reconcileActiveMembershipsToPool:categoryKey => transaction(db,() => repository.reconcileActiveMembershipsToPool(categoryKey)),
     getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
-    getCaptureContext,captureExtensionBatch,getStatus,getInitialOperatorStatus,runInitialPoolQa,getInitialQaState,claimNextSource,currentRpaContext,sourceOpened,
+    getCaptureContext,captureExtensionBatch,getStatus,getInitialOperatorStatus,runInitialPoolQa,getInitialQaState,activateInitialPool,claimNextSource,currentRpaContext,sourceOpened,
     saveRpaCheckpoint,markRpaManualRequired,resumeRpa,saveExtensionCheckpoint,markExtensionManualRequired,resumeExtensionRunner,
     completeRpaSource };
+  return api;
 
   function requireClaim(input) {
     plainObject(input,'Catalog RPA request');

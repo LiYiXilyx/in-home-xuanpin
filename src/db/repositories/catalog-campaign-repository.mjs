@@ -729,6 +729,91 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     return queues.length;
   }
 
+  function materializeInitialPool({campaign,profile,qaRun,candidateItems,requestId,parametersHash,hooks={}}) {
+    const timestamp=now(),count=candidateItems.length,jobId=createId('catalog_initial_job');
+    if(db.prepare('SELECT 1 FROM catalog_pool_versions WHERE category_key=? LIMIT 1').get(campaign.categoryKey))
+      throw new AppError('该Category已存在Pool。',{code:'INITIAL_POOL_ALREADY_EXISTS'});
+    db.prepare(`INSERT INTO crawl_jobs(
+      id,job_type,mode,site_country,language,currency,primary_category,subcategory,sort_order,target_count,
+      status,checkpoint_json,config_json,total_items,processed_items,success_items,failed_items,discovered_count,
+      stored_count,error_count,resume_count,requested_at,started_at,heartbeat_at,updated_at,finished_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?, 'completed','{}',?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)`).run(
+      jobId,'catalog','catalog_initial_pool',profile.site_country,profile.language,profile.currency,
+      profile.membership_scope.primary_category,profile.membership_scope.subcategory,profile.sort_order,count,
+      JSON.stringify({campaignId:campaign.id,categoryKey:campaign.categoryKey,qaRunId:qaRun.id}),
+      count,count,count,0,count,count,0,timestamp,timestamp,timestamp,timestamp,timestamp,timestamp);
+    const materialized=[];
+    for(const [index,item] of candidateItems.entries()) {
+      const payload=item.activationPayload,source=getSource(item.sourceId);
+      let product=db.prepare('SELECT id FROM products WHERE platform=? AND external_product_id=?').get(item.platform,item.goodsId);
+      if(!product){const inserted=db.prepare(`INSERT INTO products(platform,external_product_id,source_url,canonical_url,
+        source_domain,title,status,first_seen_at,last_seen_at,raw_identity_json) VALUES(?,?,?,?,?,?,'active',?,?,?)`).run(
+        item.platform,item.goodsId,payload.source_url,payload.canonical_url,'www.temu.com',payload.title,timestamp,timestamp,
+        JSON.stringify({platform:item.platform,goods_id:item.goodsId}));product={id:Number(inserted.lastInsertRowid)};}
+      else db.prepare(`UPDATE products SET source_url=COALESCE(?,source_url),canonical_url=?,title=COALESCE(?,title),
+        last_seen_at=? WHERE id=?`).run(payload.source_url,payload.canonical_url,payload.title,timestamp,product.id);
+      hooks.afterProduct?.({campaign,item,productId:product.id});
+      db.prepare(`INSERT INTO product_snapshots(job_id,product_id,captured_at,source_url,title,price_amount,currency,
+        sales_count,rating,review_count,listing_rank,image_url,availability,missing_fields_json,raw_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(jobId,product.id,timestamp,payload.source_url??payload.canonical_url,
+        payload.title,payload.price_amount,payload.currency,payload.sales_count,payload.rating,payload.review_count,
+        payload.listing_rank??index+1,payload.image_url,'observed','[]',JSON.stringify(payload.raw??{}));
+      hooks.afterSnapshot?.({campaign,item,productId:product.id});
+      let membership=findScopedMembership(profile,product.id,{activeOnly:false});
+      if(!membership){const inserted=db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,
+        primary_category,subcategory,source_page_url,sort_order,current_rank,active,first_seen_at,last_seen_at,last_job_id,
+        category_key,category_profile_version,campaign_id,source_id) VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`).run(
+        product.id,profile.site_country,profile.language,profile.currency,profile.membership_scope.primary_category,
+        profile.membership_scope.subcategory,payload.source_url,profile.membership_scope.sort_order,payload.listing_rank??index+1,
+        timestamp,timestamp,jobId,campaign.categoryKey,campaign.categoryProfileVersion,campaign.id,item.sourceId);
+        membership={id:Number(inserted.lastInsertRowid)};}
+      else db.prepare(`UPDATE catalog_memberships SET source_page_url=COALESCE(?,source_page_url),current_rank=?,last_seen_at=?,
+        last_job_id=?,category_key=?,category_profile_version=?,campaign_id=?,source_id=? WHERE id=?`).run(payload.source_url,
+        payload.listing_rank??index+1,timestamp,jobId,campaign.categoryKey,campaign.categoryProfileVersion,campaign.id,item.sourceId,membership.id);
+      hooks.afterMembership?.({campaign,item,membershipId:membership.id});
+      upsertStaging(campaign,source,item.firstBatchId,{platform:item.platform,goodsId:item.goodsId,title:payload.title,
+        sourceUrl:payload.source_url,canonicalUrl:payload.canonical_url,imageUrl:payload.image_url,
+        priceAmount:payload.price_amount,currency:payload.currency,salesCount:payload.sales_count,rating:payload.rating,
+        reviewCount:payload.review_count,businessEligible:payload.business_eligible,reviewable:payload.reviewable,
+        qualityStatus:payload.quality_status,capturedAt:timestamp,raw:payload.raw},'passed');
+      const staging=db.prepare(`SELECT id FROM catalog_staging_products WHERE campaign_id=? AND platform=? AND goods_id=?`)
+        .get(campaign.id,item.platform,item.goodsId);
+      materialized.push({...item,productId:product.id,membershipId:membership.id,stagingProductId:Number(staging.id)});
+    }
+    const poolId=createId('catalog_pool');db.prepare(`INSERT INTO catalog_pool_versions(
+      id,campaign_id,category_key,category_profile_version,product_count,non_electronic_unique_count,
+      business_eligible_count,reviewable_unique_count,status,qa_summary_json,activated_at,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,'active',?,?,?,?)`).run(poolId,campaign.id,campaign.categoryKey,campaign.categoryProfileVersion,
+      count,count,count,count,JSON.stringify({initialQaRunId:qaRun.id,candidateHash:qaRun.candidateHash}),timestamp,timestamp,timestamp);
+    hooks.afterPool?.({campaign,poolId});
+    const poolItem=db.prepare(`INSERT INTO catalog_pool_version_items(pool_version_id,staging_product_id,platform,goods_id,
+      category_key,membership_status,created_at) VALUES(?,?,?,?,?,'seen',?)`);
+    for(const item of materialized){poolItem.run(poolId,item.stagingProductId,item.platform,item.goodsId,campaign.categoryKey,timestamp);
+      hooks.afterPoolItem?.({campaign,poolId,item});}
+    const activate=db.prepare('UPDATE catalog_memberships SET active=1 WHERE id=?');for(const item of materialized)activate.run(item.membershipId);
+    const poolGate=db.prepare(`SELECT COUNT(*) rows,COUNT(DISTINCT platform||CHAR(31)||goods_id) identities,
+      COUNT(DISTINCT goods_id) goods FROM catalog_pool_version_items WHERE pool_version_id=?`).get(poolId);
+    const activeCount=Number(db.prepare(`SELECT COUNT(*) count FROM catalog_memberships WHERE category_key=?
+      AND category_profile_version=? AND active=1`).get(campaign.categoryKey,campaign.categoryProfileVersion).count);
+    if(Number(poolGate.rows)!==count||Number(poolGate.identities)!==count||Number(poolGate.goods)!==count||activeCount!==count)
+      throw new AppError('Initial Pool materialization数量或隔离检查失败。',{code:'INITIAL_POOL_MATERIALIZATION_INVALID'});
+    db.prepare(`INSERT INTO catalog_pool_activation_history(id,category_key,new_pool_version_id,previous_pool_version_id,
+      legacy_active_membership_ids_json,activated_at) VALUES(?,?,?,NULL,'[]',?)`).run(
+      createId('catalog_activation'),campaign.categoryKey,poolId,timestamp);hooks.afterActivationHistory?.({campaign,poolId});
+    db.prepare(`UPDATE catalog_sources SET status='completed',updated_at=? WHERE campaign_id=?`).run(timestamp,campaign.id);
+    hooks.afterSourceComplete?.({campaign,poolId});
+    db.prepare(`UPDATE catalog_rpa_queue SET status='completed',checkpoint_json=json_set(checkpoint_json,'$.runner_state','COMPLETED',
+      '$.last_action','initial_pool_activated'),heartbeat_at=?,updated_at=? WHERE campaign_id=?`).run(timestamp,timestamp,campaign.id);
+    hooks.afterQueueComplete?.({campaign,poolId});hooks.beforeCampaignComplete?.({campaign,poolId});
+    db.prepare(`UPDATE catalog_campaigns SET status='completed',qa_status='passed',finished_at=?,updated_at=? WHERE id=?`)
+      .run(timestamp,timestamp,campaign.id);
+    db.prepare(`INSERT INTO catalog_initial_pool_activation_requests(request_id,campaign_id,category_key,
+      category_profile_version,qa_run_id,candidate_revision,candidate_hash,parameters_hash,pool_version_id,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(requestId,campaign.id,campaign.categoryKey,campaign.categoryProfileVersion,
+      qaRun.id,qaRun.candidateRevision,qaRun.candidateHash,parametersHash,poolId,timestamp);
+    return mapPoolVersion(db.prepare('SELECT * FROM catalog_pool_versions WHERE id=?').get(poolId));
+  }
+
   function getRpaQueueForSource(sourceId) { return db.prepare('SELECT * FROM catalog_rpa_queue WHERE source_id=?').get(sourceId); }
 
   function getRpaQueue(id) { return mapRpaQueue(db.prepare('SELECT * FROM catalog_rpa_queue WHERE id=?').get(id)); }
@@ -897,7 +982,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,getExpansionComparison,getExpansionQualityMetrics,
     materializeRefresh,materializeExpansion,saveRefreshAudit,getRefreshAudit,getRefreshMaterialization,
     saveExpansionAudit,getExpansionAudit,getExpansionMaterialization,recordExpansionCheckpoint,listExpansionCheckpoints,
-    activatePoolVersion,completePendingSources,
+    activatePoolVersion,materializeInitialPool,completePendingSources,
     getRpaQueueForSource,getRpaQueue,getNextRpaQueue,listActiveRpaQueues,listRpaQueues,claimRpaQueue,
     transitionRpaQueue,transitionSource,finishSourceRun,listSourceContributions };
 }
