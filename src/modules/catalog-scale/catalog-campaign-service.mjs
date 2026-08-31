@@ -7,6 +7,7 @@ import { canonicalProductUrl,createId } from '../../shared/ids.mjs';
 import { validateCategoryProfile } from './category-profile.mjs';
 import { INITIAL_TARGET_STORAGE_SENTINEL, getCampaignQuantityPolicy, initialQuantityConfig } from './campaign-quantity-policy.mjs';
 import { hasTaxonomyPipelineImplementation } from './taxonomy-pipeline-capability.mjs';
+import { buildInitialActivationPayload } from './initial-candidate-hash.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
@@ -262,14 +263,15 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   }
 
   function captureBatch({ campaignId,sourceId,batchId,pageUrl=null,pageTitle=null,capturedAt=now(),cards=[],
-    categoryKey=null,categoryProfileVersion=null,pageContext=null }) {
+    categoryKey=null,categoryProfileVersion=null,pageContext=null,pageBinding=null,captureMode=null }) {
     const campaign=requireCampaign(campaignId);
     const source=requireSource(sourceId);
     if (source.campaignId!==campaign.id || source.categoryKey!==campaign.categoryKey) throw new AppError('Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
     if (!['running','pending'].includes(campaign.status)) throw new AppError('当前Campaign状态不能接收批次。',{ code:'CATALOG_CAMPAIGN_INVALID_TRANSITION' });
     if (!String(batchId ?? '').trim()) throw new AppError('Catalog batch缺少batch_id。',{ code:'CATALOG_BATCH_INVALID' });
     if (!Array.isArray(cards)) throw new AppError('Catalog batch cards必须是数组。',{ code:'CATALOG_BATCH_INVALID' });
-    const payloadHash=hash({ campaignId,sourceId,batchId,pageUrl,pageTitle,cards,categoryKey,categoryProfileVersion,pageContext });
+    const payloadHash=hash({ campaignId,sourceId,batchId,pageUrl,pageTitle,cards,categoryKey,categoryProfileVersion,
+      pageContext,pageBinding,captureMode });
     return transaction(db,() => {
       const registered=repository.registerBatch({ campaignId,sourceId,batchId:String(batchId),pageUrl,pageTitle,
         capturedAt,payloadHash,receivedCount:cards.length });
@@ -281,7 +283,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       }
       let stagingCount=0,excludedCount=0,duplicateCount=0;
       let serviceObserved=0,electronicExcluded=0,otherBusinessExcluded=0,eligibleGoods=0,acceptedGoods=0;
-      let stoppedDueToTarget=0,targetGateStopped=false;
+      let stoppedDueToTarget=0,targetGateStopped=false;const initialCandidates=[];
       let acceptedNonElectronic=campaign.nonElectronicUniqueCount;
       for (const raw of cards) {
         serviceObserved+=1;
@@ -309,7 +311,10 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
           && acceptedNonElectronic>=campaign.targetCount && (campaign.campaignType==='refresh' || (!baselineItem && !existingStaging))) {
           stoppedDueToTarget+=1;targetGateStopped=true;break;
         }
-        const result=repository.upsertStaging(campaign,source,String(batchId),normalizeCard(raw,goodsId,capturedAt),screening.decision);
+        const normalized=normalizeCard(raw,goodsId,capturedAt);
+        const result=repository.upsertStaging(campaign,source,String(batchId),normalized,screening.decision);
+        if (campaign.campaignType==='initial' && screening.decision==='passed') initialCandidates.push(
+          buildInitialActivationPayload({ campaign,source,batchId:String(batchId),product:normalized }));
         if (result.inserted) {
           stagingCount+=1;
           if (screening.decision==='passed' && (campaign.campaignType!=='expansion' || !baselineItem)) {
@@ -318,6 +323,10 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         } else duplicateCount+=1;
       }
       const batch=repository.completeBatch(registered.batch.id,{ stagingCount,excludedCount,duplicateCount });
+      if (campaign.campaignType==='initial') {
+        initialRepository.recordBatchContext({ campaign,source,batchId,captureMode,pageUrl,pageContext,pageBinding });
+        initialRepository.applyCandidateItems(campaign,initialCandidates);
+      }
       const refreshedCampaign=repository.refreshCampaignCounts(campaignId);
       const refreshedPolicy=getCampaignQuantityPolicy(refreshedCampaign);
       const audit={ campaignTarget:refreshedPolicy.businessTarget,targetReached:refreshedPolicy.targetReached,
@@ -374,7 +383,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       !card.raw_sales_text || card.parsed_sales_count===null || card.final_sales_count===null || card.sales_count===null
     )) throw new AppError('Full Refresh批次只接受保留原始销量文本且成功解析的商品。',{ code:'FULL_REFRESH_SALES_EVIDENCE_REQUIRED' });
     const result=captureBatch({ campaignId,sourceId,batchId,pageUrl,pageTitle:optionalString(input.page_title,'page_title',500),
-      capturedAt,cards,categoryKey,categoryProfileVersion:profileVersion,pageContext });
+      capturedAt,cards,categoryKey,categoryProfileVersion:profileVersion,pageContext,
+      pageBinding:input.page_binding,captureMode:input.capture_mode });
     return { ...result,campaign:{ ...result.campaign,manualReviewCount:null,
       refreshProgress:result.campaign.campaignType==='refresh' ? repository.getRefreshComparison(result.campaign.id):null } };
   }
@@ -390,6 +400,17 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       expansionCheckpoints:campaign.campaignType==='expansion' ? repository.listExpansionCheckpoints(campaign.id):[],
       materialization:campaign.campaignType==='expansion' ? repository.getExpansionMaterialization(campaign.id):repository.getRefreshMaterialization(campaign.id),
       refreshAudit:repository.getRefreshAudit(campaign.id),expansionAudit:repository.getExpansionAudit(campaign.id) };
+  }
+
+  function getInitialOperatorStatus(campaignId) {
+    const campaign=requireCampaign(campaignId);
+    if (campaign.campaignType!=='initial') throw new AppError('要求Initial Campaign。',{ code:'INITIAL_CAMPAIGN_REQUIRED' });
+    const policy=getCampaignQuantityPolicy(campaign);const candidate=initialRepository.getCandidateState(campaign.id);
+    return { campaignId:campaign.id,categoryKey:campaign.categoryKey,
+      categoryProfileVersion:campaign.categoryProfileVersion,liveUniqueCount:candidate?.candidateCount ?? 0,
+      candidateRevision:candidate?.currentRevision ?? 0,candidateHash:candidate?.currentHash ?? null,
+      quantityMode:policy.quantityMode,captureLimit:policy.captureLimit,targetCount:policy.businessTarget,
+      remaining:policy.remaining,targetReached:policy.targetReached,status:campaign.status };
   }
 
   function recordExpansionCheckpoint(campaignId,milestoneCount) {
@@ -732,7 +753,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     reconcileActiveMembershipsToPool:categoryKey => transaction(db,() => repository.reconcileActiveMembershipsToPool(categoryKey)),
     getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
-    getCaptureContext,captureExtensionBatch,getStatus,claimNextSource,currentRpaContext,sourceOpened,
+    getCaptureContext,captureExtensionBatch,getStatus,getInitialOperatorStatus,claimNextSource,currentRpaContext,sourceOpened,
     saveRpaCheckpoint,markRpaManualRequired,resumeRpa,saveExtensionCheckpoint,markExtensionManualRequired,resumeExtensionRunner,
     completeRpaSource };
 

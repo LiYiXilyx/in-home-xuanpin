@@ -108,8 +108,20 @@ export function createInitialPoolRepository(db, { now = () => new Date().toISOSt
     return rows.length;
   }
 
+  function recordBatchContext({campaign,source,batchId,captureMode,pageUrl,pageContext,pageBinding}) {
+    db.prepare(`INSERT INTO catalog_initial_pool_batch_contexts(
+      campaign_id,source_id,batch_id,capture_mode,site_country,language,currency,category_key,
+      category_profile_version,sort_order,page_url,binding_version,binding_fingerprint,page_health_status,
+      dom_ready,network_ready,captcha_blocking,search_no_results,context_json,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'READY',1,1,0,0,?,?)`).run(
+      campaign.id,source.id,String(batchId),captureMode,pageContext.siteCountry,pageContext.language,pageContext.currency,
+      campaign.categoryKey,campaign.categoryProfileVersion,pageContext.sortOrder,pageUrl,pageBinding.binding_version,
+      pageBinding.context_fingerprint,JSON.stringify({ pageContext,pageBinding }),now()
+    );
+  }
+
   return { getInitialEligibility, recordInitialEligibilityAudit, initializeCandidateState,
-    findInitialByRequestId, getCandidateState,listCandidateItems,applyCandidateItems,freezeQaCandidate,
+    findInitialByRequestId, getCandidateState,listCandidateItems,applyCandidateItems,freezeQaCandidate,recordBatchContext,
     createQaRunId: () => createId('initial_qa') };
 }
 

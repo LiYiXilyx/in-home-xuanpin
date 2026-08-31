@@ -11,6 +11,7 @@ const adminSource=fs.readFileSync(path.join(root,'tools/catalog-manual-passive-a
 
 function loadModule(){const sandbox=vm.createContext({console,URL,Date,document:{body:{innerText:''},documentElement:{},getElementById:()=>null},location:{href:'https://www.temu.com/de-en/category-b.html',pathname:'/de-en/category-b.html'}});vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);return sandbox.TemuCatalogManualPassiveRunnerModule;}
 function context({accepted=0,checkpoint={}}={}){return{campaign:{id:'campaign-b',status:'running',categoryKey:'category-b',categoryProfileVersion:'category-b-v1',targetCount:50,baselinePoolCount:0,nonElectronicUniqueCount:accepted,rawObservedCount:accepted,electronicExcludedCount:0,browserControlMode:'MANUAL_BIND_PASSIVE_CAPTURE',cdpRequired:false,extensionPassiveRequired:true},profile:{category_key:'category-b',category_profile_version:'category-b-v1',display_name:'Category B',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales'},source:{id:'source-b'},queue:{id:'queue-b',checkpoint}};}
+function openEndedContext(){const value=context({accepted:1000,checkpoint:{quantity_mode:'OPEN_ENDED'}});value.campaign={...value.campaign,campaignType:'initial',quantityMode:'OPEN_ENDED',targetCount:null,captureLimit:null,remaining:null,targetReached:null};return value;}
 function healthy(overrides={}){return{url:'https://www.temu.com/de-en/category-b.html?sort=top',siteCountry:'DE',language:'en',currency:'EUR',category:'Category B',sortOrder:'Top Sales',cardCount:2,goodsIds:new Set(['1','2']),domReady:true,searchNoResults:false,captchaBlocking:false,...overrides};}
 function harness(initial){let current=structuredClone(initial),page=healthy(),submits=0;const writes=[];return{dependencies:{getContext:async()=>structuredClone(current),scan:()=>page,networkDiagnostics:()=>({network_cache_size:2}),passiveCandidates:()=>[{goods_id:'1'},{goods_id:'2'}],submitPassive:async options=>{submits+=1;return{batch:{batchId:options.batchId},audit:{acceptedGoods:2,campaignStagingDeduped:0}};},checkpoint:async payload=>{writes.push(payload);current.queue.checkpoint={...current.queue.checkpoint,...payload.checkpoint};return current.queue;},now:()=> '2026-08-31T00:00:00.000Z'},setPage:value=>{page=value;},get submits(){return submits;},get writes(){return writes;}};}
 
@@ -32,6 +33,13 @@ test('manual repeated capture is deterministic and idempotent without automatic 
   assert.doesNotMatch(runnerSource,/setInterval|scrollTo|\.click\(|location\.(?:assign|replace)|See more click/i);
 });
 
+test('OPEN_ENDED Initial capture never derives a target or enters TARGET_REACHED',async()=>{
+  const {ManualPassiveRunner,STATES}=loadModule(),initial=openEndedContext(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);let observedLimit='unset';h.dependencies.passiveCandidates=({limit})=>{observedLimit=limit;return[{goods_id:'1'},{goods_id:'2'}];};
+  await runner.restore(initial);await runner.detectCurrentPage();await runner.bindCurrentPage();await runner.start();
+  const result=await runner.captureCurrentPage();assert.equal(observedLimit,null);assert.equal(result.state,STATES.PAGE_BOUND);
+  assert.equal(result.sessionTarget,null);assert.equal(result.stageTarget,null);
+});
+
 test('Page Health blocks SEARCH_NO_RESULTS and CAPTCHA before binding',async()=>{
   const {ManualPassiveRunner}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);await runner.restore(initial);
   for(const page of [healthy({searchNoResults:true}),healthy({captchaBlocking:true})]){h.setPage(page);const detected=await runner.detectCurrentPage();assert.equal(detected.detection.health.status,'BLOCKED');await assert.rejects(()=>runner.bindCurrentPage(),error=>error.code==='PAGE_HEALTH_BLOCKED');}
@@ -42,7 +50,7 @@ test('Manual Passive admin derives category, sort and target from the bound Camp
   assert.doesNotMatch(adminSource,/bound_category\s*===\s*['"]Motorcycles & Powersports Accessories['"]/);
   assert.doesNotMatch(adminSource,/const TARGET\s*=\s*3000/);
   assert.match(adminSource,/categoryProfile/);
-  assert.match(adminSource,/campaign\.targetCount/);
+  assert.match(adminSource,/getCampaignQuantityPolicy\(campaign\)/);
 });
 
 test('Manual Passive CLI delegates create to atomic operator service and keeps resume explicit',()=>{

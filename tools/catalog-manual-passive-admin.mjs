@@ -5,6 +5,7 @@ import { createCatalogCampaignService } from '../src/modules/catalog-scale/catal
 import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profile.mjs';
 import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
 import { createId } from '../src/shared/ids.mjs';
+import { getCampaignQuantityPolicy } from '../src/modules/catalog-scale/campaign-quantity-policy.mjs';
 
 const MODE='MANUAL_BIND_PASSIVE_CAPTURE';
 const PROFILE_NAME='Temu1店';
@@ -82,10 +83,11 @@ function finalize(service,campaignId) {
 
 function status(service,campaignId) {
   const value=service.getStatus(campaignId);const campaign=value.campaign;const checkpoint=activeQueue(value)?.checkpoint??value.queues.at(-1)?.checkpoint??{};
+  const quantity=getCampaignQuantityPolicy(campaign);
   const profile=campaign.config?.categoryProfile;if(!profile)throw coded('CATEGORY_PROFILE_REQUIRED','Campaign 缺少冻结 Category Profile。');
   const accepted=Number(campaign.nonElectronicUniqueCount);const trace=traceAudit(campaignId,profile);const integrity=dataIntegrity(checkpoint.formal_state_before??null,profile);
   return { mode:MODE,fixedBrowser:{ profile:PROFILE_DIRECTORY,profileName:PROFILE_NAME,cdpRequired:false,extensionPassiveRequired:true,localServerEndpoint:'http://127.0.0.1:37821' },campaignId,
-    metrics:{ target:campaign.targetCount,accepted_unique:accepted,remaining:Math.max(0,campaign.targetCount-accepted),observed:campaign.rawObservedCount,
+    metrics:{ target:quantity.businessTarget,quantity_mode:quantity.quantityMode,accepted_unique:accepted,remaining:quantity.remaining,observed:campaign.rawObservedCount,
       eligible:accepted,existing:campaign.baselinePoolCount,new:Math.max(0,accepted-campaign.baselinePoolCount),excluded:campaign.electronicExcludedCount,
       failed:failedCount(value),accepted_to_snapshot_missing:trace.acceptedToSnapshotMissing,last_batch:checkpoint.last_batch??null,campaign_status:checkpoint.runner_state??campaign.status },
     stage:{ origin:checkpoint.capture_origin_unique??null,sessionTarget:checkpoint.session_target??null,qa50:checkpoint.qa_50_status??'PENDING',qa300:checkpoint.qa_300_status??'PENDING' },
