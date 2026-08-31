@@ -59,6 +59,18 @@ export function resolveTaxonomyBinding(profile,pipeline) {
   return { taxonomyName:binding.taxonomy_name,taxonomyVersion:binding.taxonomy_version,ruleVersion:binding.rule_version,categoryScope:profile.category_key };
 }
 
+export function assertTaxonomyBinding({profile,pipeline,taxonomyName,taxonomyVersion=null,ruleVersion}) {
+  const expected=resolveTaxonomyBinding(profile,pipeline);
+  if (expected.categoryScope!==profile.category_key) throw new AppError('taxonomy category scope 不匹配。',{
+    code:'TAXONOMY_CATEGORY_SCOPE_MISMATCH',details:{ pipeline,expected:expected.categoryScope,actual:profile.category_key }
+  });
+  if (expected.taxonomyName!==taxonomyName || expected.taxonomyVersion!==taxonomyVersion || expected.ruleVersion!==ruleVersion) {
+    throw new AppError('taxonomy binding 不匹配。',{ code:'TAXONOMY_BINDING_MISMATCH',details:{ pipeline,expected,
+      actual:{ taxonomyName,taxonomyVersion,ruleVersion,categoryScope:profile.category_key } } });
+  }
+  return expected;
+}
+
 function validateTaxonomyBindings(input) {
   const raw=input.taxonomy_bindings ?? legacyBindings(input);
   if (!raw) throw new AppError('新 Category Profile 必须显式配置 taxonomy_bindings。',{ code:'CATEGORY_PROFILE_BINDING_REQUIRED',details:{ categoryKey:input.category_key } });

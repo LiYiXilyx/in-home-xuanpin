@@ -20,10 +20,12 @@ import { MACHINE_ROLES,getMachineRole } from './modules/sourcing/machine-role.mj
 const RUNNER_FORBIDDEN_COMMANDS=new Set(['init','browser-open','pause','resume','retry','cancel','capture','image-repair','classify','fine-classify','analyze-market','evidence-repair','lifecycle','review-capture','review-qa','current-review','refresh','crawl','reviews','demo']);
 
 function parseArgs(argv) {
-  const result = { command: argv[2] ?? 'help', config: 'config.json', rules: 'config/category-rules.example.json', batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc', expectedActive: 1000, run: null, approve:false,apply:false,checked:[] };
+  const result = { command: argv[2] ?? 'help', config: 'config.json', rules: 'config/category-rules.example.json', profile:null,pool:null,batchSize: 10, retryFailed: false, includeReviewed: false, job: null, smoke: false, dryRun: false, target: null, limit: null, output: null, sort: 'asc', expectedActive: 1000, run: null, approve:false,apply:false,checked:[] };
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === '--config') result.config = argv[++index];
     else if (argv[index] === '--rules') result.rules = argv[++index];
+    else if (argv[index] === '--profile') result.profile = argv[++index];
+    else if (argv[index] === '--pool') result.pool = argv[++index];
     else if (argv[index] === '--batch-size') result.batchSize = Number(argv[++index]);
     else if (argv[index] === '--retry-failed') result.retryFailed = true;
     else if (argv[index] === '--include-reviewed') result.includeReviewed = true;
@@ -94,12 +96,13 @@ async function main() {
     return;
   }
   if (args.command === 'classify') {
-    const result=await runClassifyCommand(config,{ jobId:args.job,rulesPath:args.rules });
+    const result=await runClassifyCommand(config,{ jobId:args.job,rulesPath:args.rules,profilePath:args.profile,poolVersionId:args.pool });
     console.log(JSON.stringify(result,null,2));
     return;
   }
   if (args.command === 'fine-classify') {
-    const result=await runFineClassifyCommand(config,{ jobId:args.job,rulesPath:args.rules === 'config/category-rules.example.json' ? undefined : args.rules });
+    const result=await runFineClassifyCommand(config,{ jobId:args.job,rulesPath:args.rules === 'config/category-rules.example.json' ? undefined : args.rules,
+      profilePath:args.profile,poolVersionId:args.pool });
     console.log(JSON.stringify(result,null,2));
     return;
   }

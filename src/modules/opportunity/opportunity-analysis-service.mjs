@@ -3,17 +3,23 @@ import { createOpportunityAnalysisRepository } from '../../db/repositories/oppor
 import { classifyOpportunityProduct,OPPORTUNITY_TAXONOMY_VERSION } from './opportunity-classifier.mjs';
 import { analyzeOpportunitySegments,rankOpportunityProducts,OPPORTUNITY_SCORE_WEIGHTS,PRODUCT_SCORE_WEIGHTS } from './opportunity-metrics.mjs';
 import { buildGroupingQa,enrichOpportunityGrouping } from './opportunity-grouping.mjs';
+import { assertTaxonomyBinding,validateCategoryProfile } from '../catalog-scale/category-profile.mjs';
+
+const OPPORTUNITY_TAXONOMY_NAME='motorcycle-opportunity';
+const OPPORTUNITY_RULE_VERSION='active-pool-rule-v2';
 
 export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOString() }={}) {
   const repository=createOpportunityAnalysisRepository(db,{ now });
 
   function freezeAndAnalyze(campaignId) {
+    const profile=campaignProfile(campaignId);assertOpportunityBinding(profile);
     const before=repository.coreCounts();
     const frozen=transaction(db,()=>{
       const sourcePool=repository.freezeSourcePool(campaignId);
       repository.stopCampaignForAnalysis(campaignId);
       const snapshot=repository.createSnapshot({ sourcePoolVersionId:sourcePool.id,sourceCampaignId:campaignId,
-        config:{ taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,segmentWeights:OPPORTUNITY_SCORE_WEIGHTS,productWeights:PRODUCT_SCORE_WEIGHTS,
+        config:{ taxonomyName:OPPORTUNITY_TAXONOMY_NAME,taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,ruleVersion:OPPORTUNITY_RULE_VERSION,
+          categoryKey:profile.category_key,segmentWeights:OPPORTUNITY_SCORE_WEIGHTS,productWeights:PRODUCT_SCORE_WEIGHTS,
           sourceSemantics:'active_pool_1500_plus_day8_true_net_new_at_freeze' } });
       return { sourcePool,snapshot };
     });
@@ -41,12 +47,15 @@ export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOSt
   }
 
   function reanalyze(snapshotId=null){const snapshot=snapshotId?repository.getSnapshot(snapshotId):repository.latestSnapshot();if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');return analyzeSnapshot(snapshot);}
-  function analyzeActivePool(categoryKey='motorcycle-accessories') {
-    const active=db.prepare(`SELECT * FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1`).get(categoryKey);
-    if(!active)throw new Error('当前没有Active Pool。');
+  function analyzeActivePool({ profile,poolVersionId }={}) {
+    const validated=validateCategoryProfile(profile);assertOpportunityBinding(validated);
+    if(!poolVersionId)throw Object.assign(new Error('Opportunity 必须显式提供 poolVersionId。'),{ code:'OPPORTUNITY_SCOPE_REQUIRED' });
+    const active=db.prepare(`SELECT * FROM catalog_pool_versions WHERE id=? AND category_key=? AND status='active'`).get(poolVersionId,validated.category_key);
+    if(!active)throw Object.assign(new Error('Active Pool 与 Category 不匹配。'),{ code:'POOL_CATEGORY_MISMATCH' });
     const before=repository.coreCounts();
     const snapshot=transaction(db,()=>repository.createSnapshot({sourcePoolVersionId:active.id,sourceCampaignId:active.campaign_id,
-      config:{taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,ruleVersion:'active-pool-rule-v2',sourceSemantics:'CURRENT_ACTIVE_POOL_ONLY'} }));
+      config:{taxonomyName:OPPORTUNITY_TAXONOMY_NAME,taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,ruleVersion:OPPORTUNITY_RULE_VERSION,
+        categoryKey:validated.category_key,sourceSemantics:'CURRENT_ACTIVE_POOL_ONLY'} }));
     return analyzeSnapshot(snapshot,before);
   }
 
@@ -62,6 +71,22 @@ export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOSt
   }
 
   return { freezeAndAnalyze,reanalyze,analyzeActivePool,getResult };
+
+  function campaignProfile(campaignId) {
+    const row=db.prepare('SELECT category_key,category_profile_version,config_json FROM catalog_campaigns WHERE id=?').get(campaignId);
+    if(!row)throw new Error('Opportunity Campaign不存在。');
+    let config;try{config=JSON.parse(row.config_json);}catch{config=null;}
+    const profile=validateCategoryProfile(config?.categoryProfile);
+    if(profile.category_key!==row.category_key || profile.category_profile_version!==row.category_profile_version) {
+      throw Object.assign(new Error('Campaign Category Profile 不匹配。'),{ code:'CAMPAIGN_PROFILE_MISMATCH' });
+    }
+    return profile;
+  }
+
+  function assertOpportunityBinding(profile) {
+    return assertTaxonomyBinding({ profile,pipeline:'opportunity',taxonomyName:OPPORTUNITY_TAXONOMY_NAME,
+      taxonomyVersion:OPPORTUNITY_TAXONOMY_VERSION,ruleVersion:OPPORTUNITY_RULE_VERSION });
+  }
 }
 
 function buildSummary(snapshot,items,segments,candidates,before,after) {

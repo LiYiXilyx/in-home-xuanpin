@@ -28,14 +28,15 @@ export async function runMarketAnalysis(config,options={}) {
   const repository=createAnalysisRepository(db);
   let runId=null;
   try {
-    const sourceCatalogJobId=repository.resolveSourceJobId(options.jobId ?? DEFAULT_SOURCE_JOB_ID);
+    const poolScope=options.poolVersionId && options.categoryKey ? { poolVersionId:options.poolVersionId,categoryKey:options.categoryKey }:null;
+    const sourceCatalogJobId=poolScope ? repository.resolvePoolJobId({ ...poolScope,requestedJobId:options.jobId }):repository.resolveSourceJobId(options.jobId ?? DEFAULT_SOURCE_JOB_ID);
     const taxonomy=repository.resolveTaxonomy(sourceCatalogJobId,options.taxonomy);
-    const counts=repository.inputCounts(sourceCatalogJobId,taxonomy);
+    const counts=poolScope ? repository.inputPoolCounts(sourceCatalogJobId,taxonomy,poolScope):repository.inputCounts(sourceCatalogJobId,taxonomy);
     if (counts.activeMemberships !== expectedActiveCount || counts.activeProducts !== expectedActiveCount || counts.sourceJobClassifications !== expectedActiveCount) {
       throw new Error(`Day8输入不是恰好${expectedActiveCount}个Gate D active商品：${JSON.stringify(counts)}`);
     }
     const coreCountsBefore=repository.coreCounts();
-    const products=repository.listActiveProducts(sourceCatalogJobId,taxonomy);
+    const products=poolScope ? repository.listPoolProducts(sourceCatalogJobId,taxonomy,poolScope):repository.listActiveProducts(sourceCatalogJobId,taxonomy);
     if (products.length !== expectedActiveCount) throw new Error(`Day8读取商品 ${products.length}，预期 ${expectedActiveCount}。`);
     if (new Set(products.map(item => item.goodsId)).size !== expectedActiveCount) throw new Error('Day8输入 goods_id 不唯一。');
     const analysis=analyzeCategories(products,{ analysisVersion:options.analysisVersion ?? ANALYSIS_VERSION });

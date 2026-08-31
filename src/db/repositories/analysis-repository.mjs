@@ -1,6 +1,13 @@
 import { transaction } from '../client.mjs';
 
 export function createAnalysisRepository(db) {
+  function assertPool(poolVersionId,categoryKey) {
+    if (!poolVersionId || !categoryKey) throw new Error('分析必须显式提供 pool_version_id 与 category_key。');
+    const pool=db.prepare('SELECT category_key FROM catalog_pool_versions WHERE id=?').get(poolVersionId);
+    if (!pool || pool.category_key!==categoryKey) {
+      const error=new Error('Pool 与 Category 不匹配。');error.code='POOL_CATEGORY_MISMATCH';throw error;
+    }
+  }
   return {
     resolveSourceJobId(requestedJobId=null) {
       if (requestedJobId) {
@@ -72,6 +79,51 @@ export function createAnalysisRepository(db) {
         LEFT JOIN classifications c ON c.product_id=p.id AND c.row_number=1
         WHERE m.row_number=1
         ORDER BY m.current_rank,p.id`).all(sourceJobId,taxonomy).map(normalizeProduct);
+    },
+
+    resolvePoolJobId({ poolVersionId,categoryKey,requestedJobId=null }) {
+      assertPool(poolVersionId,categoryKey);
+      const rows=db.prepare(`SELECT DISTINCT m.last_job_id job_id FROM catalog_pool_version_items i JOIN products p
+        ON p.platform=i.platform AND p.external_product_id=i.goods_id JOIN catalog_memberships m ON m.product_id=p.id
+        WHERE i.pool_version_id=? AND i.category_key=? AND m.category_key=? AND m.last_job_id IS NOT NULL`).all(poolVersionId,categoryKey,categoryKey);
+      const ids=rows.map(row=>String(row.job_id));
+      if (requestedJobId) {
+        if (!ids.includes(String(requestedJobId))) { const error=new Error('请求 job 不属于分析 Pool。');error.code='CLASSIFICATION_JOB_SCOPE_MISMATCH';throw error; }
+        return String(requestedJobId);
+      }
+      if (ids.length!==1) { const error=new Error('分析 Pool 无法唯一解析 source job。');error.code='CLASSIFICATION_SCOPE_UNRESOLVED';throw error; }
+      return ids[0];
+    },
+
+    inputPoolCounts(sourceJobId,taxonomy,{ poolVersionId,categoryKey }) {
+      assertPool(poolVersionId,categoryKey);
+      return normalizeCountRow(db.prepare(`SELECT COUNT(*) active_memberships,COUNT(DISTINCT p.id) active_products,
+        SUM(CASE WHEN m.last_job_id=@sourceJobId THEN 1 ELSE 0 END) source_job_memberships,
+        COUNT(DISTINCT CASE WHEN EXISTS(SELECT 1 FROM product_classifications pc WHERE pc.product_id=p.id
+          AND pc.job_id=@sourceJobId AND (@taxonomy IS NULL OR pc.taxonomy=@taxonomy)) THEN p.id END) source_job_classifications
+        FROM catalog_pool_version_items i JOIN products p ON p.platform=i.platform AND p.external_product_id=i.goods_id
+        JOIN catalog_memberships m ON m.product_id=p.id AND m.category_key=@categoryKey
+        WHERE i.pool_version_id=@poolVersionId AND i.category_key=@categoryKey`).get({ sourceJobId,taxonomy,poolVersionId,categoryKey }));
+    },
+
+    listPoolProducts(sourceJobId,taxonomy,{ poolVersionId,categoryKey }) {
+      assertPool(poolVersionId,categoryKey);
+      return db.prepare(`WITH classifications AS (
+          SELECT pc.*,ROW_NUMBER() OVER(PARTITION BY pc.product_id ORDER BY pc.created_at DESC,pc.id DESC) row_number
+          FROM product_classifications pc WHERE pc.job_id=? AND pc.taxonomy=?
+        ) SELECT p.id product_id,p.external_product_id goods_id,COALESCE(s.title,p.title) title,
+          COALESCE(p.source_url,p.canonical_url) product_url,p.canonical_url,m.current_rank rank,m.primary_category,m.subcategory,
+          s.price_amount price,s.sales_count sales,s.rating,s.review_count,c.taxonomy,c.category_key,c.category_label,
+          c.confidence classification_confidence,c.needs_review,c.rule_version,c.level1,c.level2,c.level3,c.method,c.reasons_json,c.evidence_json,
+          (SELECT pi.local_path FROM product_images pi WHERE pi.product_id=p.id AND pi.download_status='completed'
+            AND pi.local_path IS NOT NULL ORDER BY pi.updated_at DESC,pi.id DESC LIMIT 1) local_image_path,
+          (SELECT pi.content_sha256 FROM product_images pi WHERE pi.product_id=p.id AND pi.download_status='completed'
+            AND pi.local_path IS NOT NULL ORDER BY pi.updated_at DESC,pi.id DESC LIMIT 1) image_sha256
+        FROM catalog_pool_version_items i JOIN products p ON p.platform=i.platform AND p.external_product_id=i.goods_id
+        JOIN catalog_memberships m ON m.product_id=p.id AND m.category_key=?
+        LEFT JOIN product_snapshots s ON s.product_id=p.id AND s.job_id=m.last_job_id
+        LEFT JOIN classifications c ON c.product_id=p.id AND c.row_number=1
+        WHERE i.pool_version_id=? AND i.category_key=? ORDER BY i.id`).all(sourceJobId,taxonomy,categoryKey,poolVersionId,categoryKey).map(normalizeProduct);
     },
 
     createRun(run) {

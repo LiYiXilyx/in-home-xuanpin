@@ -10,19 +10,27 @@ import { runMarketAnalysis } from '../analysis/market-analysis-service.mjs';
 import { applyFineAiFallback,classifyWithConfiguredModel,fineClassificationInput,hashFineClassificationInput,parseFineAiOutput } from './fine-classification-ai.mjs';
 import { resolveFineClassifierRuntime } from './fine-classification-provider.mjs';
 import { classifyFineProduct,compileFineTaxonomy } from './fine-taxonomy.mjs';
+import { assertTaxonomyBinding,loadCategoryProfile,resolveTaxonomyBinding } from '../catalog-scale/category-profile.mjs';
 
 export async function runFineClassification(config,options={}) {
+  if (!options.poolVersionId || !options.profilePath) throw new Error('正式细分类必须显式提供 poolVersionId 与 profilePath。');
   const expectedActiveCount=Number(options.expectedActiveCount ?? 1000);
   const rulesPath=path.resolve(path.dirname(config.configPath),options.rulesPath ?? config.fineClassification?.rulesPath ?? 'config/fine-category-rules.v1.json');
   const taxonomy=compileFineTaxonomy(JSON.parse(await fs.readFile(rulesPath,'utf8')));
+  const profile=await loadCategoryProfile(path.resolve(path.dirname(config.configPath),options.profilePath));
+  assertTaxonomyBinding({ profile,pipeline:'fine_classify',taxonomyName:taxonomy.taxonomy,taxonomyVersion:null,ruleVersion:taxonomy.ruleVersion });
+  const sourceBinding=resolveTaxonomyBinding(profile,'classify');
+  const sourceTaxonomy=options.sourceTaxonomy ?? sourceBinding.taxonomyName;
+  if (sourceTaxonomy!==sourceBinding.taxonomyName) throw Object.assign(new Error('细分类 source taxonomy 与 Category binding 不匹配。'),{ code:'TAXONOMY_BINDING_MISMATCH' });
+  const poolScope={ poolVersionId:options.poolVersionId,categoryKey:profile.category_key };
   const aiConfig={ ...config.fineClassification?.ai,promptVersion:taxonomy.promptVersion };
   const aiRuntime=resolveFineClassifierRuntime(aiConfig,options.env ?? process.env);
   const outputDir=path.resolve(path.dirname(config.configPath),options.outputDir ?? 'outputs/week2');await fs.mkdir(outputDir,{ recursive:true });
   const db=openDatabase(config.app.databasePath);let sourceJobId,coreBefore,attempts=[],classifications=[],processedQueueCount=0,aiAttemptCount=0;
   try {
     const analysisRepository=createAnalysisRepository(db);const classificationRepository=createClassificationRepository(db);const auditRepository=createFineClassificationRepository(db);
-    sourceJobId=analysisRepository.resolveSourceJobId(options.jobId);coreBefore=analysisRepository.coreCounts();
-    const week1Products=analysisRepository.listActiveProducts(sourceJobId,options.sourceTaxonomy ?? 'week1-motorcycle-accessories');
+    sourceJobId=analysisRepository.resolvePoolJobId({ ...poolScope,requestedJobId:options.jobId });coreBefore=analysisRepository.coreCounts();
+    const week1Products=analysisRepository.listPoolProducts(sourceJobId,sourceTaxonomy,poolScope);
     const before=buildBusinessAlignment(analyzeCategories(week1Products));const queueIds=new Set(before.products.filter(item => item.businessEligible === null).map(item => item.goodsId));
     processedQueueCount=queueIds.size;if (processedQueueCount !== Number(options.expectedQueueCount ?? 394)) throw new Error(`Day8.2待细分类队列为${processedQueueCount}，预期${options.expectedQueueCount ?? 394}。`);
     const classifiedAt=(options.now?.() ?? new Date()).toISOString();
@@ -45,6 +53,7 @@ export async function runFineClassification(config,options={}) {
     const counts=classificationRepository.count(sourceJobId,taxonomy.taxonomy);if (Number(counts.count) !== expectedActiveCount) throw new Error(`Week2细分类状态不是${expectedActiveCount}条：${counts.count}`);
   } finally { db.close(); }
   const market=await runMarketAnalysis(config,{ jobId:sourceJobId,taxonomy:taxonomy.taxonomy,analysisVersion:'week2-business-fine-v2',expectedActiveCount,outputDir,
+    poolVersionId:poolScope.poolVersionId,categoryKey:poolScope.categoryKey,
     fineContext:{ beforeOtherCount:options.beforeOtherCount ?? 540,processedQueueCount } });
   const fine=market.fineClassification;const result={ runId:market.runId,sourceJobId,taxonomy:taxonomy.taxonomy,ruleVersion:taxonomy.ruleVersion,promptVersion:taxonomy.promptVersion,
     ai:{ ai_enabled:aiRuntime.enabled,enabled:aiRuntime.enabled,requestedEnabled:aiRuntime.requestedEnabled,disabledReason:aiRuntime.disabledReason,provider:aiRuntime.enabled ? aiRuntime.provider : null,model:aiRuntime.enabled ? aiRuntime.model : null,modelVersion:aiRuntime.enabled ? aiRuntime.modelVersion : null,attemptCount:aiAttemptCount,status:aiRuntime.enabled ? 'configured' : 'rule_only_no_api_call' },
