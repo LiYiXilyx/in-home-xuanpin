@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>1688候选人工复核</title>
+  <link rel="stylesheet" href="/sourcing-review.css">
+</head>
+<body>
+  <main class="review-shell">
+    <header class="review-header">
+      <div><a href="/">← 返回Temu运营台</a><p>1688 SOURCING REVIEW CONSOLE V1</p><h1>1688候选人工复核</h1></div>
+      <div class="run-badge">当前 run_id <code id="reviewRunId">—</code></div>
+    </header>
+
+    <section class="summary" aria-label="复核概览">
+      <article><span>total goods</span><strong id="metricTotal">0</strong></article>
+      <article><span>awaiting review</span><strong id="metricPending">0</strong></article>
+      <article><span>confirmed</span><strong id="metricConfirmed">0</strong></article>
+      <article><span>no selection</span><strong id="metricNoSelection">0</strong></article>
+    </section>
+
+    <section class="toolbar">
+      <div id="reviewFilters" class="filters" aria-label="筛选">
+        <button data-filter="ALL" class="active">ALL</button><button data-filter="PENDING">待确认</button>
+        <button data-filter="CONFIRMED">已确认</button><button data-filter="IMAGE_FAILED">图片失败</button>
+      </div>
+      <div><button id="reviewPrev">上一个商品</button><button id="reviewNext">下一个商品</button></div>
+    </section>
+    <p id="reviewNotice" class="notice" aria-live="polite"></p>
+
+    <section class="review-layout">
+      <aside class="review-panel goods-panel"><h2>Temu商品</h2><div id="goodsList" class="goods-list"></div></aside>
+      <section class="review-panel candidates-panel">
+        <div id="currentTemu" class="current-temu"></div>
+        <h2>Random5候选</h2><div id="candidateGrid" class="candidate-grid"></div>
+      </section>
+      <aside class="review-panel detail-panel">
+        <h2>当前候选详情</h2><div id="candidateDetail"></div>
+        <div class="review-actions">
+          <button id="openSupplierLink">打开1688链接</button>
+          <button id="selectCandidate" class="primary">设为最终候选</button>
+          <button id="clearSelection">取消最终选择</button>
+          <button id="excludeCandidate" class="danger">排除候选</button>
+          <button id="restoreCandidate">恢复候选</button>
+          <label for="operatorNote">人工备注</label><textarea id="operatorNote" maxlength="2000" rows="6"></textarea>
+          <button id="saveNote">保存人工备注</button>
+        </div>
+      </aside>
+    </section>
+  </main>
+  <script type="module" src="/sourcing-review.js"></script>
+</body>
+</html>

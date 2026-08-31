@@ -63,7 +63,7 @@
         <label><span>1688图片缓存目录</span><span class="path-control"><input id="sourcingImageDir" type="text" autocomplete="off"><button id="chooseSourcingImages" type="button">选择图片缓存目录</button></span></label>
         <label><span>现有分析工作簿（必须含 05_细分商品明细）</span><span class="path-control"><input id="sourcingWorkbook" type="text" autocomplete="off"><button id="chooseSourcingWorkbook" type="button">选择分析工作簿</button></span></label>
       </div>
-      <div class="sourcing-actions"><button id="scanSourcing" type="button">扫描目录</button><button id="startSourcingImport" class="primary" type="button">开始导入</button><button id="retrySourcingImages" type="button">仅重试失败图片</button><span>run_id: <code id="sourcingRunId">—</code></span></div>
+      <div class="sourcing-actions"><a class="button-link" href="/sourcing-review.html">1688候选人工复核</a><button id="scanSourcing" type="button">扫描目录</button><button id="startSourcingImport" class="primary" type="button">开始导入</button><button id="retrySourcingImages" type="button">仅重试失败图片</button><span>run_id: <code id="sourcingRunId">—</code></span></div>
       <dl class="sourcing-metrics">
         <div><dt>source files</dt><dd id="sourcingSourceFiles">0</dd></div><div><dt>valid goods_id</dt><dd id="sourcingGoods">0</dd></div>
         <div><dt>invalid files</dt><dd id="sourcingInvalid">0</dd></div><div><dt>parsed candidates</dt><dd id="sourcingParsed">0</dd></div>
