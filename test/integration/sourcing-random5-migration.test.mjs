@@ -39,8 +39,8 @@ test('003 upgrades populated legacy sourcing schema without losing history',t=>{
       VALUES('legacy-run','601',1,'168801','Legacy supplier','https://detail.1688.com/offer/168801.html','https://cbu01.alicdn.com/legacy.jpg','9.90','2026-08-30T00:00:00.000Z','SEARCH_SUCCESS')`).run();
   } finally { before.close(); }
 
-  const upgraded=migrateSourcingDatabase({databasePath,migrationsDir});
-  const repeated=migrateSourcingDatabase({databasePath,migrationsDir});
+  const upgraded=migrateSourcingDatabase({databasePath,migrationsDir,through:'003_yingdao_export_random5_v1.sql'});
+  const repeated=migrateSourcingDatabase({databasePath,migrationsDir,through:'003_yingdao_export_random5_v1.sql'});
   const after=openDatabase(databasePath,{allowRunnerWrite:true});
   try {
     assert.deepEqual(upgraded.applied,['003_yingdao_export_random5_v1.sql']);
