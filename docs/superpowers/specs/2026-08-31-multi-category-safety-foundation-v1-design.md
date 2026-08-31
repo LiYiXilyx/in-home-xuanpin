@@ -247,6 +247,12 @@ Opportunity analysis requires an explicit source pool/category and produces a fr
 
 The workbook must display `snapshot.config.taxonomyVersion` and `snapshot.config.ruleVersion`. It must not hardcode `motorcycle-opportunity-v2` or silently substitute a current constant for an older snapshot. A missing required snapshot metadata field is reported honestly as null/legacy, not replaced with a fabricated value.
 
+## YingDao export integration seam
+
+This foundation reserves an Operator UI action named `导出影刀任务`, but does not implement `YingDao Task Export V1`. The action carries the currently validated `category_key` and `pool_version_id`; it is disabled when either value is absent. It does not query or write SQLite and does not create files in this version.
+
+The future export must preserve the already proven `yingdao-input.xlsx` compatibility contract: sheet `任务` with exactly `任务序号`, `goods_id`, `temu_title`, `image_path`, `image_status`, `status`, `source_image_path`, and `relative_image_path`. Rows start at 1, use only the bound category/pool, default to `PENDING`, use `OK` or `MISS`, and use `images\\<goods_id>.jpg` for both relative path columns. `source_image_path` is computed only from the operator-selected output directory at export time; no home/company drive path is stored or hardcoded. The package layout is `yingdao-input.xlsx` beside an `images/` directory. YingDao never reads or mutates the formal Temu SQLite database.
+
 ## Error handling
 
 New safety gates use stable coded errors so integration tests can assert the reason:

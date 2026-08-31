@@ -467,6 +467,7 @@ git commit -m "feat: require operator-bound passive capture"
 
 **Interfaces:**
 - UI renders binding snapshot fields without fixed Motorcycle labels.
+- UI reserves a disabled-until-scoped `导出影刀任务` action carrying `{categoryKey,poolVersionId}` without implementing export.
 - Server capture endpoint requires a validated binding envelope and deterministic batch ID.
 - Existing batch uniqueness and payload hash provide database idempotence.
 
@@ -505,6 +506,8 @@ renderManualState({category:profile.displayName,campaign:campaign.id,profile:cam
 ```
 
 Validate the binding envelope before calling `captureExtensionBatch`. Remove fixed operational Motorcycle/Germany/Top Sales labels from current-state UI.
+
+Add the YingDao seam as a UI event payload only. Do not create XLSX/images, compute `source_image_path`, or access SQLite from the seam.
 
 - [ ] **Step 4: Run browser extension and catalog API regressions**
 
