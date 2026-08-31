@@ -61,6 +61,34 @@ function fixtureImport({ runId='run-1',duplicatePair=false }={}) {
   };
 }
 
+function officialRows(count=6) {
+  return Array.from({ length:count },(_,offset)=>{
+    const index=offset+1;
+    const values={
+      '标题':`title-${index}`,'产品ID':`p${index}`,
+      '产品链接':`https://detail.1688.com/offer/p${index}.html`,
+      '图片链接':`https://cbu01.alicdn.com/p${index}.jpg`,'价格':'3.50',
+      '是否包邮':'不包邮','销售额':'200+','起批量':'1','起批量运费':'-',
+      '月销件数':'93','累计销售件数':'370','复购率':'12.5%','48h发货率':'99%',
+      '最早上架时间':'2025-12-12 19:42:54','最新更新时间':'2026-08-17 00:06:08',
+      '店铺名称':'Shop','店铺资质':'实力商家',
+    };
+    return REQUIRED_YINGDAO_HEADERS.map(header=>values[header]);
+  });
+}
+
+function imageResult(candidate,status) {
+  const productId=candidate['1688_product_id']??candidate.supplier_product_id;
+  const imageUrl=candidate['1688_image_url']??candidate.supplier_image_url;
+  const success=status==='SUCCESS';
+  return {
+    temu_goods_id:String(candidate.temu_goods_id),'1688_product_id':String(productId),'1688_image_url':imageUrl,
+    '1688_image_local_path':success?`${candidate.temu_goods_id}/${productId}.jpg`:null,
+    image_download_status:status,image_downloaded_at:success?'2026-08-31T01:00:00.000Z':null,
+    image_sha256:success?'image-sha':null,image_response_sha256:success?'response-sha':null,
+  };
+}
+
 test('insertStructuredImport writes explicit legacy-compatible and authoritative fields', t => {
   const { db,repository }=setup(t);
   const result=repository.insertStructuredImport(fixtureImport());
@@ -140,19 +168,7 @@ test('real SQLite structured transaction is queryable before the injected image 
   const sourceDir=path.join(directory,'raw');
   fs.mkdirSync(sourceDir);
   fs.writeFileSync(path.join(sourceDir,'601.xlsx'),'read-only-fixture');
-  const valuesByHeader=index=>({
-    '标题':`title-${index}`,'产品ID':`p${index}`,
-    '产品链接':`https://detail.1688.com/offer/p${index}.html`,
-    '图片链接':`https://cbu01.alicdn.com/p${index}.jpg`,'价格':'3.50',
-    '是否包邮':'不包邮','销售额':'200+','起批量':'1','起批量运费':'-',
-    '月销件数':'93','累计销售件数':'370','复购率':'12.5%','48h发货率':'99%',
-    '最早上架时间':'2025-12-12 19:42:54','最新更新时间':'2026-08-17 00:06:08',
-    '店铺名称':'Shop','店铺资质':'实力商家',
-  });
-  const rows=Array.from({ length:6 },(_,offset)=>{
-    const values=valuesByHeader(offset+1);
-    return REQUIRED_YINGDAO_HEADERS.map(header=>values[header]);
-  });
+  const rows=officialRows();
   const service=createYingdaoImportService({
     repository,
     loadWorkbook:async()=>({ headers:REQUIRED_YINGDAO_HEADERS,rows }),
@@ -174,6 +190,54 @@ test('real SQLite structured transaction is queryable before the injected image 
 
   assert.equal(result.status,'COMPLETED');
   assert.equal(repository.getImport('run-end-to-end').import_status,'COMPLETED');
+  assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+test('real SQLite retry updates only FAILED rows and preserves structured identity', async t => {
+  const { db,directory,repository }=setup(t);
+  const sourceDir=path.join(directory,'retry-raw');
+  fs.mkdirSync(sourceDir);
+  fs.writeFileSync(path.join(sourceDir,'601.xlsx'),'read-only-fixture');
+  const batchSizes=[];
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>({ headers:REQUIRED_YINGDAO_HEADERS,rows:officialRows() }),
+    cacheImages:async candidates=>{
+      batchSizes.push(candidates.length);
+      const results=candidates.map((candidate,index)=>imageResult(candidate,batchSizes.length===1 && index===4?'FAILED':'SUCCESS'));
+      return {
+        success:results.filter(result=>result.image_download_status==='SUCCESS').length,
+        failed:results.filter(result=>result.image_download_status==='FAILED').length,
+        results,
+      };
+    },
+    now:()=> '2026-08-31T00:00:00.000Z',gitCommitSha:'abc123',machineName:'test-machine',
+  });
+  const preview=await service.scan({
+    sourceDir,imageCacheDir:path.join(directory,'cache'),
+    selectedWorkbookPath:path.join(directory,'opportunity-analysis-with-1688.xlsx'),
+  });
+  const initial=await service.startImport({ scanToken:preview.scanToken,runId:'run-real-retry' });
+  assert.equal(initial.import_status,'COMPLETED_WITH_WARNINGS');
+  const before=repository.getImport('run-real-retry');
+  const identities=before.candidates.map(candidate=>[
+    candidate.temu_goods_id,candidate.candidate_rank,candidate.original_rank,
+    candidate.supplier_product_id,candidate.sample_seed,candidate.sample_method,candidate.selected_candidate,
+  ]);
+  fs.rmSync(sourceDir,{ recursive:true,force:true });
+
+  const retried=await service.retryFailedImages('run-real-retry');
+  const after=repository.getImport('run-real-retry');
+
+  assert.deepEqual(batchSizes,[5,1]);
+  assert.equal(retried.import_status,'COMPLETED');
+  assert.equal(after.candidate_count,5);
+  assert.equal(after.source_manifest_sha256,before.source_manifest_sha256);
+  assert.deepEqual(after.candidates.map(candidate=>[
+    candidate.temu_goods_id,candidate.candidate_rank,candidate.original_rank,
+    candidate.supplier_product_id,candidate.sample_seed,candidate.sample_method,candidate.selected_candidate,
+  ]),identities);
   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
 });

@@ -40,15 +40,52 @@ function memoryRepository() {
     writes:0,
     insertStructuredImport(model) {
       this.writes+=1;
-      imports.set(model.run.runId,{ model,import_status:'RUNNING' });
+      const candidates=model.candidates.map(candidate=>({
+        run_id:model.run.runId,temu_goods_id:candidate.temu_goods_id,
+        candidate_rank:candidate.random_sample_rank,original_rank:candidate.original_rank,
+        supplier_product_id:candidate['1688_product_id'],supplier_image_url:candidate['1688_image_url'],
+        supplier_image_local_path:null,image_download_status:'PENDING',image_downloaded_at:null,
+        image_sha256:null,image_response_sha256:null,sample_method:candidate.sample_method,
+      }));
+      imports.set(model.run.runId,{
+        model,run_id:model.run.runId,import_status:'RUNNING',
+        source_manifest_sha256:model.run.sourceManifestSha256,image_cache_dir:model.run.imageCacheDir,
+        candidate_count:candidates.length,failed_image_count:0,candidates,
+      });
       return { runId:model.run.runId,inputCount:model.items.length,candidateCount:model.candidates.length };
     },
     markImportResult(runId,result) {
       const record=imports.get(runId);
       record.import_status=result.status;
+      record.failed_image_count=record.candidates.filter(candidate=>candidate.image_download_status==='FAILED').length;
       return record;
     },
+    failedImages(runId) {
+      return imports.get(runId).candidates.filter(candidate=>candidate.image_download_status==='FAILED');
+    },
+    updateImageResult(runId,key,result) {
+      const candidate=imports.get(runId).candidates.find(item=>item.temu_goods_id===String(key.temuGoodsId) && item.supplier_product_id===String(key.productId));
+      candidate.supplier_image_local_path=result.localPath;
+      candidate.image_download_status=result.status;
+      candidate.image_downloaded_at=result.downloadedAt;
+      candidate.image_sha256=result.imageSha256;
+      candidate.image_response_sha256=result.responseSha256;
+    },
     getImport(runId) { return imports.get(runId)??null; },
+  };
+}
+
+function cachedResult(candidate,status) {
+  const success=status==='SUCCESS';
+  return {
+    temu_goods_id:candidate.temu_goods_id,
+    '1688_product_id':candidate['1688_product_id']??candidate.supplier_product_id,
+    '1688_image_url':candidate['1688_image_url']??candidate.supplier_image_url,
+    '1688_image_local_path':success?`${candidate.temu_goods_id}/${candidate['1688_product_id']??candidate.supplier_product_id}.jpg`:null,
+    image_download_status:status,
+    image_downloaded_at:success?'2026-08-31T01:00:00.000Z':null,
+    image_sha256:success?'image-sha':null,
+    image_response_sha256:success?'response-sha':null,
   };
 }
 
@@ -150,4 +187,78 @@ test('a valid import generates a run ID when none is supplied', async t => {
 
   assert.equal(result.run_id,'generated-run');
   assert.equal(repository.writes,1);
+});
+
+test('one failed image completes the structured run with warnings and keeps all five candidates', async t => {
+  const sourceDir=await setupSource(t);
+  const repository=memoryRepository();
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>({ headers:HEADERS,rows:workbookRows(6) }),
+    cacheImages:async candidates=>{
+      const results=candidates.map((candidate,index)=>cachedResult(candidate,index===4?'FAILED':'SUCCESS'));
+      return { success:4,failed:1,results };
+    },
+    now:()=> '2026-08-31T00:00:00.000Z',
+  });
+  const preview=await service.scan(config(sourceDir));
+
+  const result=await service.startImport({ scanToken:preview.scanToken,runId:'run-warning' });
+
+  assert.equal(result.import_status,'COMPLETED_WITH_WARNINGS');
+  assert.equal(result.image_download_success,4);
+  assert.equal(result.image_download_failed,1);
+  const imported=repository.getImport('run-warning');
+  assert.equal(imported.candidate_count,5);
+  assert.equal(imported.failed_image_count,1);
+  assert.ok(imported.candidates.every(candidate=>candidate.supplier_image_url));
+});
+
+test('retryFailedImages touches only failed candidates and preserves Random5 identity and manifest', async t => {
+  const sourceDir=await setupSource(t);
+  const repository=memoryRepository();
+  const batchSizes=[];
+  let workbookAllowed=true;
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>{
+      if(!workbookAllowed) throw new Error('retry must not parse raw workbook');
+      return { headers:HEADERS,rows:workbookRows(6) };
+    },
+    cacheImages:async candidates=>{
+      batchSizes.push(candidates.length);
+      const results=candidates.map((candidate,index)=>cachedResult(candidate,batchSizes.length===1 && index===4?'FAILED':'SUCCESS'));
+      return {
+        success:results.filter(result=>result.image_download_status==='SUCCESS').length,
+        failed:results.filter(result=>result.image_download_status==='FAILED').length,
+        results,
+      };
+    },
+    now:()=> '2026-08-31T00:00:00.000Z',
+  });
+  const preview=await service.scan(config(sourceDir));
+  await service.startImport({ scanToken:preview.scanToken,runId:'run-retry' });
+  const before=structuredClone(repository.getImport('run-retry'));
+  const identitiesBefore=before.candidates.map(candidate=>[
+    candidate.temu_goods_id,candidate.candidate_rank,candidate.original_rank,
+    candidate.supplier_product_id,candidate.sample_method,
+  ]);
+  workbookAllowed=false;
+  await fs.rm(sourceDir,{ recursive:true,force:true });
+
+  const result=await service.retryFailedImages('run-retry');
+  const after=repository.getImport('run-retry');
+  const identitiesAfter=after.candidates.map(candidate=>[
+    candidate.temu_goods_id,candidate.candidate_rank,candidate.original_rank,
+    candidate.supplier_product_id,candidate.sample_method,
+  ]);
+
+  assert.deepEqual(batchSizes,[5,1]);
+  assert.equal(result.retried,1);
+  assert.equal(result.succeeded,1);
+  assert.equal(result.failed,0);
+  assert.equal(result.import_status,'COMPLETED');
+  assert.equal(after.candidate_count,before.candidate_count);
+  assert.equal(after.source_manifest_sha256,before.source_manifest_sha256);
+  assert.deepEqual(identitiesAfter,identitiesBefore);
 });

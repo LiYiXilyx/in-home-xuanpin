@@ -2,12 +2,15 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { SAMPLE_METHOD,sampleStableRandom5 } from './stable-random5.mjs';
+import { cacheRandom5Images } from './supplier-image-cache.mjs';
 import { scanYingdaoDirectory } from './yingdao-directory-scanner.mjs';
 
 export function createYingdaoImportService({
   repository,
   loadWorkbook,
   imageStage=null,
+  cacheImages=cacheRandom5Images,
+  imageCacheOptions={},
   now=()=>new Date().toISOString(),
   runIdFactory=()=>crypto.randomUUID(),
   gitCommitSha=process.env.GIT_COMMIT_SHA??'UNKNOWN',
@@ -64,21 +67,22 @@ export function createYingdaoImportService({
     repository.insertStructuredImport(model);
     await onStructured?.({ runId:importRunId,model });
 
-    if(!imageStage) {
-      return {
-        run_id:importRunId,status:'RUNNING',candidate_count:model.candidates.length,selected_candidate:null,
-      };
-    }
-
     await onImages?.({ runId:importRunId,candidates:model.candidates });
     try {
-      const imageResult=await imageStage({ runId:importRunId,candidates:model.candidates,repository });
+      const imageResult=imageStage
+        ?await imageStage({ runId:importRunId,candidates:model.candidates,repository,cacheRoot:prior.config.imageCacheDir })
+        :await cacheAndPersistImages({
+          runId:importRunId,candidates:model.candidates,cacheRoot:prior.config.imageCacheDir,
+          repository,cacheImages,imageCacheOptions,
+        });
       const finishedAt=now();
       repository.markImportResult(importRunId,{
         status:imageResult.status,finishedAt,qa:imageResult.qa??null,
       });
       return {
-        run_id:importRunId,status:imageResult.status,candidate_count:model.candidates.length,selected_candidate:null,
+        run_id:importRunId,status:imageResult.status,import_status:imageResult.status,
+        candidate_count:model.candidates.length,selected_candidate:null,
+        image_download_success:imageResult.success??0,image_download_failed:imageResult.failed??0,
       };
     } catch(error) {
       repository.markImportResult(importRunId,{
@@ -88,7 +92,94 @@ export function createYingdaoImportService({
     }
   }
 
-  return { scan,startImport };
+  async function retryFailedImages(runId) {
+    const before=repository.getImport(runId);
+    if(!before) throw codedError('IMPORT_NOT_FOUND',`import run not found: ${runId}`);
+    if(!['COMPLETED','COMPLETED_WITH_WARNINGS'].includes(before.import_status)) {
+      throw codedError('IMAGE_RETRY_NOT_ALLOWED',`import status does not allow retry: ${before.import_status}`);
+    }
+    const identitiesBefore=candidateIdentityManifest(before.candidates);
+    const manifestBefore=before.source_manifest_sha256;
+    const countBefore=before.candidate_count;
+    const failedCandidates=repository.failedImages(runId);
+    if(failedCandidates.length===0) {
+      return { run_id:runId,retried:0,succeeded:0,failed:0,import_status:before.import_status };
+    }
+
+    const retryCandidates=failedCandidates.map(repositoryCandidateToImageCandidate);
+    const cached=await cacheImages(retryCandidates,{
+      cacheRoot:before.image_cache_dir,
+      ...imageCacheOptions,
+    });
+    persistImageResults(repository,runId,cached.results);
+    const afterImages=repository.getImport(runId);
+    assertRetryInvariants({ before,after:afterImages,identitiesBefore,manifestBefore,countBefore });
+    const remaining=repository.failedImages(runId).length;
+    const importStatus=remaining===0?'COMPLETED':'COMPLETED_WITH_WARNINGS';
+    repository.markImportResult(runId,{
+      status:importStatus,finishedAt:now(),
+      qa:{ retried:failedCandidates.length,succeeded:cached.success,failed:cached.failed,remaining_failed:remaining },
+    });
+    const after=repository.getImport(runId);
+    assertRetryInvariants({ before,after,identitiesBefore,manifestBefore,countBefore });
+    return {
+      run_id:runId,retried:failedCandidates.length,succeeded:cached.success,failed:cached.failed,
+      remaining_failed:remaining,import_status:importStatus,
+    };
+  }
+
+  return { scan,startImport,retryFailedImages };
+}
+
+async function cacheAndPersistImages({ runId,candidates,cacheRoot,repository,cacheImages,imageCacheOptions }) {
+  const cached=await cacheImages(candidates,{ cacheRoot,...imageCacheOptions });
+  persistImageResults(repository,runId,cached.results);
+  const status=cached.failed>0?'COMPLETED_WITH_WARNINGS':'COMPLETED';
+  return {
+    ...cached,status,
+    qa:{ image_download_success:cached.success,image_download_failed:cached.failed },
+  };
+}
+
+function persistImageResults(repository,runId,results) {
+  for(const result of results) repository.updateImageResult(runId,{
+    temuGoodsId:result.temu_goods_id,
+    productId:result['1688_product_id'],
+  },{
+    status:result.image_download_status,
+    localPath:result['1688_image_local_path'],
+    downloadedAt:result.image_downloaded_at,
+    imageSha256:result.image_sha256,
+    responseSha256:result.image_response_sha256,
+  });
+}
+
+function repositoryCandidateToImageCandidate(candidate) {
+  return {
+    temu_goods_id:String(candidate.temu_goods_id),
+    '1688_product_id':String(candidate.supplier_product_id),
+    '1688_image_url':candidate.supplier_image_url,
+    '1688_image_local_path':candidate.supplier_image_local_path,
+    image_download_status:candidate.image_download_status,
+    image_downloaded_at:candidate.image_downloaded_at,
+    image_sha256:candidate.image_sha256,
+    image_response_sha256:candidate.image_response_sha256,
+  };
+}
+
+function candidateIdentityManifest(candidates) {
+  return JSON.stringify(candidates.map(candidate=>[
+    candidate.run_id,candidate.temu_goods_id,candidate.candidate_rank,candidate.original_rank,
+    candidate.supplier_product_id,candidate.sample_seed,candidate.sample_method,candidate.selected_candidate,
+  ]));
+}
+
+function assertRetryInvariants({ after,identitiesBefore,manifestBefore,countBefore }) {
+  if(after.candidate_count!==countBefore) throw codedError('IMAGE_RETRY_INVARIANT','candidate count changed during retry');
+  if(after.source_manifest_sha256!==manifestBefore) throw codedError('IMAGE_RETRY_INVARIANT','source manifest changed during retry');
+  if(candidateIdentityManifest(after.candidates)!==identitiesBefore) {
+    throw codedError('IMAGE_RETRY_INVARIANT','Random5 candidate identity or order changed during retry');
+  }
 }
 
 function buildStructuredModel({ runId,config,scanResult,importedAt,gitCommitSha,machineName }) {
