@@ -4,6 +4,7 @@ import { openDatabase } from '../src/db/client.mjs';
 import { createCatalogCampaignService } from '../src/modules/catalog-scale/catalog-campaign-service.mjs';
 import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profile.mjs';
 import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
+import { createId } from '../src/shared/ids.mjs';
 
 const MODE='MANUAL_BIND_PASSIVE_CAPTURE';
 const PROFILE_NAME='Temu1店';
@@ -29,26 +30,12 @@ async function create(service) {
   const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
   const target=options.target===undefined?profile.target_count:positiveInteger(options.target,'target');
   if(options['resume-campaign']) { const campaign=validateResumeCampaign(service,{campaignId:options['resume-campaign'],profile,campaignType:'expansion'});return {action:'resume',...status(service,campaign.id)}; }
-  const activeQueue=db.prepare("SELECT id,campaign_id,status FROM catalog_rpa_queue WHERE status IN ('opening','waiting_page_ready','capturing','waiting_load_more','manual_required') ORDER BY updated_at DESC LIMIT 1").get();
-  if(activeQueue) throw coded('CATALOG_RPA_CLAIM_CONFLICT',`已有活跃Catalog queue：${activeQueue.id} / ${activeQueue.campaign_id} / ${activeQueue.status}`);
   const baseline=service.getBaselineConsistency(profile.category_key);
-  if(!baseline.activePoolVersionExists||!baseline.consistent||baseline.activePoolVersionCount<=0) throw coded('CATALOG_BASELINE_INCONSISTENT','Active Pool baseline不存在或不一致。',{ baseline });
   if(baseline.activePoolVersionCount>=target) throw coded('CATALOG_TARGET_INVALID',`Active Pool已经达到或超过 ${target}。`);
-  const before=formalState(profile);
-  let campaign=service.createCampaign({ name:options.name??`catalog-manual-passive-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
-    campaignType:'expansion',profile,baselinePoolCount:baseline.activePoolVersionCount,targetCount:target,
-    browserContext:{ profileName:PROFILE_NAME,profileDirectory:PROFILE_DIRECTORY,controlMode:MODE } });
-  const source=service.createSource(campaign.id,{ sourceKey:'manual-navigation-passive',sourceType:'category',sortOrder:profile.sort_order,
-    priority:1,targetQuota:target-baseline.activePoolVersionCount,navigationHint:{ entryMethod:'human_navigation_only',automaticNavigation:false,
-      automaticScroll:false,automaticSeeMore:false,directApi:false,cdpEndpoint:'http://127.0.0.1:9222' } });
-  campaign=service.transitionCampaign(campaign.id,'running');const claimed=service.claimNextSource(campaign.id);
-  if(claimed.idle) throw coded('CATALOG_RPA_NOT_CLAIMED','Manual Passive source未能领取。');
-  const origin=campaign.nonElectronicUniqueCount;
-  service.saveExtensionCheckpoint({ campaign_id:campaign.id,source_id:source.id,queue_id:claimed.queue.id,status:'capturing',checkpoint:{
-    runner_state:'UNBOUND',capture_mode:MODE,cdp_required:false,extension_passive_required:true,local_server_endpoint:'http://127.0.0.1:37821',capture_origin_unique:origin,stage_target_delta:50,session_target:origin+50,
-    qa_50_status:'PENDING',qa_300_status:'PENDING',failed_count:0,network_parse_errors:0,parser_rejected_rows:0,
-    automatic_scroll:false,automatic_see_more:false,direct_api:false,capture_paused:true,last_action:'runtime_configured',formal_state_before:before } });
-  return { action:'created',...status(service,campaign.id) };
+  const created=service.createOperatorManualCampaign({ profile,requestedNewCount:target-baseline.activePoolVersionCount,
+    campaignName:options.name??`catalog-manual-passive-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
+    requestId:options['request-id']??createId('operator_cli_request') });
+  return { action:created.idempotentReplay?'replayed':'created',...status(service,created.campaignId) };
 }
 
 function approveStage(service,campaignId,value) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { migrateDatabase } from '../../src/db/migrate.mjs';
 import { openDatabase } from '../../src/db/client.mjs';
@@ -123,6 +124,26 @@ test('inconsistent Active Pool, excessive target, and duplicate name hard fail w
   assert.throws(()=>duplicate.service.createOperatorManualCampaign({...request(duplicate.profile),campaignName:'duplicate-operator-name'}),
     error=>error.code==='CAMPAIGN_NAME_CONFLICT');
   assert.deepEqual(databaseFingerprint(duplicate.db),before);
+});
+
+test('diagnostic CLI create delegates to atomic service and exact request replay returns the same Campaign',async t => {
+  const fixture=await fixtureWithActivePool(t,['9301']);
+  const configPath=path.join(fixture.directory,'config.json');
+  fs.writeFileSync(configPath,JSON.stringify({app:{databasePath:fixture.databasePath},
+    browser:{mode:'external_cdp',cdpEndpoint:'http://127.0.0.1:9222'},catalog:{jobs:[{
+      url:'https://www.temu.com/de-en/motorcycle-accessories.html',primaryCategory:'Automotive',
+      subcategory:'Motorcycle Accessories',sortOrder:'Top Sales',targetCount:2
+    }]}}));
+  const args=[path.resolve('tools/catalog-manual-passive-admin.mjs'),'create','--config',configPath,'--profile',profilePath,
+    '--target','2','--name','operator-cli-2','--request-id','operator-cli-request'];
+  const first=spawnSync(process.execPath,args,{cwd:path.resolve('.'),encoding:'utf8'});
+  assert.equal(first.status,0,first.stderr);
+  const created=JSON.parse(first.stdout);assert.equal(created.action,'created');assert.ok(created.campaignId);
+  const replay=spawnSync(process.execPath,args,{cwd:path.resolve('.'),encoding:'utf8'});
+  assert.equal(replay.status,0,replay.stderr);
+  const repeated=JSON.parse(replay.stdout);assert.equal(repeated.action,'replayed');
+  assert.equal(repeated.campaignId,created.campaignId);
+  assert.equal(Number(fixture.db.prepare("SELECT COUNT(*) count FROM catalog_campaigns WHERE name='operator-cli-2'").get().count),1);
 });
 
 async function fixtureWithActivePool(t,goodsIds) {

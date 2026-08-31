@@ -44,3 +44,15 @@ test('Manual Passive admin derives category, sort and target from the bound Camp
   assert.match(adminSource,/categoryProfile/);
   assert.match(adminSource,/campaign\.targetCount/);
 });
+
+test('Manual Passive CLI delegates create to atomic operator service and keeps resume explicit',()=>{
+  assert.match(adminSource,/MANUAL_BIND_PASSIVE_CAPTURE/);
+  assert.match(adminSource,/options\[['"]resume-campaign['"]\]/);
+  assert.match(adminSource,/validateResumeCampaign\(/);
+  assert.match(adminSource,/service\.createOperatorManualCampaign\(/);
+  assert.doesNotMatch(adminSource,/findLatest|latest\s+campaign/i);
+  const createStart=adminSource.indexOf('async function create(service)');
+  const approveStart=adminSource.indexOf('function approveStage',createStart);
+  const createBody=adminSource.slice(createStart,approveStart);
+  assert.doesNotMatch(createBody,/service\.createCampaign\(|service\.createSource\(|service\.claimNextSource\(/);
+});
