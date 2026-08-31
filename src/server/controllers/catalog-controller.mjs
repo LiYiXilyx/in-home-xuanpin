@@ -12,6 +12,12 @@ export function createCatalogController({ catalogService,categoryProfileRegistry
       return catalogService.createOperatorManualCampaign({ profile,requestedNewCount:body?.requested_new_count,
         campaignName:body?.campaign_name,requestId:body?.request_id });
     },
+    async createOperatorInitialCampaign(body) {
+      const profile=await categoryProfileRegistry.resolve({ categoryKey:body?.category_key,
+        categoryProfileVersion:body?.category_profile_version });
+      return catalogService.createOperatorInitialCampaign({ profile,campaignName:body?.campaign_name,
+        requestId:body?.request_id });
+    },
     operatorCurrent() { return mapOperatorCurrent(catalogService.currentOperatorManualContext()); },
     context(searchParams) {
       const campaignId=searchParams.get('campaign_id');

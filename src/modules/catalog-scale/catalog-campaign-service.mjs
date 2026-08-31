@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { transaction } from '../../db/client.mjs';
 import { createCatalogCampaignRepository } from '../../db/repositories/catalog-campaign-repository.mjs';
+import { createInitialPoolRepository } from '../../db/repositories/initial-pool-repository.mjs';
 import { AppError } from '../../shared/errors.mjs';
 import { canonicalProductUrl,createId } from '../../shared/ids.mjs';
 import { validateCategoryProfile } from './category-profile.mjs';
-import { getCampaignQuantityPolicy } from './campaign-quantity-policy.mjs';
+import { INITIAL_TARGET_STORAGE_SENTINEL, getCampaignQuantityPolicy, initialQuantityConfig } from './campaign-quantity-policy.mjs';
+import { hasTaxonomyPipelineImplementation } from './taxonomy-pipeline-capability.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
@@ -25,6 +27,7 @@ const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFR
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
+  const initialRepository=createInitialPoolRepository(db,{ now });
 
   function createCampaignRecord({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null,
     configExtras={} }) {
@@ -113,15 +116,97 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     });
   }
 
+  function createOperatorInitialCampaign(input) {
+    plainObject(input,'Initial Campaign create request');
+    const profile=validateCategoryProfile(input.profile);
+    const campaignName=requiredString(input.campaignName,'campaignName',256);
+    const requestId=requiredString(input.requestId,'requestId',128);
+    return transaction(db,() => {
+      const replayId=initialRepository.findInitialByRequestId(requestId);
+      if (replayId) return exactInitialReplay(requireCampaign(replayId),{ profile,campaignName,requestId });
+      if (repository.listActiveRpaQueues().length) throw new AppError('已有活跃Catalog RPA来源，拒绝创建或猜测恢复。',{
+        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+      if (repository.findCampaignByName(campaignName)) throw new AppError('Campaign名称已存在。',{
+        code:'CAMPAIGN_NAME_CONFLICT',details:{ campaignName } });
+      const eligibility=initialRepository.getInitialEligibility(profile);
+      assertInitialEligibility(eligibility);
+      let campaign=createCampaignRecord({ name:campaignName,campaignType:'initial',profile,baselinePoolCount:0,
+        targetCount:INITIAL_TARGET_STORAGE_SENTINEL,
+        browserContext:{ profileName:'Temu1店',profileDirectory:'Profile 10',controlMode:MANUAL_PASSIVE_CAPTURE_MODE },
+        configExtras:{ ...initialQuantityConfig(),operatorCreate:{ requestId,captureMode:MANUAL_PASSIVE_CAPTURE_MODE } } });
+      initialRepository.recordInitialEligibilityAudit(campaign,eligibility);
+      initialRepository.initializeCandidateState(campaign);
+      const source=repository.createSource(campaign,{ sourceKey:'manual-bind-passive',sourceType:'category',
+        sortOrder:profile.sort_order,priority:1,targetQuota:null,navigationHint:{
+          entryMethod:'human_navigation_only',automaticNavigation:false,automaticScroll:false,automaticPagination:false,
+          automaticSeeMore:false,automaticCategorySwitching:false,automaticSortSwitching:false,
+          automaticCaptchaHandling:false,directApi:false
+        } });
+      campaign=repository.transitionCampaign(campaign.id,'running');
+      const pending=repository.getNextRpaQueue(campaign.id);
+      const queue=repository.claimRpaQueue(pending.id,createId('catalog_claim'));
+      if (!queue) throw new AppError('Initial Campaign Queue领取冲突。',{ code:'CATALOG_RPA_CLAIM_CONFLICT' });
+      repository.createSourceRun(source.id,queue.attemptCount);
+      repository.transitionSource(source.id,'capturing');
+      const checkpoint={ runner_state:'UNBOUND',capture_mode:MANUAL_PASSIVE_CAPTURE_MODE,capture_paused:true,
+        quantity_mode:'OPEN_ENDED',capture_limit:null,automatic_scroll:false,automatic_navigation:false,
+        automatic_pagination:false,automatic_see_more:false,automatic_category_switching:false,
+        automatic_sort_switching:false,automatic_captcha_handling:false,direct_api:false,
+        capture_origin_unique:0,last_action:'operator_initial_campaign_created' };
+      const claimed=repository.transitionRpaQueue(queue.id,'capturing',{ checkpoint,clearError:true });
+      return initialOperatorSummary(repository.getCampaign(campaign.id),claimed,false);
+    });
+  }
+
   function describeOperatorProfile(inputProfile) {
     const profile=validateCategoryProfile(inputProfile);
     const baseline=repository.getBaselineConsistency(profile);
+    const eligibility=initialRepository.getInitialEligibility(profile);
+    const classify=hasTaxonomyPipelineImplementation(profile,'classify');
+    const fineClassify=hasTaxonomyPipelineImplementation(profile,'fine_classify');
+    const opportunity=hasTaxonomyPipelineImplementation(profile,'opportunity');
     return { category_key:profile.category_key,category_profile_version:profile.category_profile_version,
       display_name:profile.display_name,site_country:profile.site_country,language:profile.language,currency:profile.currency,
       sort_order:profile.sort_order,profile_target_count:profile.target_count,
       active_pool_count:baseline.activePoolVersionCount,active_pool_version_id:baseline.activePoolVersionId,
       capture_mode:MANUAL_PASSIVE_CAPTURE_MODE,available:Boolean(baseline.activePoolVersionExists
-        && baseline.activePoolVersionCount>0 && baseline.consistent),baseline_consistency:baseline };
+        && baseline.activePoolVersionCount>0 && baseline.consistent),baseline_consistency:baseline,
+      profile_valid:true,expansion_available:Boolean(baseline.activePoolVersionExists
+        && baseline.activePoolVersionCount>0 && baseline.consistent),
+      initial_pool_available:eligibility.eligible,initial_pool_eligibility:eligibility,
+      classification_available:classify && fineClassify,opportunity_available:opportunity };
+  }
+
+  function assertInitialEligibility(eligibility) {
+    if (eligibility.poolHistoryCount>0) throw new AppError('该Category已存在Pool历史。',{
+      code:eligibility.poolHistory.some(row => row.status==='active')?'INITIAL_POOL_ALREADY_EXISTS':'INITIAL_POOL_HISTORY_EXISTS',
+      details:eligibility });
+    if (eligibility.activeMembershipCount>0) throw new AppError('该Category存在无Pool对应的active memberships。',{
+      code:'INITIAL_CATEGORY_STATE_INCONSISTENT',details:eligibility });
+    if (eligibility.priorNonterminalInitialCount>0) throw new AppError('该Category已有未终结Initial Campaign。',{
+      code:'INITIAL_CAMPAIGN_ALREADY_EXISTS',details:eligibility });
+  }
+
+  function exactInitialReplay(campaign,input) {
+    const create=campaign.config?.operatorCreate;
+    if (campaign.campaignType!=='initial' || campaign.categoryKey!==input.profile.category_key
+      || campaign.categoryProfileVersion!==input.profile.category_profile_version
+      || campaign.name!==input.campaignName || create?.requestId!==input.requestId
+      || create?.captureMode!==MANUAL_PASSIVE_CAPTURE_MODE) throw new AppError(
+      '相同request_id对应的Initial创建参数不同。',{ code:'OPERATOR_CREATE_IDEMPOTENCY_CONFLICT' });
+    const queues=repository.listRpaQueues(campaign.id);
+    if (queues.length!==1) throw new AppError('幂等Initial Campaign的Queue上下文不唯一。',{
+      code:'OPERATOR_CREATE_IDEMPOTENCY_CONFLICT' });
+    return initialOperatorSummary(campaign,queues[0],true);
+  }
+
+  function initialOperatorSummary(campaign,queue,idempotentReplay) {
+    const policy=getCampaignQuantityPolicy(campaign);
+    return { campaignId:campaign.id,campaignType:'initial',categoryKey:campaign.categoryKey,
+      categoryProfileVersion:campaign.categoryProfileVersion,campaignName:campaign.name,baselineCount:0,
+      targetCount:null,remaining:null,targetReached:null,quantityMode:policy.quantityMode,captureLimit:null,
+      captureMode:MANUAL_PASSIVE_CAPTURE_MODE,currentUnique:campaign.nonElectronicUniqueCount,status:campaign.status,
+      bindingStatus:queue.checkpoint?.runner_state ?? 'UNBOUND',idempotentReplay };
   }
 
   function exactOperatorReplay(campaign,input) {
@@ -640,7 +725,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return context;
   }
 
-  return { createCampaign,describeOperatorProfile,createOperatorManualCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
+  return { createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
     recordExpansionCheckpoint,recordNotSeenInCampaign,
     getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
