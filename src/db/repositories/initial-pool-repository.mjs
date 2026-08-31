@@ -120,8 +120,57 @@ export function createInitialPoolRepository(db, { now = () => new Date().toISOSt
     );
   }
 
+  function listBatchContexts(campaignId) {
+    return db.prepare(`SELECT * FROM catalog_initial_pool_batch_contexts WHERE campaign_id=?
+      ORDER BY created_at,source_id,batch_id`).all(campaignId).map(row=>({campaignId:row.campaign_id,
+      sourceId:row.source_id,batchId:row.batch_id,captureMode:row.capture_mode,siteCountry:row.site_country,
+      language:row.language,currency:row.currency,categoryKey:row.category_key,
+      categoryProfileVersion:row.category_profile_version,sortOrder:row.sort_order,pageUrl:row.page_url,
+      bindingVersion:row.binding_version,bindingFingerprint:row.binding_fingerprint,
+      pageHealthStatus:row.page_health_status,domReady:Boolean(row.dom_ready),networkReady:Boolean(row.network_ready),
+      captchaBlocking:Boolean(row.captcha_blocking),searchNoResults:Boolean(row.search_no_results)}));
+  }
+
+  function findQaByRequest(campaignId,requestId) {
+    return mapQaRun(db.prepare(`SELECT * FROM catalog_initial_pool_qa_runs
+      WHERE campaign_id=? AND request_id=?`).get(campaignId,requestId));
+  }
+  function createRunningQaRun({id,campaign,state,requestId}) {
+    const timestamp=now();db.prepare(`INSERT INTO catalog_initial_pool_qa_runs(
+      id,campaign_id,category_key,category_profile_version,request_id,status,candidate_count,candidate_revision,
+      candidate_hash,candidate_hash_version,normalization_version,field_set_version,started_at,created_at
+    ) VALUES(?,?,?,?,?,'RUNNING',?,?,?,?,?,?,?,?)`).run(id,campaign.id,campaign.categoryKey,
+      campaign.categoryProfileVersion,requestId,state.candidateCount,state.currentRevision,state.currentHash,
+      state.candidateHashVersion,state.normalizationVersion,state.fieldSetVersion,timestamp,timestamp);
+    return getQaRun(id);
+  }
+  function getQaRun(id){return mapQaRun(db.prepare('SELECT * FROM catalog_initial_pool_qa_runs WHERE id=?').get(id));}
+  function finalizeQaRun(id,result) {
+    const status=result.passed?'PASSED':'FAILED';db.prepare(`UPDATE catalog_initial_pool_qa_runs SET
+      status=?,mandatory_passed=?,checks_json=?,failure_codes_json=?,completed_at=?,duration_ms=? WHERE id=?`).run(
+      status,result.passed?1:0,JSON.stringify(result.checks),JSON.stringify(result.failureCodes),now(),result.durationMs,id);
+    const run=getQaRun(id);db.prepare('UPDATE catalog_campaigns SET qa_status=?,qa_summary_json=?,updated_at=? WHERE id=?').run(
+      result.passed?'passed':'failed',JSON.stringify({initialQaRunId:id,status}),now(),run.campaignId);return getQaRun(id);
+  }
+  function getLatestQaRun(campaignId) {
+    return mapQaRun(db.prepare(`SELECT * FROM catalog_initial_pool_qa_runs WHERE campaign_id=?
+      ORDER BY created_at DESC,id DESC LIMIT 1`).get(campaignId));
+  }
+  function getLatestPassedQa(campaignId) {
+    return mapQaRun(db.prepare(`SELECT * FROM catalog_initial_pool_qa_runs WHERE campaign_id=? AND status='PASSED'
+      ORDER BY created_at DESC,id DESC LIMIT 1`).get(campaignId));
+  }
+  function listQaCandidateItems(qaRunId) {
+    return db.prepare(`SELECT * FROM catalog_initial_pool_qa_candidate_items WHERE qa_run_id=? ORDER BY ordinal`)
+      .all(qaRunId).map(row=>({qaRunId:row.qa_run_id,ordinal:Number(row.ordinal),platform:row.platform,
+        goodsId:row.goods_id,categoryKey:row.category_key,categoryProfileVersion:row.category_profile_version,
+        sourceId:row.source_id,firstBatchId:row.first_batch_id,stagingProductId:row.staging_product_id,
+        activationPayload:JSON.parse(row.activation_payload_json),rowHash:row.row_hash}));
+  }
+
   return { getInitialEligibility, recordInitialEligibilityAudit, initializeCandidateState,
     findInitialByRequestId, getCandidateState,listCandidateItems,applyCandidateItems,freezeQaCandidate,recordBatchContext,
+    listBatchContexts,findQaByRequest,createRunningQaRun,getQaRun,finalizeQaRun,getLatestQaRun,getLatestPassedQa,listQaCandidateItems,
     createQaRunId: () => createId('initial_qa') };
 }
 
@@ -138,4 +187,13 @@ function mapCandidateItem(row) {
     stagingProductId:row.staging_product_id===null?null:Number(row.staging_product_id),
     activationPayload:JSON.parse(row.activation_payload_json),rowHash:row.row_hash,
     firstSeenSequence:Number(row.first_seen_sequence),createdAt:row.created_at,updatedAt:row.updated_at };
+}
+function mapQaRun(row) {
+  return row?{id:row.id,campaignId:row.campaign_id,categoryKey:row.category_key,
+    categoryProfileVersion:row.category_profile_version,requestId:row.request_id,status:row.status,
+    candidateCount:Number(row.candidate_count),candidateRevision:Number(row.candidate_revision),candidateHash:row.candidate_hash,
+    candidateHashVersion:row.candidate_hash_version,normalizationVersion:row.normalization_version,
+    fieldSetVersion:row.field_set_version,mandatoryPassed:row.mandatory_passed===null?null:Boolean(row.mandatory_passed),
+    checks:JSON.parse(row.checks_json),failureCodes:JSON.parse(row.failure_codes_json),startedAt:row.started_at,
+    completedAt:row.completed_at,durationMs:row.duration_ms===null?null:Number(row.duration_ms),createdAt:row.created_at}:null;
 }

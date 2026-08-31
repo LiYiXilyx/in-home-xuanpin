@@ -8,6 +8,7 @@ import { validateCategoryProfile } from './category-profile.mjs';
 import { INITIAL_TARGET_STORAGE_SENTINEL, getCampaignQuantityPolicy, initialQuantityConfig } from './campaign-quantity-policy.mjs';
 import { hasTaxonomyPipelineImplementation } from './taxonomy-pipeline-capability.mjs';
 import { buildInitialActivationPayload } from './initial-candidate-hash.mjs';
+import { evaluateInitialPoolQa } from './initial-pool-qa.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
@@ -26,7 +27,8 @@ const MANUAL_PASSIVE_CAPTURE_ALIASES=new Set([MANUAL_PASSIVE_CAPTURE_MODE,'MANUA
 const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
 const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFRESH_EXTENSION_MODE]);
 
-export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
+export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk,
+  evaluateInitialQa=evaluateInitialPoolQa }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
   const initialRepository=createInitialPoolRepository(db,{ now });
 
@@ -413,6 +415,54 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       remaining:policy.remaining,targetReached:policy.targetReached,status:campaign.status };
   }
 
+  function runInitialPoolQa(input) {
+    plainObject(input,'Initial QA request');const campaign=requireCampaign(requiredString(input.campaignId,'campaignId',128));
+    const categoryKey=requiredString(input.categoryKey,'categoryKey',128);
+    const profileVersion=requiredString(input.categoryProfileVersion,'categoryProfileVersion',128);
+    const requestId=requiredString(input.requestId,'requestId',128);
+    if(campaign.campaignType!=='initial'||campaign.categoryKey!==categoryKey||campaign.categoryProfileVersion!==profileVersion)
+      throw new AppError('Initial QA Campaign identity不匹配。',{code:'INITIAL_CAMPAIGN_IDENTITY_INVALID'});
+    const profile=validateCategoryProfile(campaign.config?.categoryProfile);const state=initialRepository.getCandidateState(campaign.id);
+    if(!state||state.candidateCount===0)throw new AppError('首池候选为空。',{code:'INITIAL_POOL_EMPTY'});
+    const replay=initialRepository.findQaByRequest(campaign.id,requestId);
+    if(replay){if(replay.candidateRevision!==state.currentRevision||replay.candidateHash!==state.currentHash
+      ||replay.candidateCount!==state.candidateCount)throw new AppError('QA request_id对应的Candidate版本已变化。',{code:'INITIAL_QA_REQUEST_CONFLICT'});
+      return {...getInitialQaState(campaign.id),qaRunId:replay.id,idempotentReplay:true};}
+    const qaRun=transaction(db,()=>{const created=initialRepository.createRunningQaRun({id:createId('initial_qa'),campaign,state,requestId});
+      initialRepository.freezeQaCandidate({qaRunId:created.id,campaignId:campaign.id});return created;});
+    const candidateItems=initialRepository.listQaCandidateItems(qaRun.id);
+    const result=evaluateInitialQa({db,campaign,profile,qaRun,candidateItems,
+      batchContexts:initialRepository.listBatchContexts(campaign.id),eligibility:initialRepository.getInitialEligibility(profile),
+      membershipEvidence:initialMembershipEvidence(candidateItems),integrityCheck:()=>db.prepare('PRAGMA integrity_check').get().integrity_check,
+      foreignKeyCheck:()=>db.prepare('PRAGMA foreign_key_check').all(),nowMs:()=>Date.now()});
+    transaction(db,()=>initialRepository.finalizeQaRun(qaRun.id,result));
+    return {...getInitialQaState(campaign.id),qaRunId:qaRun.id,idempotentReplay:false};
+  }
+
+  function initialMembershipEvidence(items) {
+    let ambiguous=false,crossCategoryContamination=false;
+    const query=db.prepare(`SELECT m.category_key,m.category_profile_version FROM catalog_memberships m JOIN products p ON p.id=m.product_id
+      WHERE p.platform=? AND p.external_product_id=? AND m.active=1`);
+    for(const item of items)for(const row of query.all(item.platform,item.goodsId)){
+      if(row.category_key===null)ambiguous=true;
+      if(row.category_key===item.categoryKey&&row.category_profile_version!==item.categoryProfileVersion)crossCategoryContamination=true;
+    }
+    return {ambiguous,crossCategoryContamination};
+  }
+
+  function getInitialQaState(campaignId) {
+    const campaign=requireCampaign(campaignId);if(campaign.campaignType!=='initial')throw new AppError('要求Initial Campaign。',{code:'INITIAL_CAMPAIGN_REQUIRED'});
+    const current=initialRepository.getCandidateState(campaign.id),run=initialRepository.getLatestQaRun(campaign.id);
+    if(!run)return {status:'NOT_RUN',liveUniqueCount:current.candidateCount,qaCandidateCount:0,unreviewedDelta:current.candidateCount};
+    let status=run.status==='RUNNING'?'RUNNING':run.status==='FAILED'?'FAILED':'PASSED_CURRENT';
+    if(run.status==='PASSED'&&(run.candidateRevision!==current.currentRevision||run.candidateHash!==current.currentHash
+      ||run.candidateCount!==current.candidateCount))status='STALE';
+    return {status,qaRunId:run.id,liveUniqueCount:current.candidateCount,qaCandidateCount:run.candidateCount,
+      qaCandidateRevision:run.candidateRevision,qaCandidateHash:run.candidateHash,currentCandidateRevision:current.currentRevision,
+      currentCandidateHash:current.currentHash,unreviewedDelta:Math.max(0,current.candidateCount-run.candidateCount),
+      checks:run.checks,failureCodes:run.failureCodes,durationMs:run.durationMs};
+  }
+
   function recordExpansionCheckpoint(campaignId,milestoneCount) {
     return transaction(db,() => {
       const campaign=requireCampaign(campaignId);const milestone=Number(milestoneCount);
@@ -753,7 +803,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     reconcileActiveMembershipsToPool:categoryKey => transaction(db,() => repository.reconcileActiveMembershipsToPool(categoryKey)),
     getCampaign:repository.getCampaign,getSource:repository.getSource,
     createSourceRun:repository.createSourceRun,getRpaQueueForSource:repository.getRpaQueueForSource,
-    getCaptureContext,captureExtensionBatch,getStatus,getInitialOperatorStatus,claimNextSource,currentRpaContext,sourceOpened,
+    getCaptureContext,captureExtensionBatch,getStatus,getInitialOperatorStatus,runInitialPoolQa,getInitialQaState,claimNextSource,currentRpaContext,sourceOpened,
     saveRpaCheckpoint,markRpaManualRequired,resumeRpa,saveExtensionCheckpoint,markExtensionManualRequired,resumeExtensionRunner,
     completeRpaSource };
 

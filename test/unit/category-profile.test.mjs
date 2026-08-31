@@ -50,3 +50,11 @@ test('taxonomy binding resolver keeps real values and does not invent a taxonomy
   assert.equal(resolveTaxonomyBinding(profile,'opportunity').taxonomyVersion,'motorcycle-opportunity-v2');
   assert.throws(() => resolveTaxonomyBinding(profile,'missing'),error => error.code==='CATEGORY_PROFILE_BINDING_REQUIRED');
 });
+
+test('Initial Pool quality thresholds may increase but never weaken code floors',async()=>{
+  const stronger=structuredClone(await loadCategoryProfile(profilePath));
+  stronger.business_rules.initial_pool_quality={title:.99,price:.98,image:.97,sales:.95,rating:.94,review_count:.93};
+  assert.equal(validateCategoryProfile(stronger).business_rules.initial_pool_quality.title,.99);
+  const weaker=structuredClone(stronger);weaker.business_rules.initial_pool_quality.image=.94;
+  assert.throws(()=>validateCategoryProfile(weaker),error=>error.code==='CONFIG_INVALID');
+});

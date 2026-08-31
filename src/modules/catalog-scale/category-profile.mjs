@@ -141,8 +141,16 @@ function validateBusinessRules(value) {
     default_gate:gate,
     manual_review_on_low_confidence:boolean(value.manual_review_on_low_confidence,'business_rules.manual_review_on_low_confidence'),
     count_manual_review_as_non_electronic:countManual,
-    hard_exclusion_codes:Object.freeze(codes)
+    hard_exclusion_codes:Object.freeze(codes),initial_pool_quality:validateInitialPoolQuality(value.initial_pool_quality)
   });
+}
+
+function validateInitialPoolQuality(value) {
+  const floors={title:.95,price:.95,image:.95,sales:.90,rating:.90,review_count:.90};
+  if(value===undefined)return Object.freeze(floors);object(value,'business_rules.initial_pool_quality');const result={};
+  for(const [field,floor] of Object.entries(floors)){const number=Number(value[field]??floor);
+    if(!Number.isFinite(number)||number<floor||number>1)fail(`business_rules.initial_pool_quality.${field}`,`必须位于 ${floor} 到 1`);result[field]=number;}
+  return Object.freeze(result);
 }
 
 function object(value,path) { if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path,'必须是对象'); }
