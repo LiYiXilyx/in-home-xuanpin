@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { ConfigError } from '../../shared/errors.mjs';
+import { AppError,ConfigError } from '../../shared/errors.mjs';
 
 export const REQUIRED_ELECTRONIC_EXCLUSION_CODES=Object.freeze([
   'ELECTRONIC_PRODUCT','USB_PRODUCT','BATTERY_PRODUCT','RECHARGEABLE_PRODUCT',
@@ -8,6 +8,12 @@ export const REQUIRED_ELECTRONIC_EXCLUSION_CODES=Object.freeze([
 ]);
 
 const GATES=new Set(['non_electronic_unique_count','business_eligible_count','reviewable_unique_count']);
+const PIPELINES=Object.freeze(['classify','fine_classify','opportunity']);
+const LEGACY_MOTORCYCLE_BINDINGS=Object.freeze({
+  classify:Object.freeze({taxonomy_name:'week1-motorcycle-accessories',taxonomy_version:null,rule_version:'week1-rule-v1'}),
+  fine_classify:Object.freeze({taxonomy_name:'week2-motorcycle-fine-v1',taxonomy_version:null,rule_version:'week2-fine-rule-v1'}),
+  opportunity:Object.freeze({taxonomy_name:'motorcycle-opportunity',taxonomy_version:'motorcycle-opportunity-v2',rule_version:'active-pool-rule-v2'})
+});
 
 export async function loadCategoryProfile(profilePath) {
   let raw;
@@ -34,6 +40,9 @@ export function validateCategoryProfile(input) {
     exclude_battery:boolean(input.exclude_battery,'exclude_battery'),
     price_min_eur:nonNegativeNumber(input.price_min_eur,'price_min_eur'),
     taxonomy:required(input.taxonomy,'taxonomy'),
+    taxonomy_bindings:validateTaxonomyBindings(input),
+    membership_scope:validateMembershipScope(input.membership_scope ?? inferredMembershipScope(input),'membership_scope'),
+    legacy_membership_scopes:validateLegacyMembershipScopes(input),
     navigation:validateNavigation(input.navigation),
     business_rules:validateBusinessRules(input.business_rules)
   };
@@ -41,6 +50,50 @@ export function validateCategoryProfile(input) {
     if (!profile[field]) fail(field,'Catalog Scale V2 当前阶段必须为 true');
   }
   return Object.freeze(profile);
+}
+
+export function resolveTaxonomyBinding(profile,pipeline) {
+  if (!PIPELINES.includes(pipeline)) throw new AppError(`缺少 taxonomy binding：${pipeline}`,{ code:'CATEGORY_PROFILE_BINDING_REQUIRED',details:{ pipeline,categoryKey:profile?.category_key } });
+  const binding=profile?.taxonomy_bindings?.[pipeline];
+  if (!binding) throw new AppError(`缺少 taxonomy_bindings.${pipeline}`,{ code:'CATEGORY_PROFILE_BINDING_REQUIRED',details:{ pipeline,categoryKey:profile?.category_key } });
+  return { taxonomyName:binding.taxonomy_name,taxonomyVersion:binding.taxonomy_version,ruleVersion:binding.rule_version,categoryScope:profile.category_key };
+}
+
+function validateTaxonomyBindings(input) {
+  const raw=input.taxonomy_bindings ?? legacyBindings(input);
+  if (!raw) throw new AppError('新 Category Profile 必须显式配置 taxonomy_bindings。',{ code:'CATEGORY_PROFILE_BINDING_REQUIRED',details:{ categoryKey:input.category_key } });
+  object(raw,'taxonomy_bindings');const result={};
+  for (const pipeline of PIPELINES) {
+    object(raw[pipeline],`taxonomy_bindings.${pipeline}`);
+    const version=raw[pipeline].taxonomy_version;
+    if (version!==null && (typeof version!=='string' || !version.trim())) fail(`taxonomy_bindings.${pipeline}.taxonomy_version`,'必须是非空字符串或 null');
+    result[pipeline]=Object.freeze({ taxonomy_name:required(raw[pipeline].taxonomy_name,`taxonomy_bindings.${pipeline}.taxonomy_name`),
+      taxonomy_version:version===null ? null:String(version).trim(),rule_version:required(raw[pipeline].rule_version,`taxonomy_bindings.${pipeline}.rule_version`) });
+  }
+  return Object.freeze(result);
+}
+
+function legacyBindings(input) {
+  return input.category_key==='motorcycle-accessories' && input.category_profile_version==='motorcycle-accessories-v1' ? LEGACY_MOTORCYCLE_BINDINGS:null;
+}
+
+function inferredMembershipScope(input) {
+  const breadcrumbs=input.navigation?.breadcrumbs ?? [];
+  return { site_country:input.site_country,language:input.language,currency:input.currency,
+    primary_category:breadcrumbs.at(-2),subcategory:breadcrumbs.at(-1),sort_order:input.sort_order };
+}
+
+function validateMembershipScope(value,path) {
+  object(value,path);return Object.freeze({ site_country:required(value.site_country,`${path}.site_country`),language:required(value.language,`${path}.language`),
+    currency:required(value.currency,`${path}.currency`),primary_category:required(value.primary_category,`${path}.primary_category`),
+    subcategory:required(value.subcategory,`${path}.subcategory`),sort_order:required(value.sort_order,`${path}.sort_order`) });
+}
+
+function validateLegacyMembershipScopes(input) {
+  const values=input.legacy_membership_scopes ?? [];
+  if (!Array.isArray(values)) fail('legacy_membership_scopes','必须是数组');
+  if (values.length && input.category_key!=='motorcycle-accessories') throw new AppError('新 Category 不允许使用 Motorcycle legacy membership fallback。',{ code:'CATEGORY_SCOPE_UNRESOLVED',details:{ categoryKey:input.category_key } });
+  return Object.freeze(values.map((value,index)=>validateMembershipScope(value,`legacy_membership_scopes[${index}]`)));
 }
 
 function validateNavigation(value) {

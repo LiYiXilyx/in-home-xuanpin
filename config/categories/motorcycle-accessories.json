@@ -12,6 +12,41 @@
   "exclude_battery": true,
   "price_min_eur": 5,
   "taxonomy": "week2-motorcycle-fine-v1",
+  "taxonomy_bindings": {
+    "classify": {
+      "taxonomy_name": "week1-motorcycle-accessories",
+      "taxonomy_version": null,
+      "rule_version": "week1-rule-v1"
+    },
+    "fine_classify": {
+      "taxonomy_name": "week2-motorcycle-fine-v1",
+      "taxonomy_version": null,
+      "rule_version": "week2-fine-rule-v1"
+    },
+    "opportunity": {
+      "taxonomy_name": "motorcycle-opportunity",
+      "taxonomy_version": "motorcycle-opportunity-v2",
+      "rule_version": "active-pool-rule-v2"
+    }
+  },
+  "membership_scope": {
+    "site_country": "DE",
+    "language": "en",
+    "currency": "EUR",
+    "primary_category": "Automotive",
+    "subcategory": "Motorcycle Accessories",
+    "sort_order": "Top Sales"
+  },
+  "legacy_membership_scopes": [
+    {
+      "site_country": "德国",
+      "language": "en",
+      "currency": "EUR",
+      "primary_category": "Automotive",
+      "subcategory": "Motorcycles & Powersports Accessories",
+      "sort_order": "Top Sales"
+    }
+  ],
   "navigation": {
     "entry_method": "site_menu",
     "breadcrumbs": ["Automotive", "Motorcycle Accessories"],
