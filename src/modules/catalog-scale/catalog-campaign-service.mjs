@@ -27,7 +27,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   function createCampaign({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null }) {
     const validated=validateCategoryProfile(profile);
     if (campaignType==='expansion') {
-      const consistency=repository.getBaselineConsistency(validated.category_key);
+      const consistency=repository.getBaselineConsistency(validated);
       if (consistency.activePoolVersionExists && !consistency.consistent) throw new AppError(
         'Active Pool Version与active memberships不一致，拒绝继续Expansion。',{
           code:'CATALOG_BASELINE_INCONSISTENT',details:consistency

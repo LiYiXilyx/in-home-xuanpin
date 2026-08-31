@@ -85,7 +85,9 @@ test('Catalog Scale Day1 foundation is isolated, idempotent, electronic-safe, an
   assert.equal(count(db,'catalog_pool_versions'),0);
   assert.deepEqual(coreCounts(db),before);
 
-  const smallProfile={ ...structuredClone(profile),category_key:'catalog-safe-fixture',category_profile_version:'catalog-safe-fixture-v1',display_name:'Catalog Safe Fixture',target_count:1 };
+  const smallProfile={ ...structuredClone(profile),category_key:'catalog-safe-fixture',category_profile_version:'catalog-safe-fixture-v1',
+    display_name:'Catalog Safe Fixture',target_count:1,legacy_membership_scopes:[],
+    membership_scope:{ ...profile.membership_scope,subcategory:'Catalog Safe Fixture' } };
   const safe=service.createCampaign({ name:'catalog-safe-activation',campaignType:'test',profile:smallProfile,baselinePoolCount:1 });
   const safeSource=service.createSource(safe.id,{ sourceKey:'main',sourceType:'category',sortOrder:'Top Sales' });
   service.transitionCampaign(safe.id,'running');
@@ -97,7 +99,9 @@ test('Catalog Scale Day1 foundation is isolated, idempotent, electronic-safe, an
   assert.equal(count(db,'catalog_pool_version_items'),1);
   assert.deepEqual(coreCounts(db),before);
 
-  const secondCategory={ ...structuredClone(profile),category_key:'automotive-exterior',category_profile_version:'automotive-exterior-v1',display_name:'Automotive Exterior' };
+  const secondCategory={ ...structuredClone(profile),category_key:'automotive-exterior',category_profile_version:'automotive-exterior-v1',
+    display_name:'Automotive Exterior',legacy_membership_scopes:[],
+    membership_scope:{ ...profile.membership_scope,subcategory:'Automotive Exterior' } };
   const other=service.createCampaign({ name:'other-category-test',campaignType:'test',profile:secondCategory });
   const otherSource=service.createSource(other.id,{ sourceKey:'main',sourceType:'category',sortOrder:'Top Sales' });
   service.transitionCampaign(other.id,'running');

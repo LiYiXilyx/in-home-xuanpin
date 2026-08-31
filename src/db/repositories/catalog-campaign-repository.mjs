@@ -1,4 +1,6 @@
 import { createId } from '../../shared/ids.mjs';
+import { AppError } from '../../shared/errors.mjs';
+import { validateCategoryProfile } from '../../modules/catalog-scale/category-profile.mjs';
 
 export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOString() }={}) {
   function createCampaign(input) {
@@ -22,7 +24,9 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     return getCampaign(id);
   }
 
-  function getBaselineConsistency(categoryKey) {
+  function getBaselineConsistency(categoryOrProfile) {
+    const profile=resolveProfile(categoryOrProfile);
+    const categoryKey=profile.category_key;
     const activeVersions=db.prepare(`SELECT id,product_count FROM catalog_pool_versions
       WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC`).all(categoryKey);
     const activePool=activeVersions[0] ?? null;
@@ -30,45 +34,41 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
       COUNT(DISTINCT platform || CHAR(31) || goods_id) AS identity_count,
       COUNT(DISTINCT goods_id) AS goods_id_count FROM catalog_pool_version_items WHERE pool_version_id=?`).get(activePool.id):
       { row_count:0,identity_count:0,goods_id_count:0 };
-    const membershipMetrics=db.prepare(`SELECT COUNT(*) AS row_count,
-      COUNT(DISTINCT p.platform || CHAR(31) || p.external_product_id) AS identity_count
-      FROM catalog_memberships m JOIN products p ON p.id=m.product_id WHERE m.active=1`).get();
-    const intersectionCount=activePool ? Number(db.prepare(`SELECT COUNT(DISTINCT i.platform || CHAR(31) || i.goods_id) AS count
-      FROM catalog_pool_version_items i WHERE i.pool_version_id=? AND EXISTS(
-        SELECT 1 FROM catalog_memberships m JOIN products p ON p.id=m.product_id
-        WHERE m.active=1 AND p.platform=i.platform AND p.external_product_id=i.goods_id
-      )`).get(activePool.id).count):0;
+    const activeMemberships=listScopedMemberships(profile,{activeOnly:true});
+    const activeIdentities=new Set(activeMemberships.map(row=>`${row.platform}\u001f${row.goods_id}`));
+    const poolIdentities=activePool ? db.prepare(`SELECT platform,goods_id FROM catalog_pool_version_items
+      WHERE pool_version_id=?`).all(activePool.id):[];
+    const intersectionCount=poolIdentities.filter(row=>activeIdentities.has(`${row.platform}\u001f${row.goods_id}`)).length;
     const activePoolVersionCount=Number(poolMetrics.identity_count);
     return { categoryKey,activePoolVersionExists:Boolean(activePool),activePoolVersionId:activePool?.id ?? null,
       activePoolVersionRecordCount:activeVersions.length,activePoolDeclaredCount:Number(activePool?.product_count ?? 0),
       activePoolRowCount:Number(poolMetrics.row_count),activePoolVersionCount,activePoolGoodsIdCount:Number(poolMetrics.goods_id_count),
-      activeMembershipRowCount:Number(membershipMetrics.row_count),activeMembershipCount:Number(membershipMetrics.identity_count),
+      activeMembershipRowCount:activeMemberships.length,activeMembershipCount:activeIdentities.size,
       intersectionCount,consistent:!activePool || (activeVersions.length===1 && Number(poolMetrics.row_count)===activePoolVersionCount
         && Number(activePool.product_count)===activePoolVersionCount && intersectionCount===activePoolVersionCount) };
   }
 
   function captureCampaignBaseline(campaignId) {
-    const timestamp=now();const campaign=getCampaign(campaignId);const consistency=getBaselineConsistency(campaign.categoryKey);
+    const timestamp=now();const campaign=getCampaign(campaignId);const profile=campaignProfile(campaign);
+    const consistency=getBaselineConsistency(profile);
     const baselineSource=consistency.activePoolVersionExists ? 'ACTIVE_POOL_VERSION':'LEGACY_ACTIVE_MEMBERSHIPS';
     if (consistency.activePoolVersionExists) {
-      db.prepare(`INSERT INTO catalog_campaign_baseline_items(
-        campaign_id,product_id,platform,goods_id,membership_id,captured_at
-      ) SELECT ?,p.id,i.platform,i.goods_id,
-        (SELECT m.id FROM catalog_memberships m WHERE m.product_id=p.id AND m.active=1
-          ORDER BY m.last_seen_at DESC,m.id DESC LIMIT 1),?
-        FROM catalog_pool_version_items i JOIN products p
-          ON p.platform=i.platform AND p.external_product_id=i.goods_id
-        WHERE i.pool_version_id=?
-        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp,consistency.activePoolVersionId);
+      const items=db.prepare(`SELECT p.id product_id,i.platform,i.goods_id FROM catalog_pool_version_items i JOIN products p
+        ON p.platform=i.platform AND p.external_product_id=i.goods_id WHERE i.pool_version_id=?`).all(consistency.activePoolVersionId);
+      const insert=db.prepare(`INSERT INTO catalog_campaign_baseline_items(
+        campaign_id,product_id,platform,goods_id,membership_id,captured_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`);
+      for (const item of items) {
+        const membership=requireScopedMembership(profile,item.product_id,{activeOnly:false});
+        insert.run(campaignId,item.product_id,item.platform,item.goods_id,membership.id,timestamp);
+      }
     } else {
-      db.prepare(`INSERT INTO catalog_campaign_baseline_items(
-        campaign_id,product_id,platform,goods_id,membership_id,captured_at
-      ) SELECT ?,p.id,p.platform,p.external_product_id,m.id,?
-        FROM products p
-        JOIN catalog_memberships m ON m.product_id=p.id AND m.active=1
-        WHERE m.id=(SELECT m2.id FROM catalog_memberships m2
-          WHERE m2.product_id=p.id AND m2.active=1 ORDER BY m2.last_seen_at DESC,m2.id DESC LIMIT 1)
-        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`).run(campaignId,timestamp);
+      const insert=db.prepare(`INSERT INTO catalog_campaign_baseline_items(
+        campaign_id,product_id,platform,goods_id,membership_id,captured_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(campaign_id,platform,goods_id) DO NOTHING`);
+      for (const membership of listScopedMemberships(profile,{activeOnly:true})) {
+        insert.run(campaignId,membership.product_id,membership.platform,membership.goods_id,membership.id,timestamp);
+      }
     }
     const count=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_campaign_baseline_items WHERE campaign_id=?').get(campaignId).count);
     if (consistency.activePoolVersionExists && count!==consistency.activePoolVersionCount) {
@@ -95,16 +95,14 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
   }
 
   function reconcileActiveMembershipsToPool(categoryKey) {
-    const before=getBaselineConsistency(categoryKey);
+    const profile=resolveProfile(categoryKey);const before=getBaselineConsistency(profile);
     if (!before.activePoolVersionExists || before.activePoolVersionRecordCount!==1) throw new Error('需要且只能存在一个Active Pool Version。');
-    const membershipIds=db.prepare(`SELECT (SELECT m.id FROM catalog_memberships m JOIN products p ON p.id=m.product_id
-      WHERE p.platform=i.platform AND p.external_product_id=i.goods_id ORDER BY m.last_seen_at DESC,m.id DESC LIMIT 1) AS membership_id
-      FROM catalog_pool_version_items i WHERE i.pool_version_id=?`).all(before.activePoolVersionId).map(row => row.membership_id).filter(Boolean);
+    const membershipIds=poolMembershipIds(profile,before.activePoolVersionId);
     if (membershipIds.length!==before.activePoolVersionCount) throw new Error(`Active Pool无法完整映射到memberships：${membershipIds.length}/${before.activePoolVersionCount}`);
-    db.prepare('UPDATE catalog_memberships SET active=0 WHERE active=1').run();
+    deactivateMembershipIds(listScopedMemberships(profile,{activeOnly:true}).map(row=>row.id));
     const activate=db.prepare('UPDATE catalog_memberships SET active=1 WHERE id=?');
     for (const id of membershipIds) activate.run(id);
-    const after=getBaselineConsistency(categoryKey);
+    const after=getBaselineConsistency(profile);
     if (!after.consistent || after.activeMembershipCount!==after.activePoolVersionCount) throw new Error('Active memberships与Active Pool Version对齐失败。');
     return { before,after,activatedMembershipCount:membershipIds.length };
   }
@@ -464,7 +462,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         JSON.stringify(missingSnapshotFields(row)),row.raw_json
       );
       snapshotsInserted+=Number(snapshot.changes);
-      const membership=db.prepare(`SELECT id FROM catalog_memberships WHERE product_id=? ORDER BY active DESC,last_seen_at DESC,id DESC LIMIT 1`).get(product.id);
+      const membership=findScopedMembership(profile,product.id,{activeOnly:false});
       if (membership) {
         db.prepare(`UPDATE catalog_memberships SET source_page_url=COALESCE(?,source_page_url),current_rank=?,last_seen_at=?,
           last_job_id=?,category_key=?,category_profile_version=?,campaign_id=?,source_id=? WHERE id=?`).run(
@@ -475,8 +473,9 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,primary_category,subcategory,
           source_page_url,sort_order,current_rank,active,first_seen_at,last_seen_at,last_job_id,category_key,
           category_profile_version,campaign_id,source_id) VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`).run(
-          product.id,profile.site_country,profile.language,profile.currency,profile.navigation?.breadcrumbs?.[0] ?? 'Automotive',
-          profile.display_name,row.latest_source_url,profile.sort_order,row.first_seen_sequence,row.first_seen_at,row.last_seen_at,
+          product.id,profile.site_country,profile.language,profile.currency,
+          profile.membership_scope.primary_category,profile.membership_scope.subcategory,row.latest_source_url,
+          profile.membership_scope.sort_order,row.first_seen_sequence,row.first_seen_at,row.last_seen_at,
           jobId,campaign.categoryKey,campaign.categoryProfileVersion,campaign.id,row.latest_source_id
         );membershipsInserted+=1;
       }
@@ -534,7 +533,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         );
         product={ id:Number(inserted.lastInsertRowid) };productsInserted+=1;
       } else {
-        const active=db.prepare('SELECT 1 FROM catalog_memberships WHERE product_id=? AND active=1 LIMIT 1').get(product.id);
+        const active=findScopedMembership(profile,product.id,{activeOnly:true});
         if (!active) historicalProductsReactivated+=1;
         db.prepare(`UPDATE products SET source_url=COALESCE(?,source_url),canonical_url=?,title=COALESCE(?,title),
           last_seen_at=? WHERE id=?`).run(row.latest_source_url,row.canonical_url,row.latest_title,row.last_seen_at,product.id);
@@ -547,7 +546,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         JSON.stringify(missingSnapshotFields(row)),row.raw_json
       );
       snapshotsInserted+=Number(snapshot.changes);
-      const membership=db.prepare(`SELECT id FROM catalog_memberships WHERE product_id=? ORDER BY active DESC,last_seen_at DESC,id DESC LIMIT 1`).get(product.id);
+      const membership=findScopedMembership(profile,product.id,{activeOnly:false});
       if (membership) {
         db.prepare(`UPDATE catalog_memberships SET source_page_url=COALESCE(?,source_page_url),current_rank=?,last_seen_at=?,
           last_job_id=?,category_key=?,category_profile_version=?,campaign_id=?,source_id=? WHERE id=?`).run(
@@ -558,8 +557,9 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         db.prepare(`INSERT INTO catalog_memberships(product_id,site_country,language,currency,primary_category,subcategory,
           source_page_url,sort_order,current_rank,active,first_seen_at,last_seen_at,last_job_id,category_key,
           category_profile_version,campaign_id,source_id) VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`).run(
-          product.id,profile.site_country,profile.language,profile.currency,profile.navigation?.breadcrumbs?.[0] ?? 'Automotive',
-          profile.display_name,row.latest_source_url,profile.sort_order,row.first_seen_sequence,row.first_seen_at,row.last_seen_at,
+          product.id,profile.site_country,profile.language,profile.currency,
+          profile.membership_scope.primary_category,profile.membership_scope.subcategory,row.latest_source_url,
+          profile.membership_scope.sort_order,row.first_seen_sequence,row.first_seen_at,row.last_seen_at,
           jobId,campaign.categoryKey,campaign.categoryProfileVersion,campaign.id,row.latest_source_id
         );membershipsInserted+=1;
       }
@@ -650,9 +650,9 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
   }
 
   function activatePoolVersion(campaign,qaSummary={}) {
-    const timestamp=now();
+    const timestamp=now();const profile=campaignProfile(campaign);
     const previous=db.prepare(`SELECT id,product_count FROM catalog_pool_versions WHERE category_key=? AND status='active'`).get(campaign.categoryKey);
-    const legacyMembershipIds=db.prepare(`SELECT id FROM catalog_memberships WHERE active=1 ORDER BY id`).all().map(row => Number(row.id));
+    const legacyMembershipIds=listScopedMemberships(profile,{activeOnly:true}).map(row => Number(row.id));
     db.prepare(`UPDATE catalog_pool_versions SET status='superseded',superseded_at=?,updated_at=?
       WHERE category_key=? AND status='active'`).run(timestamp,timestamp,campaign.categoryKey);
     const id=createId('catalog_pool');
@@ -684,20 +684,19 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
         || Number(poolGate.identity_count)!==campaign.targetCount) throw new Error(
         `Expansion Pool唯一性错误：rows=${poolGate.row_count}, goods_id=${poolGate.goods_id_count}, identity=${poolGate.identity_count}, target=${campaign.targetCount}`
       );
-      db.prepare('UPDATE catalog_memberships SET active=0 WHERE active=1').run();
-      db.prepare(`UPDATE catalog_memberships SET active=1 WHERE id IN (
-        SELECT (SELECT m.id FROM catalog_memberships m JOIN products p ON p.id=m.product_id
-          WHERE p.platform=i.platform AND p.external_product_id=i.goods_id
-          ORDER BY m.last_seen_at DESC,m.id DESC LIMIT 1)
-        FROM catalog_pool_version_items i WHERE i.pool_version_id=?
-      )`).run(id);
-      const activeCount=Number(db.prepare('SELECT COUNT(*) AS count FROM catalog_memberships WHERE active=1').get().count);
-      if (activeCount!==campaign.targetCount) throw new Error(`Expansion active membership数量错误：${activeCount}/${campaign.targetCount}`);
     } else {
       db.prepare(`INSERT INTO catalog_pool_version_items(
         pool_version_id,staging_product_id,platform,goods_id,category_key,membership_status,created_at
       ) SELECT ?,id,platform,goods_id,category_key,'seen',? FROM catalog_staging_products
         WHERE campaign_id=? AND electronic_screening_status='passed'`).run(id,timestamp,campaign.id);
+    }
+    if (campaign.campaignType==='refresh' || campaign.campaignType==='expansion') {
+      const membershipIds=poolMembershipIds(profile,id);
+      deactivateMembershipIds(listScopedMemberships(profile,{activeOnly:true}).map(row=>row.id));
+      const activate=db.prepare('UPDATE catalog_memberships SET active=1 WHERE id=?');
+      for (const membershipId of membershipIds) activate.run(membershipId);
+      const activeCount=listScopedMemberships(profile,{activeOnly:true}).length;
+      if (activeCount!==campaign.targetCount) throw new Error(`Category-scoped active membership数量错误：${activeCount}/${campaign.targetCount}`);
     }
     db.prepare(`INSERT INTO catalog_pool_activation_history(
       id,category_key,new_pool_version_id,previous_pool_version_id,legacy_active_membership_ids_json,activated_at
@@ -817,6 +816,72 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     }));
   }
 
+  function campaignProfile(campaign) {
+    const raw=campaign?.config?.categoryProfile;
+    if (!raw) throw scopeError('CATEGORY_SCOPE_UNRESOLVED',{ campaignId:campaign?.id,reason:'CAMPAIGN_PROFILE_MISSING' });
+    const profile=validateCategoryProfile(raw);
+    if (profile.category_key!==campaign.categoryKey || profile.category_profile_version!==campaign.categoryProfileVersion) {
+      throw scopeError('CAMPAIGN_PROFILE_MISMATCH',{ campaignId:campaign.id,categoryKey:campaign.categoryKey });
+    }
+    return profile;
+  }
+
+  function resolveProfile(categoryOrProfile) {
+    if (categoryOrProfile && typeof categoryOrProfile==='object') return validateCategoryProfile(categoryOrProfile);
+    const categoryKey=String(categoryOrProfile ?? '');
+    const row=db.prepare(`SELECT c.* FROM catalog_pool_versions pv JOIN catalog_campaigns c ON c.id=pv.campaign_id
+      WHERE pv.category_key=? AND pv.status='active' ORDER BY pv.activated_at DESC,pv.id DESC LIMIT 1`).get(categoryKey);
+    if (!row) throw scopeError('CATEGORY_SCOPE_UNRESOLVED',{ categoryKey,reason:'ACTIVE_POOL_PROFILE_MISSING' });
+    return campaignProfile(mapCampaign(row));
+  }
+
+  function findScopedMembership(profile,productId,{activeOnly=false}={}) {
+    const keyed=selectMemberships(productId,profile.membership_scope,{categoryKey:profile.category_key,activeOnly});
+    if (keyed.length===1) return keyed[0];
+    if (keyed.length>1) throw scopeError('CATEGORY_SCOPE_AMBIGUOUS',{ productId,membershipIds:keyed.map(row=>row.id) });
+    if (profile.category_key!=='motorcycle-accessories') return null;
+    const scopes=[profile.membership_scope,...(profile.legacy_membership_scopes ?? [])];
+    const legacy=scopes.flatMap(scope=>selectMemberships(productId,scope,{categoryKey:null,activeOnly}));
+    const unique=[...new Map(legacy.map(row=>[row.id,row])).values()];
+    if (unique.length===1) return unique[0];
+    if (unique.length>1) throw scopeError('CATEGORY_SCOPE_AMBIGUOUS',{ productId,membershipIds:unique.map(row=>row.id) });
+    return null;
+  }
+
+  function requireScopedMembership(profile,productId,options) {
+    const membership=findScopedMembership(profile,productId,options);
+    if (!membership) throw scopeError('CATEGORY_SCOPE_UNRESOLVED',{ productId,categoryKey:profile.category_key });
+    return membership;
+  }
+
+  function selectMemberships(productId,scope,{categoryKey,activeOnly}) {
+    const categorySql=categoryKey===null ? 'm.category_key IS NULL':'m.category_key=?';
+    const parameters=[productId];if(categoryKey!==null)parameters.push(categoryKey);
+    parameters.push(scope.site_country,scope.language,scope.currency,scope.primary_category,scope.subcategory,scope.sort_order);
+    return db.prepare(`SELECT m.id,m.product_id,p.platform,p.external_product_id goods_id FROM catalog_memberships m
+      JOIN products p ON p.id=m.product_id WHERE m.product_id=? AND ${categorySql}
+      AND m.site_country=? AND m.language=? AND m.currency=? AND m.primary_category=? AND m.subcategory=? AND m.sort_order=?
+      ${activeOnly?'AND m.active=1':''} ORDER BY m.id`).all(...parameters);
+  }
+
+  function listScopedMemberships(profile,{activeOnly=false}={}) {
+    const productIds=db.prepare(`SELECT DISTINCT product_id FROM catalog_memberships ${activeOnly?'WHERE active=1':''}`).all();
+    return productIds.map(row=>findScopedMembership(profile,row.product_id,{activeOnly})).filter(Boolean);
+  }
+
+  function poolMembershipIds(profile,poolVersionId) {
+    const items=db.prepare(`SELECT p.id product_id FROM catalog_pool_version_items i JOIN products p
+      ON p.platform=i.platform AND p.external_product_id=i.goods_id WHERE i.pool_version_id=? ORDER BY i.id`).all(poolVersionId);
+    const ids=items.map(item=>requireScopedMembership(profile,item.product_id,{activeOnly:false}).id);
+    if (new Set(ids).size!==items.length) throw scopeError('CATEGORY_SCOPE_AMBIGUOUS',{ poolVersionId,reason:'MEMBERSHIP_REUSED' });
+    return ids;
+  }
+
+  function deactivateMembershipIds(ids) {
+    const deactivate=db.prepare('UPDATE catalog_memberships SET active=0 WHERE id=?');
+    for (const id of ids) deactivate.run(id);
+  }
+
   return { createCampaign,getCampaign,setCampaignBrowserContext,getBaselineConsistency,captureCampaignBaseline,getBaselineAudit,reconcileActiveMembershipsToPool,isCampaignBaselineItem,hasCampaignStagingItem,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
     recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,getExpansionComparison,getExpansionQualityMetrics,
@@ -855,6 +920,7 @@ function mapRpaQueue(row) { return row ? { id:row.id,campaignId:row.campaign_id,
   attemptCount:Number(row.attempt_count),lastErrorCode:row.last_error_code,lastErrorMessage:row.last_error_message,
   createdAt:row.created_at,updatedAt:row.updated_at }:null; }
 function nullableBoolean(value) { return value===undefined || value===null ? null:value ? 1:0; }
+function scopeError(code,details) { return new AppError(code,{ code,details }); }
 function parseJson(value) { try { return value ? JSON.parse(value):null; } catch { return null; } }
 function coreCounts(db) {
   return { products:Number(db.prepare('SELECT COUNT(*) AS count FROM products').get().count),
