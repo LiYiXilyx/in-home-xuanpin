@@ -28,7 +28,12 @@ import { createSourcingSettings } from '../modules/sourcing/sourcing-settings.mj
 import { chooseNativePath } from '../modules/sourcing/native-path-dialog.mjs';
 import { migrateSourcingDatabase } from '../modules/sourcing/sourcing-db.mjs';
 import { createSourcingRepository } from '../db/repositories/sourcing-repository.mjs';
+import { createSourcingReviewRepository } from '../db/repositories/sourcing-review-repository.mjs';
+import { createTemuSourcingContextRepository,openTemuContextDatabase } from '../db/repositories/temu-sourcing-context-repository.mjs';
 import { createYingdaoImportService } from '../modules/sourcing/yingdao-import-service.mjs';
+import { createSourcingReviewService } from '../modules/sourcing/sourcing-review-service.mjs';
+import { createSourcingReviewImageResolver } from '../modules/sourcing/sourcing-review-images.mjs';
+import { createSourcingReviewController } from './controllers/sourcing-review-controller.mjs';
 
 const projectDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 
@@ -65,10 +70,24 @@ export async function createOperationsServer(options={}) {
     service:sourcingService,repository:sourcingRepository,settingsStore:sourcingSettings,
     pathDialog:options.pathDialog??(input=>chooseNativePath({...input,runProcess:options.nativePathRunProcess})),
   });
+  let temuContextDb=null;
+  let sourcingReviewController=options.sourcingReviewController??null;
+  if(!sourcingReviewController) {
+    temuContextDb=openTemuContextDatabase(config.app.databasePath);
+    const sourcingReviewRepository=createSourcingReviewRepository(sourcingDb);
+    const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:projectDir});
+    const sourcingReviewService=createSourcingReviewService({
+      sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
+      runId:options.sourcingReviewRunId??process.env.SOURCING_REVIEW_RUN_ID??'yingdao_random5_v1_20260831_001',
+    });
+    sourcingReviewController=createSourcingReviewController({
+      service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir}),
+    });
+  }
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
-  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,serveStatic,
+  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,serveStatic,
     environment:{ name:config.app.environment,testMode:testController.isTestMode },logError:options.logError });
   const server=http.createServer(router);
   let closed=false;
@@ -93,6 +112,7 @@ export async function createOperationsServer(options={}) {
       }
       db.close();
       sourcingDb.close();
+      temuContextDb?.close();
     }
   };
 }

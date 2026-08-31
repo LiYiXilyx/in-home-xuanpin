@@ -50,6 +50,62 @@ export function createSourcingReviewService({
     };
   }
 
+  function selectCandidate(input) {
+    assertFixedRun(input?.runId);
+    sourcingRepository.selectCandidate(input);
+    return goodsDetail(input.temuGoodsId);
+  }
+
+  function clearSelection(input) {
+    assertFixedRun(input?.runId);
+    sourcingRepository.clearSelection(input);
+    return goodsDetail(input.temuGoodsId);
+  }
+
+  function excludeCandidate(input) {
+    assertFixedRun(input?.runId);
+    sourcingRepository.excludeCandidate(input);
+    return goodsDetail(input.temuGoodsId);
+  }
+
+  function restoreCandidate(input) {
+    assertFixedRun(input?.runId);
+    sourcingRepository.restoreCandidate(input);
+    return goodsDetail(input.temuGoodsId);
+  }
+
+  function saveCandidateNote(input) {
+    assertFixedRun(input?.runId);
+    sourcingRepository.saveCandidateNote(input);
+    return goodsDetail(input.temuGoodsId);
+  }
+
+  async function resolveTemuImage(temuGoodsId,imageResolver) {
+    return imageResolver.resolveTemuImage(goodsDetail(temuGoodsId).temu_context);
+  }
+
+  async function resolveSupplierImage(temuGoodsId,productId,imageResolver) {
+    const goodsId=required(temuGoodsId,'temu_goods_id'),productKey=required(productId,'product_id');
+    const snapshot=loadSnapshot();
+    const detail=snapshot.details.find(row=>String(row.temu_goods_id)===goodsId);
+    const candidate=detail?.candidates.find(row=>String(row['1688_product_id']??row.supplier_product_id)===productKey);
+    if(!candidate) throw serviceError('REVIEW_CANDIDATE_NOT_FOUND',`supplier candidate 不存在：${fixedRunId}/${goodsId}/${productKey}`);
+    return imageResolver.resolveSupplierImage({run:snapshot.run,candidate});
+  }
+
+  function resolveOpenLink({temuGoodsId,productId}={}) {
+    const goodsId=required(temuGoodsId,'temu_goods_id'),productKey=required(productId,'product_id');
+    const detail=goodsDetail(goodsId);
+    const candidate=detail.candidates.find(row=>String(row['1688_product_id']??row.supplier_product_id)===productKey);
+    if(!candidate) throw serviceError('REVIEW_CANDIDATE_NOT_FOUND',`supplier candidate 不存在：${fixedRunId}/${goodsId}/${productKey}`);
+    return {url:validated1688Url(candidate['1688_product_url']??candidate.supplier_url)};
+  }
+
+  function assertFixedRun(value) {
+    if(String(value??'')!==fixedRunId) throw serviceError('REVIEW_RUN_MISMATCH',`review run 必须固定为：${fixedRunId}`);
+    return fixedRunId;
+  }
+
   function loadSnapshot() {
     const goods=sourcingRepository.listReviewGoods(fixedRunId);
     if(goods.length===0) throw serviceError('REVIEW_RUN_EMPTY',`review run 没有商品：${fixedRunId}`);
@@ -75,7 +131,11 @@ export function createSourcingReviewService({
     return {run,goods:joined,details};
   }
 
-  return {fixedRunId,bootstrap,goodsDetail,navigation};
+  return {
+    fixedRunId,bootstrap,goodsDetail,navigation,assertFixedRun,
+    selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveCandidateNote,
+    resolveTemuImage,resolveSupplierImage,resolveOpenLink,
+  };
 }
 
 function normalizeFilter(value) {
@@ -104,4 +164,16 @@ function required(value,name) {
 
 function serviceError(code,message) {
   return Object.assign(new Error(message),{code});
+}
+
+function validated1688Url(value) {
+  const raw=String(value??'');
+  if(/[\u0000-\u001f\u007f]/.test(raw)) throw serviceError('REVIEW_1688_URL_INVALID','1688 URL 含非法字符');
+  let url;
+  try { url=new URL(raw); } catch { throw serviceError('REVIEW_1688_URL_INVALID','1688 URL 无效'); }
+  const host=url.hostname.toLowerCase();
+  if(url.protocol!=='https:'||(host!=='1688.com'&&!host.endsWith('.1688.com'))||url.username||url.password||url.port) {
+    throw serviceError('REVIEW_1688_URL_INVALID','只允许当前候选的 HTTPS 1688 URL');
+  }
+  return url.href;
 }

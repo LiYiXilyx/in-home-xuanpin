@@ -1,10 +1,33 @@
 import { operatorMessage } from './status-service.mjs';
 
-export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,serveStatic,
+export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
+      if(sourcingReviewController&&url.pathname.startsWith('/api/sourcing/review/')) {
+        const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
+        if(mutation) assertLocalOrigin(request);
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/review/bootstrap') return json(response,200,await sourcingReviewController.bootstrap({runId:url.searchParams.get('run_id'),filter:url.searchParams.get('filter')??'ALL'}));
+        const temuImage=url.pathname.match(/^\/api\/sourcing\/review\/images\/temu\/([^/]+)$/);
+        if(request.method==='GET'&&temuImage) return reviewImage(response,await sourcingReviewController.temuImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(temuImage[1])}));
+        const supplierImage=url.pathname.match(/^\/api\/sourcing\/review\/images\/supplier\/([^/]+)\/([^/]+)$/);
+        if(request.method==='GET'&&supplierImage) return reviewImage(response,await sourcingReviewController.supplierImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(supplierImage[1]),productId:decodeURIComponent(supplierImage[2])}));
+        const openLink=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/candidates\/([^/]+)\/open-link$/);
+        if(request.method==='GET'&&openLink) return json(response,200,await sourcingReviewController.openLink({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(openLink[1]),productId:decodeURIComponent(openLink[2])}));
+        const candidateAction=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/candidates\/([^/]+)\/(exclude|restore|note)$/);
+        if(candidateAction&&((candidateAction[3]==='note'&&request.method==='PUT')||(candidateAction[3]!=='note'&&request.method==='POST'))) {
+          const body=await readJson(request,32_768),method={exclude:'exclude',restore:'restore',note:'note'}[candidateAction[3]];
+          return json(response,200,await sourcingReviewController[method]({temuGoodsId:decodeURIComponent(candidateAction[1]),productId:decodeURIComponent(candidateAction[2]),body}));
+        }
+        const goodsAction=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/(select|clear-selection)$/);
+        if(request.method==='POST'&&goodsAction) {
+          const body=await readJson(request,32_768),method=goodsAction[2]==='select'?'select':'clearSelection';
+          return json(response,200,await sourcingReviewController[method]({temuGoodsId:decodeURIComponent(goodsAction[1]),body}));
+        }
+        const reviewGoods=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)$/);
+        if(request.method==='GET'&&reviewGoods) return json(response,200,await sourcingReviewController.goods({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(reviewGoods[1])}));
+      }
       if (sourcingController && url.pathname.startsWith('/api/sourcing/')) {
         const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
         if(mutation) assertLocalOrigin(request);
@@ -176,7 +199,7 @@ async function readJson(request,maxBytes=16_384) {
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if(code==='LOCAL_ORIGIN_REQUIRED')return 403;if (['JOB_NOT_FOUND','IMPORT_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND'].includes(code)) return 404; if (['RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH'].includes(code)) return 409; return 400; }
+function statusFor(code) { if(code==='LOCAL_ORIGIN_REQUIRED')return 403;if (['JOB_NOT_FOUND','IMPORT_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND','REVIEW_RUN_NOT_FOUND','REVIEW_GOODS_NOT_FOUND','REVIEW_CANDIDATE_NOT_FOUND','REVIEW_IMAGE_NOT_FOUND'].includes(code)) return 404; if (['RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH','REVIEW_CONFLICT'].includes(code)) return 409; return 400; }
 function mapOperatorCampaignResult(result) {
   return { campaign_id:result.campaignId,category_key:result.categoryKey,
     category_profile_version:result.categoryProfileVersion,campaign_name:result.campaignName,
@@ -216,3 +239,14 @@ const CATALOG_HEADERS=Object.freeze({ 'Access-Control-Allow-Methods':'GET, POST,
 function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }
 function catalogCors(response,status) { response.writeHead(status,{ ...CATALOG_HEADERS,'Cache-Control':'no-store' });response.end(); }
 function json(response,status,data,extraHeaders={}) { response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extraHeaders }); response.end(JSON.stringify(data)); }
+function reviewImage(response,result) {
+  if(result?.kind==='LOCAL') {
+    response.writeHead(200,{'Content-Type':result.contentType,'Content-Length':result.bytes.length,'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'});
+    return response.end(result.bytes);
+  }
+  if(result?.kind==='URL_FALLBACK') {
+    response.writeHead(302,{Location:result.url,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+    return response.end();
+  }
+  throw Object.assign(new Error('review image 不可用'),{code:'REVIEW_IMAGE_NOT_FOUND'});
+}
