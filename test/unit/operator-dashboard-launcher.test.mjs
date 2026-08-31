@@ -111,6 +111,16 @@ test('dead old launch lock is recovered once with a new ownership token',t => {
   assert.equal(fs.existsSync(fixture.lockPath),false);
 });
 
+test('launch lock creates its missing parent directory before atomic ownership',t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-launch-lock-parent-'));
+  t.after(() => fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:20 }));
+  const lockPath=path.join(directory,'logs','operator-dashboard-launcher.lock');
+  const acquired=acquireLaunchLock({ lockPath,metadata:{ launcherPid:123 },isProcessAlive:() => true });
+  assert.equal(acquired.owned,true);
+  assert.equal(fs.existsSync(path.join(lockPath,'owner.json')),true);
+  acquired.release();
+});
+
 test('live or fresh launch lock is preserved and never stolen',t => {
   const live=lockFixture(t);
   live.write({ launcherPid:234,createdAt:'2026-08-31T00:00:00.000Z',ownershipToken:'live' });

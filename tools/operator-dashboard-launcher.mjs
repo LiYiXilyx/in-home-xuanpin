@@ -96,6 +96,7 @@ async function waitForExistingLaunch(options) {
 }
 
 export function acquireLaunchLock({ lockPath,metadata={},now=Date.now,isProcessAlive=defaultIsProcessAlive,staleAfterMs=30_000 }) {
+  fs.mkdirSync(path.dirname(lockPath),{ recursive:true });
   for (let attempt=0;attempt<2;attempt+=1) {
     const ownershipToken=randomUUID();
     try {
