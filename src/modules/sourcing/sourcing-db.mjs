@@ -9,9 +9,12 @@ export function resolveSourcingDbPath(projectRoot=process.cwd()){
   const configured=process.env.SOURCING_DB_PATH??'./data/1688_sourcing.db';return path.resolve(projectRoot,configured);
 }
 
-export function migrateSourcingDatabase({databasePath=resolveSourcingDbPath(),migrationsDir=DEFAULT_MIGRATIONS}={}){
+export function migrateSourcingDatabase({databasePath=resolveSourcingDbPath(),migrationsDir=DEFAULT_MIGRATIONS,through=null}={}){
   const db=openDatabase(databasePath,{allowRunnerWrite:true});try{db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations(filename TEXT PRIMARY KEY,checksum TEXT NOT NULL,applied_at TEXT NOT NULL) STRICT`);
-    const applied=[];for(const filename of fs.readdirSync(migrationsDir).filter(x=>/^\d+_.+\.sql$/.test(x)).sort()){
+    const available=fs.readdirSync(migrationsDir).filter(x=>/^\d+_.+\.sql$/.test(x)).sort();
+    if(through!==null&&!available.includes(through))throw new Error(`sourcing migration through target not found: ${through}`);
+    const filenames=through===null?available:available.slice(0,available.indexOf(through)+1);
+    const applied=[];for(const filename of filenames){
       const sql=fs.readFileSync(path.join(migrationsDir,filename),'utf8'),checksum=crypto.createHash('sha256').update(sql).digest('hex');
       const existing=db.prepare('SELECT checksum FROM schema_migrations WHERE filename=?').get(filename);if(existing){if(existing.checksum!==checksum)throw new Error(`sourcing migration checksum mismatch: ${filename}`);continue;}
       transaction(db,()=>{db.exec(sql);db.prepare('INSERT INTO schema_migrations(filename,checksum,applied_at) VALUES(?,?,?)').run(filename,checksum,new Date().toISOString());});applied.push(filename);
