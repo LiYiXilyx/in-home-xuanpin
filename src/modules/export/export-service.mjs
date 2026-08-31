@@ -28,13 +28,14 @@ export async function exportOperationsWorkbook(config,options={}) {
   let model;
   try {
     const repository=createReportRepository(db);
-    const jobId=repository.resolveJobId(options.jobId);
+    const scope={poolVersionId:options.poolVersionId,categoryKey:options.categoryKey};
+    const jobId=repository.resolveJobId(options.jobId,scope);
     model={
-      jobId,
-      products:repository.listProducts(jobId,{ sortDirection:options.sortDirection }),
+      jobId,poolVersionId:scope.poolVersionId,categoryKey:scope.categoryKey,
+      products:repository.listProducts(jobId,{ ...scope,sortDirection:options.sortDirection }),
       quality:repository.listQuality(jobId),
       jobs:repository.listJobs(),
-      counts:repository.counts(jobId)
+      counts:repository.counts(jobId,scope)
     };
   } finally { db.close(); }
   if (model.products.length !== model.counts.activeProducts) {
@@ -48,7 +49,7 @@ export async function exportOperationsWorkbook(config,options={}) {
   const savedPath=await saveWorkbookWithFallback(output,fixedPath,{ saveImpl:options.saveImpl,now:options.now });
   if (!options.saveImpl) await finalizeWorkbook(savedPath);
   const report={
-    jobId:model.jobId,savedPath,fixedPath,manualSource:manualState.sourcePath,
+    jobId:model.jobId,poolVersionId:model.poolVersionId,categoryKey:model.categoryKey,savedPath,fixedPath,manualSource:manualState.sourcePath,
     products:model.products.length,qualityRows:model.quality.length,jobRows:model.jobs.length,
     embeddedImages:built.imageCount,imageFailures:prepared.failures,
     hyperlinks:built.hyperlinkCount,counts:model.counts,sortDirection:options.sortDirection ?? 'asc',
@@ -89,8 +90,9 @@ export async function runExportQa(config,options={}) {
   let expected;
   try {
     const repository=createReportRepository(db);
-    const jobId=repository.resolveJobId(options.jobId);
-    expected={ jobId,products:repository.listProducts(jobId),quality:repository.listQuality(jobId),jobs:repository.listJobs(),counts:repository.counts(jobId) };
+    const scope={poolVersionId:options.poolVersionId,categoryKey:options.categoryKey};
+    const jobId=repository.resolveJobId(options.jobId,scope);
+    expected={ jobId,products:repository.listProducts(jobId,scope),quality:repository.listQuality(jobId),jobs:repository.listJobs(),counts:repository.counts(jobId,scope) };
   } finally { db.close(); }
   const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(workbookPath));
   console.log('[export:qa] workbook imported');

@@ -36,17 +36,18 @@ export function buildOpportunityWorkbook({Workbook},r,images=new Map(),sourcingI
 
 export function prepareGroupingResult(result){const items=result.items.map(enrichOpportunityGrouping);const groupingQa=buildGroupingQa(items,result.sortOptions??{});return {...result,items,groupingQa,summary:{...(result.summary??{}),groupingQa}};}
 
-function definitions(sheet,r){const snap=r.snapshot,sum=r.summary??{};const rows=[
+export function opportunityDefinitionRows(r){const snap=r.snapshot,sum=r.summary??{};return [
   ['分析快照ID',snap.id],['来源Pool Version',snap.sourcePoolVersionId],['来源Campaign',snap.sourceCampaignId],['冻结商品数',snap.sourcePoolCount],['生成时间',toDate(snap.generatedAt)],
   ['类目',snap.categoryKey],['站点/语言/币种',`${snap.siteCountry} / ${snap.language} / ${snap.currency}`],['排序上下文',snap.sortContext],
-  ['正式活动Pool','当前正式 Active Pool：2,135；本分析仅使用该 Pool，不改变 Active Pool / Opportunity / Reviews'],['稳定身份','platform + goods_id'],
-  ['taxonomy_version','motorcycle-opportunity-v2（本次仅刷新分类/聚类展示，不重算销量机会评分）'],['rule_version',snap.config?.ruleVersion??'active-pool-rule-v2'],['source_semantics',snap.config?.sourceSemantics??'CURRENT_ACTIVE_POOL_ONLY'],['sales_data_status',sum.salesDataStatus??'ACTIVE_SOURCE_VALUES;仅展示，不改变既有排序口径'],
+  ['正式活动Pool',`来源 Pool ${snap.sourcePoolVersionId}；冻结 ${snap.sourcePoolCount} 条；不读取其它 Category active membership`],['稳定身份','platform + goods_id'],
+  ['taxonomy_name',snap.config?.taxonomyName??null],['taxonomy_version',snap.config?.taxonomyVersion??null],['rule_version',snap.config?.ruleVersion??null],['source_semantics',snap.config?.sourceSemantics??null],['sales_data_status',sum.salesDataStatus??'ACTIVE_SOURCE_VALUES;仅展示，不改变既有排序口径'],
   ['当前观察链接','优先打开；仍受Temu Session/Navigation Context影响'],['canonical链接','仅身份/历史证据，不保证当前可售'],
   ['估算GMV','price × cumulative sales；只用于冻结池内部相对比较，不等于真实营收'],['细分样本门','SKU < 3 → VALIDATION_OPPORTUNITY，不进入正式排名'],
   ['细分机会分','需求25% + 商业价值20% + 进入友好25% + 评论缺口15% + 质量15%'],['需求分','总销量60% + 中位销量40%'],
   ['商业价值分','均价55% + GMV/SKU 45%'],['进入友好分','SKU数反向55% + Top3集中度反向45%'],['评论缺口分','平均评论数反向60% + 评论密度反向40%'],
   ['商品机会分','需求验证35% + 商业价值30% + 质量15% + 评论缺口20%'],['算法','log1p + 当前池经验百分位；确定性程序计算'],
-  ['电子排除',Object.entries(sum.hardExclusionCodes??{}).map(([k,v])=>`${k}:${v}`).join('; ')||'0'],['风险原则','物流/适配/IP仅作风险标记；绝不声称无侵权'],['当前门',sum.gate??'OPPORTUNITY_PRODUCT_CONFIRMATION']];
+  ['电子排除',Object.entries(sum.hardExclusionCodes??{}).map(([k,v])=>`${k}:${v}`).join('; ')||'0'],['风险原则','物流/适配/IP仅作风险标记；绝不声称无侵权'],['当前门',sum.gate??'OPPORTUNITY_PRODUCT_CONFIRMATION']];}
+function definitions(sheet,r){const rows=opportunityDefinitionRows(r);
   sheet.getRange('A1:B1').merge();sheet.getRange('A1').values=[['机会分析口径与冻结来源']];sheet.getRange('A1:B1').format={fill:NAVY,font:{bold:true,color:'#FFFFFF',size:16},rowHeight:32};table(sheet,3,['字段','内容'],rows,'OpportunityDefinitions');widths(sheet,[30,105]);sheet.getRange('B3:B40').format.wrapText=true;
 }
 function quality(sheet,r,images){const q=r.summary??{},g=r.groupingQa??q.groupingQa??{},imageOk=images.size,imageMissing=(q.itemRows??0)-imageOk;const rows=[['冻结行数',q.itemRows,q.sourcePoolCount,"'="],['唯一身份',q.distinctIdentityCount,q.sourcePoolCount,"'="],['重复身份',q.duplicateIdentityCount,0,"'="],['纳入分析',q.includedCount,null,'观察'],['硬排除',q.hardExcludedCount,0,'审计'],['人工复核',q.manualReviewCount,null,'观察'],['标题完整度',q.coverage?.title,0.95,'>='],['价格完整度',q.coverage?.price,0.95,'>='],['销量完整度',q.coverage?.sales,0.95,'>='],['评分完整度',q.coverage?.rating,0.95,'>='],['评论完整度',q.coverage?.reviews,0.95,'>='],['图片URL完整度',q.coverage?.image,0.95,'>='],['当前链接完整度',q.coverage?.sourceUrl,0.95,'>='],['图片已嵌入',imageOk,q.itemRows,"观察"],['图片下载失败标签',imageMissing,0,'审计'],['核心数据未变化',q.coreDataUnchanged?1:0,1,"'="],['SQLite integrity',q.integrity,'ok',"'="],['相似产品簇数量',g.similarClusterCount,null,'观察'],['待细分商品数',g.waitingCount,null,'观察'],['待细分已聚类',g.waitingClusteredCount,null,'观察'],['待细分未聚类',g.unclusteredWaitingCount,0,'审计'],['Level2连续',g.sameLevel2Contiguous?'PASS':'FAIL','PASS',"'="],['Level3连续',g.sameLevel3Contiguous?'PASS':'FAIL','PASS',"'="],['相似簇连续',g.sameSimilarClusterContiguous?'PASS':'FAIL','PASS',"'="]];table(sheet,1,['指标','实际','阈值','规则'],rows,'OpportunityQuality');sheet.getRange('B8:C14').format.numberFormat='0.0%';widths(sheet,[30,20,20,14]);const codes=[...Object.entries(q.dataQuality??{}).map(([k,v])=>['数据质量',k,v]),...Object.entries(q.warnings??{}).map(([k,v])=>['风险提示',k,v]),...Object.entries(q.hardExclusionCodes??{}).map(([k,v])=>['硬排除',k,v])];table(sheet,29,['类型','代码','商品数'],codes,'OpportunityQualityCodes');}

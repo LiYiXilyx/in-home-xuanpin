@@ -46,7 +46,7 @@ export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOSt
     } catch(error) { repository.failSnapshot(snapshot.id,error);throw error; }
   }
 
-  function reanalyze(snapshotId=null){const snapshot=snapshotId?repository.getSnapshot(snapshotId):repository.latestSnapshot();if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');return analyzeSnapshot(snapshot);}
+  function reanalyze(snapshotId){if(!snapshotId)throw Object.assign(new Error('Opportunity reanalyze 必须显式提供 snapshotId。'),{code:'SNAPSHOT_ID_REQUIRED'});const snapshot=repository.getSnapshot(snapshotId);if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');return analyzeSnapshot(snapshot);}
   function analyzeActivePool({ profile,poolVersionId }={}) {
     const validated=validateCategoryProfile(profile);assertOpportunityBinding(validated);
     if(!poolVersionId)throw Object.assign(new Error('Opportunity 必须显式提供 poolVersionId。'),{ code:'OPPORTUNITY_SCOPE_REQUIRED' });
@@ -59,8 +59,9 @@ export function createOpportunityAnalysisService(db,{ now=()=>new Date().toISOSt
     return analyzeSnapshot(snapshot,before);
   }
 
-  function getResult(snapshotId=null) {
-    const snapshot=snapshotId?repository.getSnapshot(snapshotId):repository.latestSnapshot();
+  function getResult(snapshotId) {
+    if(!snapshotId)throw Object.assign(new Error('Opportunity 查询必须显式提供 snapshotId。'),{code:'SNAPSHOT_ID_REQUIRED'});
+    const snapshot=repository.getSnapshot(snapshotId);
     if(!snapshot)throw new Error('Opportunity Analysis Snapshot不存在。');
     const storedItems=repository.listItems(snapshot.id);const segments=repository.listSegments(snapshot.id);const candidates=repository.listCandidates(snapshot.id);
     const ranked=rankOpportunityProducts(storedItems,segments,{ limit:5 });const segmentByType=new Map(segments.map(x=>[x.productType,x]));
