@@ -673,7 +673,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       'Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
     return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },
-      campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
+      campaign:{ id:campaign.id,name:campaign.name,status:campaign.status,categoryKey:campaign.categoryKey,
         campaignType:campaign.campaignType,baselinePoolCount:campaign.baselinePoolCount,
         categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
         rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
