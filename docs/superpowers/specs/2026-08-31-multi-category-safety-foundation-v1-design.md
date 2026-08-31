@@ -42,12 +42,13 @@ All three bindings use the same shape:
 {
   "taxonomy_name": "string",
   "taxonomy_version": "string or null",
-  "rule_version": "string",
-  "category_scope": "category_key"
+  "rule_version": "string"
 }
 ```
 
 `taxonomy_version` contains a real version when the underlying taxonomy exposes one. It is `null` when the legacy system has no separate version. The resolver must not synthesize a version.
+
+The public Category Profile binding contains only these three uniform fields. During validation, the resolver attaches the owning profile's `category_key` as the resolved binding's internal `categoryScope`; this resolved value is what the Campaign freezes. A pipeline request must match both the frozen Campaign category and the resolved binding category scope.
 
 The Motorcycle profile receives explicit bindings for all three known pipelines. A narrowly scoped legacy resolver may construct those three known Motorcycle bindings when reading an old frozen Campaign config that predates `taxonomy_bindings`. This resolver is allowed only when all of these are true:
 
@@ -56,9 +57,11 @@ The Motorcycle profile receives explicit bindings for all three known pipelines.
 - the pipeline is one of the three known pipelines;
 - the resolved taxonomy and rule version equal the repository's existing Motorcycle definitions.
 
-New Category Profiles must contain `taxonomy_bindings`. Missing pipeline bindings, a binding whose `category_scope` differs from the profile category key, a taxonomy name mismatch, or a rule-version mismatch produces a coded hard failure. The old single `taxonomy` field never grants an unknown category access to a pipeline.
+New Category Profiles must contain `taxonomy_bindings`. Missing pipeline bindings, a resolved internal `categoryScope` that differs from the requested or frozen profile category key, a taxonomy name mismatch, or a rule-version mismatch produces a coded hard failure. The old single `taxonomy` field never grants an unknown category access to a pipeline.
 
 At Campaign creation, the validated, normalized Category Profile—including all resolved taxonomy bindings—is written into `catalog_campaigns.config_json`. Resume and downstream work use that frozen copy and compare it with any explicitly supplied profile. A later config-file edit cannot silently change historical Campaign semantics.
+
+Campaign creation cannot proceed without non-empty, validated `category_key` and `category_profile_version` values. These values are stored both in the Campaign columns and in the frozen normalized Category Profile; disagreement between the two representations is corruption and hard-fails.
 
 ## Canonical category scope
 
@@ -144,6 +147,8 @@ Pool activation and reconciliation use the target pool's category key and resolv
 - count and verify only the category-scoped active memberships;
 - leave every other category's memberships and pool status untouched.
 
+No implementation in this feature may execute a global membership mutation equivalent to `UPDATE catalog_memberships SET active=0 WHERE active=1`. Every `active=0` or `active=1` update must contain a resolved category predicate or an explicitly validated set of membership IDs belonging to one resolved category.
+
 `getBaselineConsistency(categoryKey)` reads the explicit active pool for that key and category-scoped memberships only. When legacy Motorcycle rows are involved, it resolves them against that explicit pool. There is no fallback to all active memberships. `captureCampaignBaseline` freezes items from the resolved category pool only and hard-fails if no unambiguous category pool exists.
 
 ## Classification isolation and taxonomy gate
@@ -160,6 +165,79 @@ Before classification:
 4. hard-fail before replacing any classification rows if any assertion fails.
 
 Week1 classify, fine classify, and Opportunity each use their own binding. Taxonomy content and classification rules remain unchanged.
+
+Supplying only a global active-product state is not a valid classification input. Callers must provide `category_key` or `pool_version_id`; if a category key is supplied it must resolve to exactly one active pool for that category.
+
+## Operator manual bind passive capture
+
+The supported operator-controlled mode for this foundation is named:
+
+```text
+MANUAL_BIND_PASSIVE_CAPTURE
+```
+
+The existing `MANUAL_NAVIGATION_PASSIVE_CAPTURE` name may be accepted only as a compatibility alias at the input boundary. Persisted new Campaign/browser context and UI state use `MANUAL_BIND_PASSIVE_CAPTURE` so the safety semantics are explicit.
+
+The workflow is strictly:
+
+```text
+operator opens a healthy Temu page
+→ detect current page
+→ operator binds the page to an explicit Campaign
+→ operator scrolls or clicks See more manually
+→ operator clicks Capture current page
+```
+
+The mode has no autonomous browser behavior:
+
+```text
+auto scroll = OFF
+auto navigation = OFF
+auto pagination = OFF
+auto See more click = OFF
+auto category/sort switching = OFF
+auto CAPTCHA handling = OFF
+```
+
+“Detect current page” and “Bind current page” are separate actions. Detection is read-only: it inspects browser state and returns a Page Health result without creating or changing a Campaign, queue, batch, staging row, product, membership, snapshot, checkpoint, or database record. Binding requires the operator to supply an explicit Campaign ID and Category Profile; it validates the Campaign against the profile and stores only an ephemeral browser-side binding record. Detection never implicitly binds.
+
+The Page Health Gate validates at least:
+
+```text
+country
+language
+currency
+category
+sort
+product list exists
+state is not SEARCH_NO_RESULTS
+CAPTCHA is not blocking
+DOM_READY or NETWORK_READY
+```
+
+`DOM_READY or NETWORK_READY` means at least one evidence channel has a validated product-list payload; failure of both blocks binding and capture. CAPTCHA is only detected and displayed. The system does not click, solve, bypass, retry through, or otherwise automate CAPTCHA handling.
+
+A successful binding record contains the explicit Campaign ID, category key, category profile version, normalized country/language/currency/category/sort context, source ID, target, binding generation, normalized URL context, and a Page Health/context fingerprint. Before every capture, the extension re-detects the current page and compares it with the binding. A change in category, sort, normalized URL context, country, language, or currency invalidates the binding automatically and blocks capture until the operator detects and binds again.
+
+When no valid binding exists, Capture current page hard-fails before any request reaches a database-writing service. The observable result is zero database writes, including zero Campaign, queue, batch, staging, product, membership, snapshot, checkpoint, and event writes.
+
+The operator UI derives its labels and counters from the validated profile, Campaign status, binding record, Page Health result, and capture response. It dynamically displays:
+
+```text
+Category
+Campaign
+Profile
+Page Health
+Bind status
+target
+unique progress
+current capture new / duplicate / failed counts
+CAPTCHA / error status
+```
+
+The UI must not contain a fixed operational label equivalent to “德国站 · 摩托配件 · Top Sales”. Compatibility help text may mention Motorcycle only when clearly labeled as historical documentation rather than current bound state.
+
+Manual capture is idempotent. A capture batch ID is deterministically derived from Campaign ID, source ID, binding generation, normalized page-context fingerprint, and captured content fingerprint. Repeated clicks with unchanged context and content reuse the same batch ID and payload hash, producing an idempotent replay with no duplicate staging, product, membership, snapshot, progress, or event rows. The same batch ID with a different payload is an idempotency conflict and hard-fails. After operator scrolling changes the captured product content, the content fingerprint changes and a new batch is allowed under the still-valid binding.
 
 ## Excel and Opportunity snapshot isolation
 
@@ -215,6 +293,13 @@ Required integration coverage:
 16. Legacy ambiguous: colliding candidate evidence hard-fails.
 17. New-category legacy denial: Category B cannot use Motorcycle legacy fallback.
 18. Snapshot metadata: workbook uses the frozen taxonomy/rule versions, including a legacy `motorcycle-opportunity-v1` fixture.
+19. Manual detection separation: detecting a healthy page does not bind and performs zero database writes.
+20. Unbound manual capture: capture is blocked and performs zero database writes.
+21. Manual Page Health Gate: every required country/language/currency/category/sort/list/SEARCH_NO_RESULTS/CAPTCHA/DOM-or-Network condition is enforced.
+22. Binding invalidation: changing category, sort, normalized URL context, country, language, or currency invalidates the binding and blocks capture.
+23. Manual automation-off contract: the mode never invokes automatic scroll, navigation, pagination, See more, category/sort switching, or CAPTCHA handling.
+24. Manual UI state: labels and counters are populated from the bound profile/Campaign and contain no fixed Motorcycle operational context for Category B.
+25. Manual idempotence: repeated unchanged capture produces one logical batch and no duplicate writes; changed payload under the same batch ID hard-fails.
 
 Existing tests that assert implicit resume are updated to assert the new explicit behavior. Compatibility is not restored by weakening a gate.
 
@@ -236,6 +321,19 @@ the exact 1208/2000 Campaign status and progress
 
 The before/after values must be identical. The final report includes legacy resolver test counts and the two production audit constants, but it does not run the compatibility resolver as a production mutation.
 
+The protected production baseline includes the current Motorcycle active pool and its 2135 products, the paused `1208 / 2000` Full Refresh Campaign, all historical snapshots, and all historical Campaigns. Read-only QA must prove their counts/statuses are unchanged.
+
 ## Delivery
 
-Implementation may be committed in focused commits after tests pass. Nothing is pushed. The final verdict is `SAFE_FOR_SECOND_CATEGORY_10_ROW_DRY_RUN = YES` only when every required isolation test passes and production read-only QA proves no state change; otherwise it is `NO` with explicit blockers.
+Implementation may be committed in focused commits after tests pass. Nothing is pushed. Delivery has two independent verdicts:
+
+```text
+SAFE_FOR_SECOND_CATEGORY_10_ROW_DRY_RUN = YES / NO
+SAFE_FOR_OPERATOR_MANUAL_CAPTURE = YES / NO
+```
+
+`SAFE_FOR_SECOND_CATEGORY_10_ROW_DRY_RUN` is `YES` only when every category-isolation, Campaign/checkpoint, taxonomy-binding, classification, workbook, and legacy-resolution test passes and production read-only QA proves no state change.
+
+`SAFE_FOR_OPERATOR_MANUAL_CAPTURE` is `YES` only when the separate detect/bind workflow, Page Health Gate, binding invalidation, automation-off contract, unbound zero-write behavior, dynamic UI, and idempotence tests all pass and production read-only QA proves no state change.
+
+Failure of either gate does not get hidden by the other. A failed gate is reported as `NO` with explicit blockers.
