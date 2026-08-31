@@ -37,6 +37,9 @@
     "subcategory": "Motorcycle Accessories",
     "sort_order": "Top Sales"
   },
+  "page_health": {
+    "category_names": ["Motorcycle Accessories", "Motorcycles & Powersports Accessories"]
+  },
   "legacy_membership_scopes": [
     {
       "site_country": "德国",

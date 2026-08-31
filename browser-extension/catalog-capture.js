@@ -3,6 +3,7 @@
 (() => {
   const MAX_CARDS_PER_BATCH=300;
   const FULL_REFRESH_MODE='FULL_REFRESH_EXTENSION_AUTO';
+  const MANUAL_CAPTURE_MODES=new Set(['MANUAL_BIND_PASSIVE_CAPTURE','MANUAL_NAVIGATION_PASSIVE_CAPTURE']);
   function error(code,message) { const value=new Error(message);value.code=code;return value; }
   function send(message) { return new Promise((resolve,reject) => chrome.runtime.sendMessage(message,response => { const runtimeError=chrome.runtime.lastError;if (runtimeError) reject(new Error(runtimeError.message));else resolve(response); })); }
 
@@ -49,7 +50,7 @@
       results.push(saved.result);
     }
     const result=aggregateResults(batchId,results);
-    if (lookup.context.queue?.id && captureMode!=='MANUAL_NAVIGATION_PASSIVE_CAPTURE') {
+    if (lookup.context.queue?.id && !MANUAL_CAPTURE_MODES.has(captureMode)) {
       const before=Number(lookup.context.campaign.nonElectronicUniqueCount ?? 0);
       const after=Number(result.campaign?.nonElectronicUniqueCount ?? before);
       const checkpoint=await send({ type:'SAVE_CATALOG_CHECKPOINT',payload:{
@@ -79,7 +80,7 @@
       if (cards.length>=limit) break;
     }
     if (!cards.length) throw error('NO_PASSIVE_NETWORK_DOM_MATCH','当前尚无 Network cache 与真实 DOM goods_id 的严格交集，请继续人工导航。');
-    const result=await capture({ campaignId,sourceId,batchId,cards,captureMode:'MANUAL_NAVIGATION_PASSIVE_CAPTURE',pageBinding });
+    const result=await capture({ campaignId,sourceId,batchId,cards,captureMode:'MANUAL_BIND_PASSIVE_CAPTURE',pageBinding });
     return { ...result,passiveGoodsIds:cards.map(card=>String(card.goods_id)),passiveCandidateCount:cards.length };
   }
 
