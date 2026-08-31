@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 export const DASHBOARD_SERVICE='temu-operator-dashboard';
 export const DASHBOARD_API_VERSION=1;
@@ -115,6 +116,38 @@ export function acquireLaunchLock({ lockPath,metadata={},now=Date.now,isProcessA
   return { owned:false,reason:'lock-unavailable' };
 }
 
+export function createProductionLaunchOptions({ worktree,config,npm,port },dependencies={}) {
+  if (!fs.existsSync(worktree) || !fs.statSync(worktree).isDirectory()) {
+    throw launcherError('OPERATOR_WORKTREE_NOT_FOUND','运行目录不存在。');
+  }
+  if (!fs.existsSync(config) || !fs.statSync(config).isFile()) {
+    throw launcherError('OPERATOR_CONFIG_NOT_FOUND','配置文件不存在。');
+  }
+  if (!path.isAbsolute(npm) || !isExecutable(npm)) {
+    throw launcherError('NPM_RUNTIME_NOT_FOUND','npm 路径无效。');
+  }
+  const numericPort=Number(port);
+  if (!Number.isInteger(numericPort) || numericPort<1 || numericPort>65_535) {
+    throw launcherError('INVALID_DASHBOARD_PORT','Dashboard 端口无效。');
+  }
+  const logsDirectory=path.join(worktree,'logs');
+  return {
+    dashboardUrl:`http://127.0.0.1:${numericPort}/`,healthUrl:`http://127.0.0.1:${numericPort}/api/health`,
+    host:'127.0.0.1',port:numericPort,cwd:worktree,env:{ TEMU_CONFIG_PATH:config },
+    dashboardCommand:[npm,['run','dashboard']],
+    lockPath:path.join(logsDirectory,'operator-dashboard-launcher.lock'),
+    logPath:path.join(logsDirectory,'operator-dashboard.log'),pidPath:path.join(logsDirectory,'operator-dashboard.pid'),
+    healthTimeoutMs:30_000,healthPollIntervalMs:200,staleAfterMs:30_000,
+    openDashboard:dependencies.openDashboard ?? openSystemBrowser
+  };
+}
+
+export async function runLauncherCli(args,dependencies={}) {
+  const parsed=parseLauncherArgs(args);
+  const options=createProductionLaunchOptions(parsed,dependencies);
+  return (dependencies.launchImpl ?? launchOperatorDashboard)(options);
+}
+
 function readLockOwner(lockPath) {
   try { return JSON.parse(fs.readFileSync(path.join(lockPath,'owner.json'),'utf8')); } catch { return null; }
 }
@@ -190,6 +223,38 @@ function writePidDiagnostic(pidPath,data) {
 function appendLauncherLog(logPath,error) {
   fs.mkdirSync(path.dirname(logPath),{ recursive:true });
   fs.appendFileSync(logPath,`\n[launcher] ${new Date().toISOString()} ${error?.code ?? 'ERROR'} ${error?.message ?? String(error)}\n`);
+}
+
+function isExecutable(file) {
+  try { fs.accessSync(file,fs.constants.X_OK);return true; } catch { return false; }
+}
+
+function parseLauncherArgs(args) {
+  const parsed={};
+  for (let index=0;index<args.length;index+=2) {
+    const flag=args[index];
+    const value=args[index+1];
+    if (!flag?.startsWith('--') || value == null) throw launcherError('INVALID_LAUNCHER_ARGUMENTS','启动参数无效。');
+    parsed[flag.slice(2)]=value;
+  }
+  for (const required of ['worktree','config','npm','port']) {
+    if (!parsed[required]) throw launcherError('INVALID_LAUNCHER_ARGUMENTS',`缺少启动参数：${required}。`);
+  }
+  return parsed;
+}
+
+async function openSystemBrowser(url) {
+  const child=spawn('/usr/bin/open',[url],{ detached:true,stdio:'ignore' });
+  child.unref();
+}
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  runLauncherCli(process.argv.slice(2)).then(result => {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  }).catch(error => {
+    process.stderr.write(`${error?.code ?? 'OPERATOR_DASHBOARD_LAUNCH_FAILED'}: ${error?.message ?? String(error)}${error?.logPath ? `\n日志：${error.logPath}`:''}\n`);
+    process.exitCode=1;
+  });
 }
 
 function launcherError(code,message,details={}) {

@@ -8,9 +8,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   acquireLaunchLock,
+  createProductionLaunchOptions,
   isTcpPortOccupied,
   launchOperatorDashboard,
-  probeDashboardHealth
+  probeDashboardHealth,
+  runLauncherCli
 } from '../../tools/operator-dashboard-launcher.mjs';
 
 test('HTTP 200 is accepted only with exact Temu service identity',async t => {
@@ -179,6 +181,38 @@ test('dashboard log rotates at 5 MiB and PID file remains diagnostic only',async
   assert.deepEqual(fs.readdirSync(fixture.directory).filter(name => name.startsWith('operator-dashboard.log')).sort(),
     ['operator-dashboard.log','operator-dashboard.log.1']);
   assert.equal(JSON.parse(fs.readFileSync(fixture.options.pidPath,'utf8')).pid,result.pid);
+});
+
+test('launcher CLI maps explicit worktree config npm and port without fallback',async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-launch-cli-'));
+  t.after(() => fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:20 }));
+  const configPath=path.join(directory,'config.json');
+  const npmPath=path.join(directory,'npm');
+  fs.writeFileSync(configPath,'{}');
+  fs.writeFileSync(npmPath,'#!/bin/sh\nexit 0\n');
+  fs.chmodSync(npmPath,0o755);
+  let captured;
+  const result=await runLauncherCli([
+    '--worktree',directory,'--config',configPath,'--npm',npmPath,'--port','43127'
+  ],{ launchImpl:async options => { captured=options;return { action:'opened-existing',dashboardUrl:options.dashboardUrl,pid:null }; },
+    openDashboard:async () => {} });
+
+  assert.equal(result.action,'opened-existing');
+  assert.equal(captured.cwd,directory);
+  assert.equal(captured.env.TEMU_CONFIG_PATH,configPath);
+  assert.deepEqual(captured.dashboardCommand,[npmPath,['run','dashboard']]);
+  assert.equal(captured.dashboardUrl,'http://127.0.0.1:43127/');
+  assert.equal(captured.healthUrl,'http://127.0.0.1:43127/api/health');
+  assert.equal(captured.lockPath,path.join(directory,'logs/operator-dashboard-launcher.lock'));
+  assert.equal(captured.logPath,path.join(directory,'logs/operator-dashboard.log'));
+  assert.equal(captured.pidPath,path.join(directory,'logs/operator-dashboard.pid'));
+});
+
+test('production launch options hard fail missing explicit paths',t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-launch-options-'));
+  t.after(() => fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:20 }));
+  assert.throws(() => createProductionLaunchOptions({ worktree:path.join(directory,'missing'),config:path.join(directory,'missing.json'),npm:'/missing/npm',port:37821 }),
+    error => error.code === 'OPERATOR_WORKTREE_NOT_FOUND');
 });
 
 async function healthServer(t,body,{ status=200,contentType='application/json' }={}) {

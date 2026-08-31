@@ -1,0 +1,69 @@
+#!/bin/zsh
+
+set -u
+
+DEFAULT_WORKTREE_PATH='/private/tmp/temu-multi-category-safety-v1'
+DEFAULT_CONFIG_PATH='/Users/chuangyangdianzi/Desktop/选品上架-家里版本/temu选品/config.json'
+TEST_MODE="${TEMU_OPERATOR_LAUNCHER_TEST_MODE:-0}"
+WORKTREE_PATH="$DEFAULT_WORKTREE_PATH"
+CONFIG_PATH="$DEFAULT_CONFIG_PATH"
+if [[ "$TEST_MODE" == '1' ]]; then
+  WORKTREE_PATH="${TEMU_OPERATOR_TEST_WORKTREE:-$WORKTREE_PATH}"
+  CONFIG_PATH="${TEMU_OPERATOR_TEST_CONFIG:-$CONFIG_PATH}"
+fi
+LOG_PATH="$WORKTREE_PATH/logs/operator-dashboard.log"
+
+show_failure() {
+  local code="$1"
+  local message="$2"
+  local display="Temu 运营台启动失败"
+  display+=$'\n'"$code: $message"
+  display+=$'\n'"请查看日志：$LOG_PATH"
+  if [[ "$TEST_MODE" == '1' && -n "${TEMU_OPERATOR_TEST_DIALOG_FILE:-}" ]]; then
+    print -r -- "$display" > "$TEMU_OPERATOR_TEST_DIALOG_FILE"
+    return
+  fi
+  /usr/bin/osascript - "$display" <<'APPLESCRIPT' >/dev/null 2>&1
+on run argv
+  display dialog (item 1 of argv) buttons {"好"} default button "好" with title "Temu 运营台启动失败"
+end run
+APPLESCRIPT
+}
+
+hard_fail() {
+  show_failure "$1" "$2"
+  print -u2 -- "$1: $2"
+  exit 1
+}
+
+[[ -d "$WORKTREE_PATH" ]] || hard_fail 'OPERATOR_WORKTREE_NOT_FOUND' '运行目录不存在。'
+[[ -f "$CONFIG_PATH" ]] || hard_fail 'OPERATOR_CONFIG_NOT_FOUND' '配置文件不存在。'
+
+RESOLVER_PATH="$WORKTREE_PATH/scripts/macos/resolve-temu-operator-runtime.sh"
+[[ -x "$RESOLVER_PATH" ]] || hard_fail 'RUNTIME_RESOLVER_NOT_FOUND' '运行环境检查器不存在或不可执行。'
+
+RUNTIME_OUTPUT=''
+if [[ "$TEST_MODE" == '1' && -n "${TEMU_OPERATOR_TEST_RUNTIME_PATH:-}" ]]; then
+  RUNTIME_OUTPUT="$($RESOLVER_PATH "$TEMU_OPERATOR_TEST_RUNTIME_PATH" 2>&1)"
+else
+  RUNTIME_OUTPUT="$($RESOLVER_PATH 2>&1)"
+fi
+RUNTIME_STATUS=$?
+if [[ $RUNTIME_STATUS -ne 0 ]]; then
+  RUNTIME_CODE="${RUNTIME_OUTPUT%%:*}"
+  [[ "$RUNTIME_CODE" == 'NODE_RUNTIME_NOT_FOUND' || "$RUNTIME_CODE" == 'NPM_RUNTIME_NOT_FOUND' ]] || RUNTIME_CODE='RUNTIME_RESOLUTION_FAILED'
+  hard_fail "$RUNTIME_CODE" "$RUNTIME_OUTPUT"
+fi
+RUNTIME_LINES=("${(@f)RUNTIME_OUTPUT}")
+NODE_PATH="${RUNTIME_LINES[1]:-}"
+NPM_PATH="${RUNTIME_LINES[2]:-}"
+[[ -x "$NODE_PATH" ]] || hard_fail 'NODE_RUNTIME_NOT_FOUND' 'Node 路径无效。'
+[[ -x "$NPM_PATH" ]] || hard_fail 'NPM_RUNTIME_NOT_FOUND' 'npm 路径无效。'
+
+PATH="${NODE_PATH:h}:${NPM_PATH:h}:/usr/bin:/bin" \
+  "$NODE_PATH" "$WORKTREE_PATH/tools/operator-dashboard-launcher.mjs" \
+  --worktree "$WORKTREE_PATH" --config "$CONFIG_PATH" --npm "$NPM_PATH" --port 37821
+STATUS=$?
+[[ $STATUS -eq 0 ]] || hard_fail 'OPERATOR_DASHBOARD_LAUNCH_FAILED' 'Dashboard 未能通过健康检查。'
+
+exit 0
