@@ -5,6 +5,7 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   acquireLaunchLock,
   isTcpPortOccupied,
@@ -107,6 +108,79 @@ test('lock release removes only the matching ownership token',t => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.lockPath,'owner.json'),'utf8')).ownershipToken,'replacement');
 });
 
+test('free port starts detached dashboard, waits for health, then opens exact URL',async t => {
+  const fixture=await processFixture(t);
+  const opened=[];
+  let launchedPid;
+  t.after(async () => stopFixture(launchedPid));
+  const result=await launchOperatorDashboard({
+    ...fixture.options,
+    dashboardCommand:[process.execPath,[fixture.script,'--port',String(fixture.port),'--mode','valid']],
+    openDashboard:async url => opened.push(url)
+  });
+  launchedPid=result.pid;
+
+  assert.equal(result.action,'started-and-opened');
+  assert.deepEqual(opened,[fixture.dashboardUrl]);
+  assert.equal((await probeDashboardHealth({ healthUrl:fixture.healthUrl })).state,'ready');
+  assert.equal(processAlive(result.pid),true,'dashboard survives after launcher call returns');
+});
+
+test('two concurrent launchers spawn exactly one dashboard',async t => {
+  const fixture=await processFixture(t);
+  const counter=path.join(fixture.directory,'spawn-counter.txt');
+  let launchedPid;
+  t.after(async () => stopFixture(launchedPid));
+  const options={
+    ...fixture.options,
+    dashboardCommand:[process.execPath,[fixture.script,'--port',String(fixture.port),'--mode','valid','--counter',counter]],
+    openDashboard:async () => {}
+  };
+
+  const results=await Promise.all([launchOperatorDashboard(options),launchOperatorDashboard(options)]);
+  launchedPid=results.find(result => result.pid)?.pid;
+
+  assert.equal(fs.readFileSync(counter,'utf8').trim().split('\n').length,1);
+  assert.deepEqual(new Set(results.map(result => result.action)),new Set(['started-and-opened','opened-existing']));
+});
+
+test('dashboard startup failure writes evidence and never opens the browser',async t => {
+  const fixture=await processFixture(t);
+  let opens=0;
+  let failure;
+  try {
+    await launchOperatorDashboard({
+      ...fixture.options,
+      dashboardCommand:[process.execPath,[fixture.script,'--port',String(fixture.port),'--mode','exit']],
+      openDashboard:async () => { opens+=1; }
+    });
+  } catch (error) { failure=error; }
+  assert.equal(failure?.code,'DASHBOARD_START_FAILED');
+  assert.equal(failure?.logPath,fixture.options.logPath);
+  assert.equal(opens,0);
+  assert.equal(fs.existsSync(fixture.options.logPath),true);
+  assert.match(fs.readFileSync(fixture.options.logPath,'utf8'),/startup failure/);
+});
+
+test('dashboard log rotates at 5 MiB and PID file remains diagnostic only',async t => {
+  const fixture=await processFixture(t);
+  fs.writeFileSync(fixture.options.logPath,Buffer.alloc(5*1024*1024+1,0x61));
+  let launchedPid;
+  t.after(async () => stopFixture(launchedPid));
+  const result=await launchOperatorDashboard({
+    ...fixture.options,
+    dashboardCommand:[process.execPath,[fixture.script,'--port',String(fixture.port),'--mode','valid']],
+    openDashboard:async () => {}
+  });
+  launchedPid=result.pid;
+
+  assert.equal(fs.statSync(`${fixture.options.logPath}.1`).size,5*1024*1024+1);
+  assert.ok(fs.statSync(fixture.options.logPath).size<5*1024*1024);
+  assert.deepEqual(fs.readdirSync(fixture.directory).filter(name => name.startsWith('operator-dashboard.log')).sort(),
+    ['operator-dashboard.log','operator-dashboard.log.1']);
+  assert.equal(JSON.parse(fs.readFileSync(fixture.options.pidPath,'utf8')).pid,result.pid);
+});
+
 async function healthServer(t,body,{ status=200,contentType='application/json' }={}) {
   const server=http.createServer((_request,response) => {
     response.writeHead(status,{ 'Content-Type':contentType });
@@ -143,4 +217,34 @@ function lockFixture(t) {
       fs.writeFileSync(path.join(lockPath,'owner.json'),JSON.stringify(metadata));
     }
   };
+}
+
+async function processFixture(t) {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-launch-process-'));
+  t.after(() => fs.rmSync(directory,{ recursive:true,force:true,maxRetries:5,retryDelay:20 }));
+  const port=await unusedPort();
+  return {
+    directory,port,
+    script:fileURLToPath(new URL('../fixtures/operator-dashboard-fixture.mjs',import.meta.url)),
+    dashboardUrl:`http://127.0.0.1:${port}/`,
+    healthUrl:`http://127.0.0.1:${port}/api/health`,
+    options:{
+      dashboardUrl:`http://127.0.0.1:${port}/`,healthUrl:`http://127.0.0.1:${port}/api/health`,
+      host:'127.0.0.1',port,lockPath:path.join(directory,'launcher.lock'),
+      logPath:path.join(directory,'operator-dashboard.log'),pidPath:path.join(directory,'operator-dashboard.pid'),
+      healthTimeoutMs:5_000,healthPollIntervalMs:20
+    }
+  };
+}
+
+function processAlive(pid) {
+  if (!Number.isInteger(pid)) return false;
+  try { process.kill(pid,0);return true; } catch { return false; }
+}
+
+async function stopFixture(pid) {
+  if (!processAlive(pid)) return;
+  process.kill(pid,'SIGTERM');
+  const deadline=Date.now()+2_000;
+  while (processAlive(pid) && Date.now()<deadline) await new Promise(resolve => setTimeout(resolve,20));
 }

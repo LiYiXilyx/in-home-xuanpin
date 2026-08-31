@@ -2,6 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 export const DASHBOARD_SERVICE='temu-operator-dashboard';
 export const DASHBOARD_API_VERSION=1;
@@ -49,8 +50,39 @@ export async function launchOperatorDashboard(options) {
   if (await isTcpPortOccupied(options)) {
     throw launcherError('PORT_OCCUPIED_BY_OTHER_SERVICE','端口已被非 Temu 运营台服务占用。');
   }
-  const child=await options.spawnDashboard();
-  return { action:'spawned',dashboardUrl:options.dashboardUrl,pid:child?.pid ?? null };
+  const lock=acquireLaunchLock({ lockPath:options.lockPath,metadata:{ launcherPid:process.pid },
+    staleAfterMs:options.staleAfterMs,isProcessAlive:options.isProcessAlive });
+  if (!lock.owned) return waitForExistingLaunch(options);
+  try {
+    const child=options.spawnDashboard ? await options.spawnDashboard():spawnDashboardProcess(options);
+    await waitForDashboardHealth({ ...options,child });
+    await options.openDashboard(options.dashboardUrl);
+    return { action:'started-and-opened',dashboardUrl:options.dashboardUrl,pid:child?.pid ?? null };
+  } catch (error) {
+    if (options.logPath) {
+      appendLauncherLog(options.logPath,error);
+      if (!error.logPath) error.logPath=options.logPath;
+    }
+    throw error;
+  } finally {
+    lock.release();
+  }
+}
+
+async function waitForExistingLaunch(options) {
+  const timeoutMs=options.healthTimeoutMs ?? 30_000;
+  const intervalMs=options.healthPollIntervalMs ?? 200;
+  const deadline=Date.now()+timeoutMs;
+  while (Date.now()<deadline) {
+    const health=await probeDashboardHealth(options);
+    if (health.state === 'ready') {
+      await options.openDashboard(options.dashboardUrl);
+      return { action:'opened-existing',dashboardUrl:options.dashboardUrl,pid:null };
+    }
+    if (health.state === 'foreign') throw launcherError('PORT_OCCUPIED_BY_OTHER_SERVICE','端口已被非 Temu 运营台服务占用。');
+    await (options.sleep ?? defaultSleep)(intervalMs);
+  }
+  throw launcherError('DASHBOARD_HEALTH_TIMEOUT','等待另一个启动器启动 Temu 运营台超时。');
 }
 
 export function acquireLaunchLock({ lockPath,metadata={},now=Date.now,isProcessAlive=defaultIsProcessAlive,staleAfterMs=30_000 }) {
@@ -104,6 +136,60 @@ function releaseOwnedLock(lockPath,ownershipToken) {
 
 function defaultIsProcessAlive(pid) {
   try { process.kill(pid,0);return true; } catch (error) { return error?.code === 'EPERM'; }
+}
+
+function spawnDashboardProcess(options) {
+  const [executable,args=[]]=options.dashboardCommand ?? [];
+  if (!executable) throw launcherError('DASHBOARD_COMMAND_MISSING','缺少 Dashboard 启动命令。');
+  fs.mkdirSync(path.dirname(options.logPath),{ recursive:true });
+  rotateDashboardLog(options.logPath,options.maxLogBytes ?? 5*1024*1024);
+  const output=fs.openSync(options.logPath,'a');
+  let child;
+  try {
+    child=spawn(executable,args,{ cwd:options.cwd,env:{ ...process.env,...options.env },detached:true,stdio:['ignore',output,output] });
+  } finally {
+    fs.closeSync(output);
+  }
+  child.unref();
+  if (options.pidPath) writePidDiagnostic(options.pidPath,{ pid:child.pid,startedAt:new Date().toISOString() });
+  return child;
+}
+
+async function waitForDashboardHealth(options) {
+  const timeoutMs=options.healthTimeoutMs ?? 30_000;
+  const intervalMs=options.healthPollIntervalMs ?? 200;
+  const deadline=Date.now()+timeoutMs;
+  while (Date.now()<deadline) {
+    const health=await probeDashboardHealth(options);
+    if (health.state === 'ready') return;
+    if (health.state === 'foreign') throw launcherError('PORT_OCCUPIED_BY_OTHER_SERVICE','启动期间端口出现非 Temu 运营台服务。');
+    if (options.child?.exitCode != null) throw launcherError('DASHBOARD_START_FAILED','Temu 运营台进程启动失败。',{ exitCode:options.child.exitCode });
+    await (options.sleep ?? defaultSleep)(intervalMs);
+  }
+  throw launcherError('DASHBOARD_HEALTH_TIMEOUT','等待 Temu 运营台就绪超时。');
+}
+
+function defaultSleep(milliseconds) { return new Promise(resolve => setTimeout(resolve,milliseconds)); }
+
+function rotateDashboardLog(logPath,maxBytes) {
+  let size=0;
+  try { size=fs.statSync(logPath).size; } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  if (size <= maxBytes) return;
+  const previous=`${logPath}.1`;
+  fs.rmSync(previous,{ force:true });
+  fs.renameSync(logPath,previous);
+}
+
+function writePidDiagnostic(pidPath,data) {
+  fs.mkdirSync(path.dirname(pidPath),{ recursive:true });
+  const temporary=`${pidPath}.tmp-${process.pid}-${randomUUID()}`;
+  fs.writeFileSync(temporary,JSON.stringify(data));
+  fs.renameSync(temporary,pidPath);
+}
+
+function appendLauncherLog(logPath,error) {
+  fs.mkdirSync(path.dirname(logPath),{ recursive:true });
+  fs.appendFileSync(logPath,`\n[launcher] ${new Date().toISOString()} ${error?.code ?? 'ERROR'} ${error?.message ?? String(error)}\n`);
 }
 
 function launcherError(code,message,details={}) {
