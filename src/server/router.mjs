@@ -99,7 +99,9 @@ export function createRouter({ statusService,browserController,jobController,rev
         return json(response,200,{ ok:true,result },EXTENSION_CORS_HEADERS);
       }
       if (request.method === 'GET' && url.pathname === '/api/status') return json(response,200,await statusService.snapshot());
-      if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{ ok:true,environment:environment.name,testMode:environment.testMode });
+      if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{
+        ok:true,service:'temu-operator-dashboard',apiVersion:1,environment:environment.name,testMode:environment.testMode
+      });
       if (request.method === 'POST' && url.pathname === '/api/browser/open') return json(response,200,{ ok:true,...await browserController.open() });
       if (request.method === 'POST' && url.pathname === '/api/browser/connect') return json(response,200,{ ok:true,...await browserController.connectExisting() });
       if (request.method === 'POST' && url.pathname === '/api/browser/new') return json(response,200,{ ok:true,...await browserController.createFresh() });
