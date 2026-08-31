@@ -1,6 +1,7 @@
 import { createId } from '../../shared/ids.mjs';
 import { AppError } from '../../shared/errors.mjs';
 import { validateCategoryProfile } from '../../modules/catalog-scale/category-profile.mjs';
+import { getCampaignQuantityPolicy } from '../../modules/catalog-scale/campaign-quantity-policy.mjs';
 
 export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOString() }={}) {
   function createCampaign(input) {
@@ -903,8 +904,9 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
 function mapCampaign(row) {
   if (!row) return null;
-  return { id:row.id,name:row.name,campaignType:row.campaign_type,categoryKey:row.category_key,
-    categoryProfileVersion:row.category_profile_version,targetGate:row.target_gate,targetCount:Number(row.target_count),
+  const storageTargetCount=Number(row.target_count);
+  const base={ id:row.id,name:row.name,campaignType:row.campaign_type,categoryKey:row.category_key,
+    categoryProfileVersion:row.category_profile_version,targetGate:row.target_gate,storageTargetCount,
     baselinePoolCount:Number(row.baseline_pool_count),baselineSource:row.baseline_source ?? null,
     baselinePoolVersionId:row.baseline_pool_version_id ?? null,status:row.status,qaStatus:row.qa_status,
     rawObservedCount:Number(row.raw_observed_count),electronicExcludedCount:Number(row.electronic_excluded_count),
@@ -914,6 +916,8 @@ function mapCampaign(row) {
     browserProfileName:row.browser_profile_name,browserProfileDirectory:row.browser_profile_directory,
     browserControlMode:row.browser_control_mode,startedAt:row.started_at,finishedAt:row.finished_at,
     createdAt:row.created_at,updatedAt:row.updated_at };
+  const quantityPolicy=getCampaignQuantityPolicy(base);
+  return { ...base,targetCount:quantityPolicy.businessTarget,quantityPolicy };
 }
 function mapSource(row) { return row ? { id:row.id,campaignId:row.campaign_id,categoryKey:row.category_key,sourceKey:row.source_key,
   sourceType:row.source_type,sortOrder:row.sort_order,priority:Number(row.priority),targetQuota:row.target_quota===null?null:Number(row.target_quota),

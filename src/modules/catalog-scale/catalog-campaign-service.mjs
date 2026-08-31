@@ -4,6 +4,7 @@ import { createCatalogCampaignRepository } from '../../db/repositories/catalog-c
 import { AppError } from '../../shared/errors.mjs';
 import { canonicalProductUrl,createId } from '../../shared/ids.mjs';
 import { validateCategoryProfile } from './category-profile.mjs';
+import { getCampaignQuantityPolicy } from './campaign-quantity-policy.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
@@ -233,7 +234,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       }
       const batch=repository.completeBatch(registered.batch.id,{ stagingCount,excludedCount,duplicateCount });
       const refreshedCampaign=repository.refreshCampaignCounts(campaignId);
-      const audit={ campaignTarget:campaign.targetCount,targetReached:refreshedCampaign.nonElectronicUniqueCount>=campaign.targetCount,
+      const refreshedPolicy=getCampaignQuantityPolicy(refreshedCampaign);
+      const audit={ campaignTarget:refreshedPolicy.businessTarget,targetReached:refreshedPolicy.targetReached,
         serviceObserved,electronicExcluded,otherBusinessExcluded,eligibleGoods,acceptedGoods,stoppedDueToTarget,
         unprocessedAfterTarget:targetGateStopped ? Math.max(0,cards.length-serviceObserved):0,failed:0,
         campaignStagingDeduped:duplicateCount };
@@ -248,8 +250,11 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (campaign.status!=='running') throw new AppError('Catalog Campaign当前未运行。',{ code:'CAMPAIGN_NOT_ACTIVE' });
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
     const activePool=db.prepare("SELECT id FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1").get(campaign.categoryKey);
+    const quantityPolicy=getCampaignQuantityPolicy(campaign);
     return { campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
       categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+      quantityMode:quantityPolicy.quantityMode,captureLimit:quantityPolicy.captureLimit,
+      remaining:quantityPolicy.remaining,targetReached:quantityPolicy.targetReached,
       browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
       browserControlMode:campaign.browserControlMode,baselinePoolCount:campaign.baselinePoolCount,
       cdpRequired:!LOCAL_EXTENSION_MODES.has(campaign.browserControlMode),
@@ -672,10 +677,13 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (source.campaignId!==campaign.id || source.categoryKey!==campaign.categoryKey) throw new AppError(
       'Source不属于当前Category Campaign。',{ code:'CATALOG_SOURCE_CAMPAIGN_MISMATCH' });
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
+    const quantityPolicy=getCampaignQuantityPolicy(campaign);
     return { queue:{ ...queue,claimToken:exposeClaimToken ? queue.claimToken:undefined },
       campaign:{ id:campaign.id,name:campaign.name,status:campaign.status,categoryKey:campaign.categoryKey,
         campaignType:campaign.campaignType,baselinePoolCount:campaign.baselinePoolCount,
         categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+        quantityMode:quantityPolicy.quantityMode,captureLimit:quantityPolicy.captureLimit,
+        remaining:quantityPolicy.remaining,targetReached:quantityPolicy.targetReached,
         rawObservedCount:campaign.rawObservedCount,electronicExcludedCount:campaign.electronicExcludedCount,
         nonElectronicUniqueCount:campaign.nonElectronicUniqueCount,businessEligibleCount:campaign.businessEligibleCount,
         reviewableUniqueCount:campaign.reviewableUniqueCount,manualReviewCount:null,
