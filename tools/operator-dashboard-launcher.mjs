@@ -20,7 +20,8 @@ export async function probeDashboardHealth({ healthUrl,fetchImpl=fetch,requestTi
   if (!contentType.toLowerCase().includes('application/json')) return { state:'foreign',details:{ contentType } };
   let body;
   try { body=await response.json(); } catch { return { state:'foreign',details:{ malformedJson:true } }; }
-  if (body?.ok === true && body?.service === DASHBOARD_SERVICE && body?.apiVersion === DASHBOARD_API_VERSION) {
+  if (body?.ok === true && body?.service === DASHBOARD_SERVICE && body?.apiVersion === DASHBOARD_API_VERSION
+    && typeof body.environment === 'string' && body.environment.length>0 && typeof body.testMode === 'boolean') {
     return { state:'ready',details:body };
   }
   return { state:'foreign',details:body };
@@ -51,10 +52,18 @@ export async function launchOperatorDashboard(options) {
   if (await isTcpPortOccupied(options)) {
     throw launcherError('PORT_OCCUPIED_BY_OTHER_SERVICE','端口已被非 Temu 运营台服务占用。');
   }
-  const lock=acquireLaunchLock({ lockPath:options.lockPath,metadata:{ launcherPid:process.pid },
+  const lock=acquireLaunchLock({ lockPath:options.lockPath,metadata:{ launcherPid:process.pid,port:options.port,worktree:options.cwd ?? null },
     staleAfterMs:options.staleAfterMs,isProcessAlive:options.isProcessAlive });
   if (!lock.owned) return waitForExistingLaunch(options);
   try {
+    const lockedHealth=await probeDashboardHealth(options);
+    if (lockedHealth.state === 'ready') {
+      await options.openDashboard(options.dashboardUrl);
+      return { action:'opened-existing',dashboardUrl:options.dashboardUrl,pid:null };
+    }
+    if (lockedHealth.state === 'foreign' || await isTcpPortOccupied(options)) {
+      throw launcherError('PORT_OCCUPIED_BY_OTHER_SERVICE','端口已被非 Temu 运营台服务占用。');
+    }
     const child=options.spawnDashboard ? await options.spawnDashboard():spawnDashboardProcess(options);
     await waitForDashboardHealth({ ...options,child });
     await options.openDashboard(options.dashboardUrl);

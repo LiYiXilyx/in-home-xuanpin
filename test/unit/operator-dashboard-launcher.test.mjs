@@ -29,6 +29,10 @@ test('health probe rejects malformed, non-JSON, incomplete, and non-200 response
   assert.equal((await probeDashboardHealth({ healthUrl:text.url })).state,'foreign');
   const incomplete=await healthServer(t,{ ok:true,service:'temu-operator-dashboard' });
   assert.equal((await probeDashboardHealth({ healthUrl:incomplete.url })).state,'foreign');
+  const missingEnvironment=await healthServer(t,{ ok:true,service:'temu-operator-dashboard',apiVersion:1,testMode:false });
+  assert.equal((await probeDashboardHealth({ healthUrl:missingEnvironment.url })).state,'foreign');
+  const invalidTestMode=await healthServer(t,{ ok:true,service:'temu-operator-dashboard',apiVersion:1,environment:'development',testMode:'false' });
+  assert.equal((await probeDashboardHealth({ healthUrl:invalidTestMode.url })).state,'foreign');
   const notFound=await healthServer(t,{ ok:false },{ status:404 });
   assert.equal((await probeDashboardHealth({ healthUrl:notFound.url })).state,'foreign');
 });
@@ -71,6 +75,28 @@ test('foreign listener hard fails without kill spawn or open',async t => {
   assert.equal(opens,0);
   const stillServing=await fetch(server.url);
   assert.equal(stillServing.status,200);
+});
+
+test('lock owner rechecks identity and port before spawn',async t => {
+  const fixture=lockFixture(t);
+  const port=await unusedPort();
+  let probes=0;
+  let spawns=0;
+  let opens=0;
+  const fetchImpl=async () => {
+    probes+=1;
+    if (probes === 1) throw Object.assign(new Error('not listening'),{ code:'ECONNREFUSED' });
+    return new Response(JSON.stringify({ ok:true,service:'foreign',apiVersion:1,environment:'x',testMode:false }),
+      { status:200,headers:{ 'Content-Type':'application/json' } });
+  };
+  await assert.rejects(() => launchOperatorDashboard({
+    dashboardUrl:`http://127.0.0.1:${port}/`,healthUrl:`http://127.0.0.1:${port}/api/health`,host:'127.0.0.1',port,
+    lockPath:fixture.lockPath,fetchImpl,
+    spawnDashboard:async () => { spawns+=1;return {}; },openDashboard:async () => { opens+=1; }
+  }),error => error.code === 'PORT_OCCUPIED_BY_OTHER_SERVICE');
+  assert.equal(probes,2);
+  assert.equal(spawns,0);
+  assert.equal(opens,0);
 });
 
 test('dead old launch lock is recovered once with a new ownership token',t => {
