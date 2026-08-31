@@ -3,8 +3,9 @@ import { loadConfig } from '../src/config/load.mjs';
 import { openDatabase } from '../src/db/client.mjs';
 import { createCatalogCampaignService } from '../src/modules/catalog-scale/catalog-campaign-service.mjs';
 import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profile.mjs';
+import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
 
-const MODE='MANUAL_NAVIGATION_PASSIVE_CAPTURE';
+const MODE='MANUAL_BIND_PASSIVE_CAPTURE';
 const TARGET=3000;
 const PROFILE_NAME='Temu1店';
 const PROFILE_DIRECTORY='Profile 10';
@@ -16,8 +17,7 @@ try {
   const service=createCatalogCampaignService(db);
   if(action==='create') print(await create(service));
   else {
-    const campaignId=options.campaign??findManualCampaignId();
-    if(!campaignId) throw coded('MANUAL_PASSIVE_CAMPAIGN_NOT_FOUND','未找到Manual Passive Campaign，请先执行 create。');
+    const campaignId=required(options.campaign,'campaign');
     if(action==='status') print(status(service,campaignId));
     else if(action==='configure-runtime') print(configureRuntime(service,campaignId));
     else if(action==='approve-stage') print(approveStage(service,campaignId,stage(options.stage)));
@@ -27,11 +27,10 @@ try {
 } finally { db.close(); }
 
 async function create(service) {
-  const existing=findManualCampaignId({ terminal:false });
-  if(existing) return { action:'reuse',...status(service,existing) };
+  const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
+  if(options['resume-campaign']) { const campaign=validateResumeCampaign(service,{campaignId:options['resume-campaign'],profile,campaignType:'expansion'});return {action:'resume',...status(service,campaign.id)}; }
   const activeQueue=db.prepare("SELECT id,campaign_id,status FROM catalog_rpa_queue WHERE status IN ('opening','waiting_page_ready','capturing','waiting_load_more','manual_required') ORDER BY updated_at DESC LIMIT 1").get();
   if(activeQueue) throw coded('CATALOG_RPA_CLAIM_CONFLICT',`已有活跃Catalog queue：${activeQueue.id} / ${activeQueue.campaign_id} / ${activeQueue.status}`);
-  const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
   const baseline=service.getBaselineConsistency(profile.category_key);
   if(!baseline.activePoolVersionExists||!baseline.consistent||baseline.activePoolVersionCount<=0) throw coded('CATALOG_BASELINE_INCONSISTENT','Active Pool baseline不存在或不一致。',{ baseline });
   if(baseline.activePoolVersionCount>=TARGET) throw coded('CATALOG_TARGET_INVALID',`Active Pool已经达到或超过 ${TARGET}。`);
@@ -138,7 +137,6 @@ function dataIntegrity(before) { const current=formalState();return { current,be
   sqliteIntegrity:String(db.prepare('PRAGMA integrity_check').get().integrity_check),foreignKeyViolations:db.prepare('PRAGMA foreign_key_check').all().length }; }
 function failedCount(value){return value.queues.reduce((total,queue)=>total+Number(queue.checkpoint?.failed_count??0)+(queue.status==='failed'?1:0),0);}
 function activeQueue(value){return value.queues.find(queue=>['opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(queue.status))??null;}
-function findManualCampaignId({terminal=true}={}) { const where=terminal?'':"AND status NOT IN ('completed','failed','cancelled')";return db.prepare(`SELECT id FROM catalog_campaigns WHERE browser_control_mode=? ${where} ORDER BY created_at DESC,id DESC LIMIT 1`).get(MODE)?.id??null; }
 function count(table){return Number(db.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count);}
 function stage(value){const parsed=Number(value);if(![50,300].includes(parsed))throw coded('INVALID_STAGE_TARGET','--stage只能是50或300。');return parsed;}
 function parseArgs(argv){const [first,...rest]=argv;if(!first)throw new Error('用法：create/status/configure-runtime/approve-stage/finalize');const options={};for(let index=0;index<rest.length;index+=1){const token=rest[index];if(!token.startsWith('--'))throw new Error(`无法识别参数：${token}`);const key=token.slice(2),value=rest[index+1];if(!value||value.startsWith('--'))throw new Error(`参数 --${key} 缺少值。`);options[key]=value;index+=1;}return { action:first,options };}

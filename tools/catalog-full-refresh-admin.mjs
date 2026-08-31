@@ -5,6 +5,7 @@ import { openDatabase } from '../src/db/client.mjs';
 import { createCatalogCampaignService } from '../src/modules/catalog-scale/catalog-campaign-service.mjs';
 import { buildFullRefreshReport,formalCatalogState } from '../src/modules/catalog-scale/catalog-full-refresh-report.mjs';
 import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profile.mjs';
+import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
 
 const MODE='FULL_REFRESH_EXTENSION_AUTO';
 const PROFILE_NAME='Temu1店';
@@ -17,7 +18,7 @@ try {
   if(action==='create-smoke')print(await create(service,50));
   else if(action==='create-full')print(await create(service,2000));
   else {
-    const campaignId=options.campaign??findLatest();if(!campaignId)throw coded('FULL_REFRESH_CAMPAIGN_NOT_FOUND','未找到 Full Refresh Campaign。');
+    const campaignId=required(options.campaign,'campaign');
     if(action==='status')print(status(service,campaignId));
     else if(action==='record-sales-sample')print(recordSalesSample(service,campaignId,required(options.sample,'sample')));
     else if(action==='complete-source')print(completeSource(service,campaignId));
@@ -30,13 +31,11 @@ try {
 
 async function create(service,target){
   if(target===2000)assertSmokePassed();
-  const existing=db.prepare(`SELECT id FROM catalog_campaigns WHERE browser_control_mode=? AND target_count=?
-    AND status NOT IN ('completed','failed','cancelled') ORDER BY created_at DESC,id DESC LIMIT 1`).get(MODE,target)?.id;
-  if(existing)return {action:'reuse',...status(service,existing)};
+  const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
+  if(options['resume-campaign']) { const campaign=validateResumeCampaign(service,{campaignId:options['resume-campaign'],profile,campaignType:'refresh'});return {action:'resume',...status(service,campaign.id)}; }
   const conflicting=db.prepare(`SELECT id,name,status,browser_control_mode FROM catalog_campaigns
     WHERE status IN ('running','manual_required') ORDER BY created_at DESC LIMIT 1`).get();
   if(conflicting)throw coded('CATALOG_CAMPAIGN_CONFLICT',`已有运行中的 Catalog Campaign：${conflicting.id} / ${conflicting.status}`);
-  const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
   const before=formalCatalogState(db);
   let campaign=service.createCampaign({name:`FULL_REFRESH_${target}_${new Date().toISOString().replace(/[-:.TZ]/g,'').slice(0,14)}`,
     campaignType:'refresh',profile,targetCount:target,browserContext:{profileName:PROFILE_NAME,profileDirectory:PROFILE_DIRECTORY,controlMode:MODE}});
@@ -117,7 +116,6 @@ function assertSmokePassed(){const row=db.prepare(`SELECT id FROM catalog_campai
   ORDER BY finished_at DESC,id DESC LIMIT 1`).get(MODE);if(!row)throw coded('FULL_REFRESH_50_QA_REQUIRED','必须先完成 FULL_REFRESH_50 严格 QA。');}
 function opportunityEqual(a,b){return ['opportunitySnapshotId','opportunityStatus','opportunitySnapshots','opportunityCandidates','opportunityConfirmations','opportunityConfirmationEvents'].every(key=>a[key]===b[key]);}
 function failedCount(value){return value.queues.reduce((sum,queue)=>sum+Number(queue.checkpoint?.extension_error_count??0)+(queue.status==='failed'?1:0),0);}
-function findLatest(){return db.prepare('SELECT id FROM catalog_campaigns WHERE browser_control_mode=? ORDER BY created_at DESC,id DESC LIMIT 1').get(MODE)?.id??null;}
 function parseJson(value){try{return JSON.parse(value??'{}')??{};}catch{return{};}}
 function required(value,name){const result=String(value??'').trim();if(!result)throw new Error(`缺少 --${name}`);return result;}
 function parseArgs(argv){const [first,...rest]=argv;if(!first)throw new Error('用法：create-smoke/create-full/status/record-sales-sample/complete-source/materialize/qa/report');const options={};for(let i=0;i<rest.length;i+=1){const token=rest[i];if(!token.startsWith('--'))throw new Error(`无法识别参数：${token}`);const key=token.slice(2),value=rest[i+1];if(!value||value.startsWith('--'))throw new Error(`参数 --${key} 缺少值。`);options[key]=value;i+=1;}return{action:first,options};}

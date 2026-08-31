@@ -3,6 +3,7 @@ import { loadConfig } from '../src/config/load.mjs';
 import { openDatabase } from '../src/db/client.mjs';
 import { createCatalogCampaignService } from '../src/modules/catalog-scale/catalog-campaign-service.mjs';
 import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profile.mjs';
+import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
 import { exportCatalogExpansionWorkbook } from '../src/modules/catalog-scale/catalog-expansion-report.mjs';
 
 const SOURCES=Object.freeze([
@@ -30,13 +31,13 @@ try {
     const target=positiveInteger(options.target ?? 1500,'target');const expectedBaseline=positiveInteger(options.baseline ?? 1000,'baseline');
     const quotaScale=Math.max(1,(target-expectedBaseline)/500);
     const profile=await loadCategoryProfile(path.resolve(options.profile ?? 'config/categories/motorcycle-accessories.json'));
+    if (options['resume-campaign']) { const campaign=validateResumeCampaign(service,{campaignId:options['resume-campaign'],profile,campaignType:'expansion'});print({action:'resume',campaign}); }
+    else {
     const baseline=service.getBaselineConsistency(profile.category_key);
     if (!baseline.activePoolVersionExists || baseline.activePoolVersionCount!==expectedBaseline || !baseline.consistent) {
       const error=new Error(`Day5 baseline不一致：pool=${baseline.activePoolVersionCount}, memberships=${baseline.activeMembershipCount}, intersection=${baseline.intersectionCount}, expected=${expectedBaseline}`);
       error.code='CATALOG_BASELINE_INCONSISTENT';throw error;
     }
-    const existing=db.prepare("SELECT id,status FROM catalog_campaigns WHERE campaign_type='expansion' AND status NOT IN ('completed','failed','cancelled') ORDER BY created_at DESC LIMIT 1").get();
-    if (existing) throw new Error(`已有未结束Expansion Campaign：${existing.id} (${existing.status})`);
     const campaign=service.createCampaign({ id:options['campaign-id'] ?? null,name:options.name ?? `catalog-expansion-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
       campaignType:'expansion',profile,targetCount:target,baselinePoolCount:expectedBaseline,browserContext:{
         profileName:options['profile-name'] ?? 'T',profileDirectory:options['profile-directory'] ?? 'Default',
@@ -47,6 +48,7 @@ try {
       navigationHint:{ label:item.label,entryMethod:item.entry ?? 'manual_product_family_navigation',searchKeyword:item.keyword ?? null } }));
     print({ action,campaign:service.transitionCampaign(campaign.id,'running'),baseline,sources,
       next:'运行 claim，然后用影刀把健康Chrome导航到返回Source并确认Top Sales。' });
+    }
   } else {
     const campaignId=required(options.campaign,'campaign');
     if (action==='status') print(service.getStatus(campaignId));
