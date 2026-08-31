@@ -18,6 +18,15 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
 
   function getCampaign(id) { return mapCampaign(db.prepare('SELECT * FROM catalog_campaigns WHERE id=?').get(id)); }
 
+  function findCampaignByName(name) {
+    return mapCampaign(db.prepare('SELECT * FROM catalog_campaigns WHERE name=?').get(name));
+  }
+
+  function findOperatorCampaignByRequestId(requestId) {
+    return mapCampaign(db.prepare(`SELECT * FROM catalog_campaigns
+      WHERE json_extract(config_json,'$.operatorCreate.requestId')=? ORDER BY created_at,id LIMIT 1`).get(requestId));
+  }
+
   function setCampaignBrowserContext(id,{ profileName=null,profileDirectory=null,controlMode=null }={}) {
     db.prepare(`UPDATE catalog_campaigns SET browser_profile_name=?,browser_profile_directory=?,
       browser_control_mode=?,updated_at=? WHERE id=?`).run(profileName,profileDirectory,controlMode,now(),id);
@@ -882,7 +891,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
     for (const id of ids) deactivate.run(id);
   }
 
-  return { createCampaign,getCampaign,setCampaignBrowserContext,getBaselineConsistency,captureCampaignBaseline,getBaselineAudit,reconcileActiveMembershipsToPool,isCampaignBaselineItem,hasCampaignStagingItem,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
+  return { createCampaign,getCampaign,findCampaignByName,findOperatorCampaignByRequestId,setCampaignBrowserContext,getBaselineConsistency,captureCampaignBaseline,getBaselineAudit,reconcileActiveMembershipsToPool,isCampaignBaselineItem,hasCampaignStagingItem,transitionCampaign,createSource,getSource,createSourceRun,registerBatch,
     completeBatch,recordSourceObservation,upsertStaging,recordExclusion,hasCampaignExclusion,removeStagingForExclusion,refreshCampaignCounts,recordCampaignObservation,
     recordNavigationRisk,getRefreshComparison,getNavigationRiskMetrics,getQualityMetrics,getExpansionComparison,getExpansionQualityMetrics,
     materializeRefresh,materializeExpansion,saveRefreshAudit,getRefreshAudit,getRefreshMaterialization,

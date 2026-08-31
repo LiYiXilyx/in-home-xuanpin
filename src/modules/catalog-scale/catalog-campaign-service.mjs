@@ -25,7 +25,8 @@ const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFR
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
 
-  function createCampaign({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null }) {
+  function createCampaignRecord({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null,
+    configExtras={} }) {
     const validated=validateCategoryProfile(profile);
     if (campaignType==='expansion') {
       const consistency=repository.getBaselineConsistency(validated);
@@ -40,17 +41,108 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         });
       }
     }
+    let campaign=repository.createCampaign({ id:id || undefined,name,campaignType,categoryKey:validated.category_key,
+      categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
+      targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated,...configExtras } });
+    if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
+    if (campaignType==='refresh' || campaignType==='expansion') {
+      repository.captureCampaignBaseline(campaign.id);
+      campaign=repository.getCampaign(campaign.id);
+    }
+    return campaign;
+  }
+
+  function createCampaign(input) {
+    return transaction(db,() => createCampaignRecord(input));
+  }
+
+  function createOperatorManualCampaign(input) {
+    plainObject(input,'Operator Campaign create request');
+    const profile=validateCategoryProfile(input.profile);
+    const requestedNewCount=optionalPositiveInteger(input.requestedNewCount,'requestedNewCount');
+    if (requestedNewCount===null) throw new AppError('requestedNewCount必须是正整数。',{ code:'OPERATOR_CAMPAIGN_INVALID' });
+    const campaignName=requiredString(input.campaignName,'campaignName',256);
+    const requestId=requiredString(input.requestId,'requestId',128);
     return transaction(db,() => {
-      let campaign=repository.createCampaign({ id:id || undefined,name,campaignType,categoryKey:validated.category_key,
-        categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
-        targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated } });
-      if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
-      if (campaignType==='refresh' || campaignType==='expansion') {
-        repository.captureCampaignBaseline(campaign.id);
-        campaign=repository.getCampaign(campaign.id);
-      }
-      return campaign;
+      const replay=repository.findOperatorCampaignByRequestId(requestId);
+      if (replay) return exactOperatorReplay(replay,{ profile,requestedNewCount,campaignName,requestId });
+      if (repository.listActiveRpaQueues().length) throw new AppError('已有活跃Catalog RPA来源，拒绝创建或猜测恢复。',{
+        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+      if (repository.findCampaignByName(campaignName)) throw new AppError('Campaign名称已存在。',{
+        code:'CAMPAIGN_NAME_CONFLICT',details:{ campaignName } });
+      const consistency=repository.getBaselineConsistency(profile);
+      if (!consistency.activePoolVersionExists || consistency.activePoolVersionCount<=0) throw new AppError(
+        'Operator Campaign要求已存在非空Active Pool。',{ code:'INITIAL_ACTIVE_POOL_REQUIRED',details:consistency });
+      if (!consistency.consistent || consistency.activePoolVersionRecordCount!==1
+        || consistency.activePoolDeclaredCount!==consistency.activePoolVersionCount
+        || consistency.activePoolRowCount!==consistency.activePoolVersionCount
+        || consistency.activePoolGoodsIdCount!==consistency.activePoolVersionCount
+        || consistency.activeMembershipCount!==consistency.activePoolVersionCount
+        || consistency.intersectionCount!==consistency.activePoolVersionCount) throw new AppError('Active Pool与active memberships不一致。',{
+        code:'CATALOG_BASELINE_INCONSISTENT',details:consistency });
+      const baselineCount=consistency.activePoolVersionCount;
+      const targetCount=baselineCount+requestedNewCount;
+      if (targetCount>profile.target_count) throw new AppError('Campaign target超过Category Profile上限。',{
+        code:'CATALOG_TARGET_INVALID',details:{ baselineCount,requestedNewCount,targetCount,profileTarget:profile.target_count } });
+      let campaign=createCampaignRecord({ name:campaignName,campaignType:'expansion',profile,baselinePoolCount:baselineCount,targetCount,
+        browserContext:{ profileName:'Temu1店',profileDirectory:'Profile 10',controlMode:MANUAL_PASSIVE_CAPTURE_MODE },configExtras:{ operatorCreate:{
+          requestId,requestedNewCount,captureMode:MANUAL_PASSIVE_CAPTURE_MODE
+        } } });
+      if (campaign.baselinePoolCount!==baselineCount || campaign.baselinePoolVersionId!==consistency.activePoolVersionId) throw new AppError(
+        'Campaign冻结baseline与创建时Active Pool不一致。',{ code:'CATALOG_BASELINE_INCONSISTENT' });
+      const source=repository.createSource(campaign,{ sourceKey:'manual-bind-passive',sourceType:'category',
+        sortOrder:profile.sort_order,priority:1,targetQuota:requestedNewCount,navigationHint:{
+          entryMethod:'human_navigation_only',automaticNavigation:false,automaticScroll:false,automaticPagination:false,
+          automaticSeeMore:false,automaticCategorySwitching:false,automaticSortSwitching:false,
+          automaticCaptchaHandling:false,directApi:false
+        } });
+      campaign=repository.transitionCampaign(campaign.id,'running');
+      const pending=repository.getNextRpaQueue(campaign.id);
+      const queue=repository.claimRpaQueue(pending.id,createId('catalog_claim'));
+      if (!queue) throw new AppError('Operator Campaign Queue领取冲突。',{ code:'CATALOG_RPA_CLAIM_CONFLICT' });
+      repository.createSourceRun(source.id,queue.attemptCount);
+      repository.transitionSource(source.id,'capturing');
+      const checkpoint={ runner_state:'UNBOUND',capture_mode:MANUAL_PASSIVE_CAPTURE_MODE,capture_paused:true,
+        automatic_scroll:false,automatic_navigation:false,automatic_pagination:false,automatic_see_more:false,
+        automatic_category_switching:false,automatic_sort_switching:false,automatic_captcha_handling:false,direct_api:false,
+        capture_origin_unique:baselineCount,session_target:targetCount,last_action:'operator_campaign_created' };
+      const claimed=repository.transitionRpaQueue(queue.id,'capturing',{ checkpoint,clearError:true });
+      campaign=repository.getCampaign(campaign.id);
+      return operatorSummary(campaign,claimed,false);
     });
+  }
+
+  function describeOperatorProfile(inputProfile) {
+    const profile=validateCategoryProfile(inputProfile);
+    const baseline=repository.getBaselineConsistency(profile);
+    return { category_key:profile.category_key,category_profile_version:profile.category_profile_version,
+      display_name:profile.display_name,site_country:profile.site_country,language:profile.language,currency:profile.currency,
+      sort_order:profile.sort_order,profile_target_count:profile.target_count,
+      active_pool_count:baseline.activePoolVersionCount,active_pool_version_id:baseline.activePoolVersionId,
+      capture_mode:MANUAL_PASSIVE_CAPTURE_MODE,available:Boolean(baseline.activePoolVersionExists
+        && baseline.activePoolVersionCount>0 && baseline.consistent),baseline_consistency:baseline };
+  }
+
+  function exactOperatorReplay(campaign,input) {
+    const create=campaign.config?.operatorCreate;
+    if (campaign.categoryKey!==input.profile.category_key
+      || campaign.categoryProfileVersion!==input.profile.category_profile_version
+      || campaign.name!==input.campaignName || create?.requestId!==input.requestId
+      || create?.requestedNewCount!==input.requestedNewCount
+      || create?.captureMode!==MANUAL_PASSIVE_CAPTURE_MODE) throw new AppError(
+      '相同request_id对应的创建参数不同。',{ code:'OPERATOR_CREATE_IDEMPOTENCY_CONFLICT' });
+    const queues=repository.listRpaQueues(campaign.id);
+    if (queues.length!==1) throw new AppError('幂等Campaign的Queue上下文不唯一。',{ code:'OPERATOR_CREATE_IDEMPOTENCY_CONFLICT' });
+    return operatorSummary(campaign,queues[0],true);
+  }
+
+  function operatorSummary(campaign,queue,idempotentReplay) {
+    const requestedNewCount=Number(campaign.config?.operatorCreate?.requestedNewCount ?? 0);
+    return { campaignId:campaign.id,categoryKey:campaign.categoryKey,categoryProfileVersion:campaign.categoryProfileVersion,
+      campaignName:campaign.name,baselineCount:campaign.baselinePoolCount,requestedNewCount,targetCount:campaign.targetCount,
+      captureMode:MANUAL_PASSIVE_CAPTURE_MODE,currentUnique:campaign.nonElectronicUniqueCount,
+      remaining:Math.max(0,campaign.targetCount-campaign.nonElectronicUniqueCount),status:campaign.status,
+      bindingStatus:queue.checkpoint?.runner_state ?? 'UNBOUND',idempotentReplay };
   }
 
   function transitionCampaign(campaignId,status,options={}) {
@@ -532,7 +624,18 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     return source;
   }
 
-  return { createCampaign,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
+  function currentOperatorManualContext() {
+    const queues=repository.listActiveRpaQueues().filter(queue => ['running','manual_required'].includes(requireCampaign(queue.campaignId).status));
+    if (!queues.length) return null;
+    if (queues.length>1) throw new AppError('存在多个活跃Catalog RPA来源，拒绝猜测当前上下文。',{
+      code:'CATALOG_RPA_CONTEXT_AMBIGUOUS' });
+    const context=rpaContext(queues[0],{ exposeClaimToken:false });
+    if (context.campaign.browserControlMode!==MANUAL_PASSIVE_CAPTURE_MODE) throw new AppError(
+      '当前Catalog RPA上下文不是Operator Manual Bind模式。',{ code:'OPERATOR_MANUAL_CONTEXT_MISMATCH' });
+    return context;
+  }
+
+  return { createCampaign,describeOperatorProfile,createOperatorManualCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
     recordExpansionCheckpoint,recordNotSeenInCampaign,
     getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
