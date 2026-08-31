@@ -10,6 +10,7 @@ const HEADERS=[
   '标题','产品ID','产品链接','图片链接','价格','是否包邮','销售额','起批量','起批量运费',
   '月销件数','累计销售件数','复购率','48h发货率','最早上架时间','最新更新时间','店铺名称','店铺资质',
 ];
+const NOOP_WORKBOOK_STAGE=async()=>({ sheetName:'test-workbook-stage' });
 
 function workbookRows(count=6) {
   return Array.from({ length:count },(_,index)=>[
@@ -57,6 +58,7 @@ function memoryRepository() {
     markImportResult(runId,result) {
       const record=imports.get(runId);
       record.import_status=result.status;
+      record.qa=result.qa??null;
       record.failed_image_count=record.candidates.filter(candidate=>candidate.image_download_status==='FAILED').length;
       return record;
     },
@@ -130,6 +132,7 @@ test('structured Random5 commit occurs before image stage begins', async t => {
       events.push('image-stage');
       return { status:'COMPLETED',qa:{ image_stage:'stubbed' } };
     },
+    workbookStage:NOOP_WORKBOOK_STAGE,
     now:()=> '2026-08-31T00:00:00.000Z',
     gitCommitSha:'abc123',machineName:'test-machine',
   });
@@ -179,6 +182,7 @@ test('a valid import generates a run ID when none is supplied', async t => {
     repository,
     loadWorkbook:async()=>({ headers:HEADERS,rows:workbookRows(1) }),
     imageStage:async()=>({ status:'COMPLETED' }),
+    workbookStage:NOOP_WORKBOOK_STAGE,
     runIdFactory:()=> 'generated-run',now:()=> '2026-08-31T00:00:00.000Z',
   });
   const preview=await service.scan(config(sourceDir));
@@ -199,6 +203,7 @@ test('one failed image completes the structured run with warnings and keeps all 
       const results=candidates.map((candidate,index)=>cachedResult(candidate,index===4?'FAILED':'SUCCESS'));
       return { success:4,failed:1,results };
     },
+    workbookStage:NOOP_WORKBOOK_STAGE,
     now:()=> '2026-08-31T00:00:00.000Z',
   });
   const preview=await service.scan(config(sourceDir));
@@ -234,6 +239,7 @@ test('retryFailedImages touches only failed candidates and preserves Random5 ide
         results,
       };
     },
+    workbookStage:NOOP_WORKBOOK_STAGE,
     now:()=> '2026-08-31T00:00:00.000Z',
   });
   const preview=await service.scan(config(sourceDir));
@@ -261,4 +267,93 @@ test('retryFailedImages touches only failed candidates and preserves Random5 ide
   assert.equal(after.candidate_count,before.candidate_count);
   assert.equal(after.source_manifest_sha256,before.source_manifest_sha256);
   assert.deepEqual(identitiesAfter,identitiesBefore);
+});
+
+test('workbook stage receives finalized image records after cache persistence', async t => {
+  const sourceDir=await setupSource(t);
+  const repository=memoryRepository();
+  const calls=[];
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>({ headers:HEADERS,rows:workbookRows(6) }),
+    cacheImages:async candidates=>{
+      const results=candidates.map((candidate,index)=>cachedResult(candidate,index===4?'FAILED':'SUCCESS'));
+      return { success:4,failed:1,results };
+    },
+    workbookStage:async input=>{
+      calls.push(input);
+      assert.equal(input.candidates.length,5);
+      assert.equal(input.candidates.filter(candidate=>candidate.image_download_status==='SUCCESS').length,4);
+      assert.equal(input.candidates.filter(candidate=>candidate.image_download_status==='FAILED').length,1);
+      return { sheetName:'11_1688随机候选',rowCount:5,supplierImages:4 };
+    },
+    now:()=> '2026-08-31T00:00:00.000Z',
+  });
+  const preview=await service.scan(config(sourceDir));
+
+  const result=await service.startImport({ scanToken:preview.scanToken,runId:'run-workbook' });
+
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].selectedWorkbookPath,config(sourceDir).selectedWorkbookPath);
+  assert.equal(calls[0].cacheRoot,config(sourceDir).imageCacheDir);
+  assert.equal(result.import_status,'COMPLETED_WITH_WARNINGS');
+  assert.equal(result.workbook_qa.rowCount,5);
+});
+
+test('workbook failure marks the run FAILED without removing structured candidates or cached image results', async t => {
+  const sourceDir=await setupSource(t);
+  const repository=memoryRepository();
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>({ headers:HEADERS,rows:workbookRows(1) }),
+    cacheImages:async candidates=>({ success:1,failed:0,results:candidates.map(candidate=>cachedResult(candidate,'SUCCESS')) }),
+    workbookStage:async()=>{ throw new Error('fingerprint mismatch'); },
+    now:()=> '2026-08-31T00:00:00.000Z',
+  });
+  const preview=await service.scan(config(sourceDir));
+
+  await assert.rejects(
+    ()=>service.startImport({ scanToken:preview.scanToken,runId:'run-workbook-failed' }),
+    /fingerprint mismatch/,
+  );
+
+  const imported=repository.getImport('run-workbook-failed');
+  assert.equal(imported.import_status,'FAILED');
+  assert.equal(imported.candidate_count,1);
+  assert.equal(imported.candidates[0].image_download_status,'SUCCESS');
+  assert.equal(imported.qa.error_code,'WORKBOOK_STAGE_FAILED');
+});
+
+test('failed-image retry rebuilds Sheet 11 from the updated candidate image statuses', async t => {
+  const sourceDir=await setupSource(t);
+  const repository=memoryRepository();
+  const workbookStatuses=[];
+  let imageBatch=0;
+  const service=createYingdaoImportService({
+    repository,
+    loadWorkbook:async()=>({ headers:HEADERS,rows:workbookRows(6) }),
+    cacheImages:async candidates=>{
+      imageBatch+=1;
+      const results=candidates.map((candidate,index)=>cachedResult(candidate,imageBatch===1 && index===4?'FAILED':'SUCCESS'));
+      return {
+        success:results.filter(result=>result.image_download_status==='SUCCESS').length,
+        failed:results.filter(result=>result.image_download_status==='FAILED').length,
+        results,
+      };
+    },
+    workbookStage:async({ candidates })=>{
+      workbookStatuses.push(candidates.map(candidate=>candidate.image_download_status));
+      return { sheetName:'11_1688随机候选',rowCount:candidates.length };
+    },
+    now:()=> '2026-08-31T00:00:00.000Z',
+  });
+  const preview=await service.scan(config(sourceDir));
+  await service.startImport({ scanToken:preview.scanToken,runId:'run-retry-workbook' });
+
+  const retried=await service.retryFailedImages('run-retry-workbook');
+
+  assert.equal(workbookStatuses.length,2);
+  assert.equal(workbookStatuses[0].filter(status=>status==='FAILED').length,1);
+  assert.equal(workbookStatuses[1].filter(status=>status==='FAILED').length,0);
+  assert.equal(retried.workbook_qa.rowCount,5);
 });

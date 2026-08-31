@@ -179,6 +179,7 @@ test('real SQLite structured transaction is queryable before the injected image 
       assert.equal(committed.candidate_count,5);
       return { status:'COMPLETED',qa:{ image_stage:'stubbed' } };
     },
+    workbookStage:async()=>({ sheetName:'test-workbook-stage' }),
     now:()=> '2026-08-31T00:00:00.000Z',gitCommitSha:'abc123',machineName:'test-machine',
   });
   const preview=await service.scan({
@@ -212,6 +213,7 @@ test('real SQLite retry updates only FAILED rows and preserves structured identi
         results,
       };
     },
+    workbookStage:async()=>({ sheetName:'test-workbook-stage' }),
     now:()=> '2026-08-31T00:00:00.000Z',gitCommitSha:'abc123',machineName:'test-machine',
   });
   const preview=await service.scan({

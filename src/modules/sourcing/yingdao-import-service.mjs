@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { SAMPLE_METHOD,sampleStableRandom5 } from './stable-random5.mjs';
+import { writeRandom5Sheet } from './random5-workbook.mjs';
 import { cacheRandom5Images } from './supplier-image-cache.mjs';
 import { scanYingdaoDirectory } from './yingdao-directory-scanner.mjs';
 
@@ -11,6 +12,8 @@ export function createYingdaoImportService({
   imageStage=null,
   cacheImages=cacheRandom5Images,
   imageCacheOptions={},
+  workbookStage=writeRandom5Sheet,
+  workbookOptions={},
   now=()=>new Date().toISOString(),
   runIdFactory=()=>crypto.randomUUID(),
   gitCommitSha=process.env.GIT_COMMIT_SHA??'UNKNOWN',
@@ -68,6 +71,7 @@ export function createYingdaoImportService({
     await onStructured?.({ runId:importRunId,model });
 
     await onImages?.({ runId:importRunId,candidates:model.candidates });
+    let fallbackErrorCode='IMAGE_STAGE_FAILED';
     try {
       const imageResult=imageStage
         ?await imageStage({ runId:importRunId,candidates:model.candidates,repository,cacheRoot:prior.config.imageCacheDir })
@@ -75,18 +79,23 @@ export function createYingdaoImportService({
           runId:importRunId,candidates:model.candidates,cacheRoot:prior.config.imageCacheDir,
           repository,cacheImages,imageCacheOptions,
         });
+      fallbackErrorCode='WORKBOOK_STAGE_FAILED';
+      const workbookQa=await runWorkbookStage({
+        runId:importRunId,config:prior.config,repository,workbookStage,workbookOptions,
+      });
       const finishedAt=now();
       repository.markImportResult(importRunId,{
-        status:imageResult.status,finishedAt,qa:imageResult.qa??null,
+        status:imageResult.status,finishedAt,qa:{ ...(imageResult.qa??{}),workbook:workbookQa },
       });
       return {
         run_id:importRunId,status:imageResult.status,import_status:imageResult.status,
         candidate_count:model.candidates.length,selected_candidate:null,
         image_download_success:imageResult.success??0,image_download_failed:imageResult.failed??0,
+        workbook_qa:workbookQa,
       };
     } catch(error) {
       repository.markImportResult(importRunId,{
-        status:'FAILED',finishedAt:now(),qa:{ error_code:error?.code??'IMAGE_STAGE_FAILED' },
+        status:'FAILED',finishedAt:now(),qa:{ error_code:error?.code??fallbackErrorCode },
       });
       throw error;
     }
@@ -116,19 +125,42 @@ export function createYingdaoImportService({
     assertRetryInvariants({ before,after:afterImages,identitiesBefore,manifestBefore,countBefore });
     const remaining=repository.failedImages(runId).length;
     const importStatus=remaining===0?'COMPLETED':'COMPLETED_WITH_WARNINGS';
-    repository.markImportResult(runId,{
-      status:importStatus,finishedAt:now(),
-      qa:{ retried:failedCandidates.length,succeeded:cached.success,failed:cached.failed,remaining_failed:remaining },
-    });
+    let workbookQa;
+    try {
+      workbookQa=await runWorkbookStage({
+        runId,config:{ imageCacheDir:before.image_cache_dir,selectedWorkbookPath:before.selected_workbook_path },
+        repository,workbookStage,workbookOptions,
+      });
+      repository.markImportResult(runId,{
+        status:importStatus,finishedAt:now(),
+        qa:{ retried:failedCandidates.length,succeeded:cached.success,failed:cached.failed,remaining_failed:remaining,workbook:workbookQa },
+      });
+    } catch(error) {
+      repository.markImportResult(runId,{
+        status:'FAILED',finishedAt:now(),qa:{ error_code:error?.code??'WORKBOOK_STAGE_FAILED' },
+      });
+      throw error;
+    }
     const after=repository.getImport(runId);
     assertRetryInvariants({ before,after,identitiesBefore,manifestBefore,countBefore });
     return {
       run_id:runId,retried:failedCandidates.length,succeeded:cached.success,failed:cached.failed,
-      remaining_failed:remaining,import_status:importStatus,
+      remaining_failed:remaining,import_status:importStatus,workbook_qa:workbookQa,
     };
   }
 
   return { scan,startImport,retryFailedImages };
+}
+
+async function runWorkbookStage({ runId,config,repository,workbookStage,workbookOptions }) {
+  const imported=repository.getImport(runId);
+  if(!imported) throw codedError('IMPORT_NOT_FOUND',`import run not found: ${runId}`);
+  return workbookStage({
+    selectedWorkbookPath:config.selectedWorkbookPath,
+    candidates:imported.candidates,
+    cacheRoot:config.imageCacheDir,
+    ...workbookOptions,
+  });
 }
 
 async function cacheAndPersistImages({ runId,candidates,cacheRoot,repository,cacheImages,imageCacheOptions }) {
