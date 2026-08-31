@@ -18,11 +18,17 @@ import { createJobController } from './controllers/job-controller.mjs';
 import { createReviewController } from './controllers/review-controller.mjs';
 import { createReviewQueueController } from './controllers/review-queue-controller.mjs';
 import { createCatalogController } from './controllers/catalog-controller.mjs';
+import { createSourcingController } from './controllers/sourcing-controller.mjs';
 import { createExportController } from './controllers/export-controller.mjs';
 import { createTestController } from './controllers/test-controller.mjs';
 import { createStatusService } from './status-service.mjs';
 import { createStaticServer } from './static-server.mjs';
 import { createRouter } from './router.mjs';
+import { createSourcingSettings } from '../modules/sourcing/sourcing-settings.mjs';
+import { chooseNativePath } from '../modules/sourcing/native-path-dialog.mjs';
+import { migrateSourcingDatabase } from '../modules/sourcing/sourcing-db.mjs';
+import { createSourcingRepository } from '../db/repositories/sourcing-repository.mjs';
+import { createYingdaoImportService } from '../modules/sourcing/yingdao-import-service.mjs';
 
 const projectDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 
@@ -48,10 +54,21 @@ export async function createOperationsServer(options={}) {
   const categoryProfileDirectory=path.resolve(options.categoryProfileDirectory ?? path.join(projectDir,'config/categories'));
   const categoryProfileRegistry=options.categoryProfileRegistry ?? createCategoryProfileRegistry({ directory:categoryProfileDirectory });
   const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository });
+  const sourcingRoot=path.dirname(config.app.databasePath);
+  const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');
+  migrateSourcingDatabase({databasePath:sourcingDatabasePath});
+  const sourcingDb=openDatabase(sourcingDatabasePath,{allowRunnerWrite:true});
+  const sourcingRepository=createSourcingRepository(sourcingDb);
+  const sourcingService=options.sourcingService??createYingdaoImportService({repository:sourcingRepository});
+  const sourcingSettings=options.sourcingSettings??createSourcingSettings({settingsPath:options.sourcingSettingsPath??path.join(sourcingRoot,'sourcing-console-settings.json')});
+  const sourcingController=options.sourcingController??createSourcingController({
+    service:sourcingService,repository:sourcingRepository,settingsStore:sourcingSettings,
+    pathDialog:options.pathDialog??(input=>chooseNativePath({...input,runProcess:options.nativePathRunProcess})),
+  });
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
-  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,serveStatic,
+  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,serveStatic,
     environment:{ name:config.app.environment,testMode:testController.isTestMode },logError:options.logError });
   const server=http.createServer(router);
   let closed=false;
@@ -75,6 +92,7 @@ export async function createOperationsServer(options={}) {
         });
       }
       db.close();
+      sourcingDb.close();
     }
   };
 }

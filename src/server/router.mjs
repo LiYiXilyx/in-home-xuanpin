@@ -1,10 +1,24 @@
 import { operatorMessage } from './status-service.mjs';
 
-export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,serveStatic,
+export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
+      if (sourcingController && url.pathname.startsWith('/api/sourcing/')) {
+        const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
+        if(mutation) assertLocalOrigin(request);
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/settings') return json(response,200,await sourcingController.settings());
+        if(request.method==='PUT'&&url.pathname==='/api/sourcing/settings') return json(response,200,await sourcingController.saveSettings(await readJson(request,32_768)));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/path-dialog') return json(response,200,await sourcingController.choosePath(await readJson(request)));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/scan') return json(response,200,await sourcingController.scan(await readJson(request)));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/imports') return json(response,202,await sourcingController.startImport(await readJson(request)));
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/imports/current') return json(response,200,await sourcingController.currentImport());
+        const retry=url.pathname.match(/^\/api\/sourcing\/imports\/([^/]+)\/retry-failed-images$/);
+        if(request.method==='POST'&&retry) return json(response,200,await sourcingController.retryFailedImages(decodeURIComponent(retry[1])));
+        const imported=url.pathname.match(/^\/api\/sourcing\/imports\/([^/]+)$/);
+        if(request.method==='GET'&&imported) return json(response,200,await sourcingController.getImport(decodeURIComponent(imported[1])));
+      }
       if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog-rpa/')) return catalogCors(response,204);
@@ -162,7 +176,7 @@ async function readJson(request,maxBytes=16_384) {
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH'].includes(code)) return 409; return 400; }
+function statusFor(code) { if(code==='LOCAL_ORIGIN_REQUIRED')return 403;if (['JOB_NOT_FOUND','IMPORT_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND'].includes(code)) return 404; if (['RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH'].includes(code)) return 409; return 400; }
 function mapOperatorCampaignResult(result) {
   return { campaign_id:result.campaignId,category_key:result.categoryKey,
     category_profile_version:result.categoryProfileVersion,campaign_name:result.campaignName,
@@ -182,6 +196,21 @@ function mapInitialQaResult(result){return{qa_run_id:result.qaRunId,qa_status:re
 function mapInitialActivationResult(result){return{pool_version_id:result.poolVersionId,category_key:result.categoryKey,
   pool_count:result.productCount,status:result.status,activated_at:result.activatedAt,
   source_campaign_id:result.sourceCampaignId,idempotent_replay:result.idempotentReplay};}
+export function assertLocalOrigin(request) {
+  const hostHeader=String(request.headers.host??'').toLowerCase();
+  const host=hostname(hostHeader);
+  const originHeader=request.headers.origin;
+  let origin=null;
+  try { origin=originHeader?new URL(originHeader):null; } catch {}
+  if(!isLocal(host)||!origin||origin.protocol!=='http:'||!isLocal(origin.hostname)||origin.host.toLowerCase()!==hostHeader) {
+    const error=new Error('mutation requests require a local Host and Origin');error.code='LOCAL_ORIGIN_REQUIRED';throw error;
+  }
+}
+function hostname(value) {
+  if(!value)return null;
+  try{return new URL(`http://${value}`).hostname;}catch{return null;}
+}
+function isLocal(value) { return value==='localhost'||value==='127.0.0.1'; }
 const EXTENSION_CORS_HEADERS=Object.freeze({ 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
 const CATALOG_HEADERS=Object.freeze({ 'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
 function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }

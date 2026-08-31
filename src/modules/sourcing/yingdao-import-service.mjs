@@ -2,17 +2,15 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { SAMPLE_METHOD,sampleStableRandom5 } from './stable-random5.mjs';
-import { writeRandom5Sheet } from './random5-workbook.mjs';
-import { cacheRandom5Images } from './supplier-image-cache.mjs';
 import { scanYingdaoDirectory } from './yingdao-directory-scanner.mjs';
 
 export function createYingdaoImportService({
   repository,
   loadWorkbook,
   imageStage=null,
-  cacheImages=cacheRandom5Images,
+  cacheImages=defaultCacheImages,
   imageCacheOptions={},
-  workbookStage=writeRandom5Sheet,
+  workbookStage=defaultWorkbookStage,
   workbookOptions={},
   now=()=>new Date().toISOString(),
   runIdFactory=()=>crypto.randomUUID(),
@@ -292,4 +290,14 @@ function codedError(code,message) {
   const error=new Error(`${code}: ${message}`);
   error.code=code;
   return error;
+}
+
+async function defaultCacheImages(...args) {
+  const {cacheRandom5Images}=await import('./supplier-image-cache.mjs');
+  return cacheRandom5Images(...args);
+}
+
+async function defaultWorkbookStage(...args) {
+  const {writeRandom5Sheet}=await import('./random5-workbook.mjs');
+  return writeRandom5Sheet(...args);
 }

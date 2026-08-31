@@ -56,6 +56,23 @@
       </div>
     </section>
 
+    <section class="panel sourcing-console" aria-labelledby="sourcingTitle">
+      <div class="section-title"><div><p class="eyebrow">1688 SOURCING CONSOLE V1</p><h2 id="sourcingTitle">影刀 Random5 导入</h2></div><strong id="sourcingState">UNCONFIGURED</strong></div>
+      <div class="sourcing-paths">
+        <label><span>Raw 1688 Excel目录</span><span class="path-control"><input id="sourcingRawDir" type="text" autocomplete="off"><button id="chooseSourcingRaw" type="button">选择Raw目录</button></span></label>
+        <label><span>1688图片缓存目录</span><span class="path-control"><input id="sourcingImageDir" type="text" autocomplete="off"><button id="chooseSourcingImages" type="button">选择图片缓存目录</button></span></label>
+        <label><span>现有分析工作簿（必须含 05_细分商品明细）</span><span class="path-control"><input id="sourcingWorkbook" type="text" autocomplete="off"><button id="chooseSourcingWorkbook" type="button">选择分析工作簿</button></span></label>
+      </div>
+      <div class="sourcing-actions"><button id="scanSourcing" type="button">扫描目录</button><button id="startSourcingImport" class="primary" type="button">开始导入</button><button id="retrySourcingImages" type="button">仅重试失败图片</button><span>run_id: <code id="sourcingRunId">—</code></span></div>
+      <dl class="sourcing-metrics">
+        <div><dt>source files</dt><dd id="sourcingSourceFiles">0</dd></div><div><dt>valid goods_id</dt><dd id="sourcingGoods">0</dd></div>
+        <div><dt>invalid files</dt><dd id="sourcingInvalid">0</dd></div><div><dt>parsed candidates</dt><dd id="sourcingParsed">0</dd></div>
+        <div><dt>Random5 candidates</dt><dd id="sourcingRandom5">0</dd></div><div><dt>image success</dt><dd id="sourcingImageSuccess">0</dd></div>
+        <div><dt>image failed</dt><dd id="sourcingImageFailed">0</dd></div><div><dt>QA status</dt><dd id="sourcingQa">—</dd></div>
+      </dl>
+      <div class="sourcing-preview"><h3>Scan Preview（前10个）</h3><table><thead><tr><th>filename</th><th>goods_id</th><th>row_count</th><th>parse_status</th></tr></thead><tbody id="sourcingPreview"><tr><td colspan="4">尚未扫描</td></tr></tbody></table></div>
+    </section>
+
     <section class="panel browser-health">
       <div class="section-title"><div><p class="eyebrow">PAGE HEALTH</p><h2>采集页面准备状态</h2></div><strong id="pageReadiness" class="not-ready">NOT_READY</strong></div>
       <dl class="health-grid">
