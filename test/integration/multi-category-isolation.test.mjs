@@ -10,6 +10,13 @@ import { createCatalogCampaignService } from '../../src/modules/catalog-scale/ca
 import { loadCategoryProfile } from '../../src/modules/catalog-scale/category-profile.mjs';
 
 const profilePath=fileURLToPath(new URL('../../config/categories/motorcycle-accessories.json',import.meta.url));
+const promoteToolPath=fileURLToPath(new URL('../../tools/promote-ready-pool.mjs',import.meta.url));
+
+test('ready Pool promotion cannot deactivate global active memberships',() => {
+  const source=fs.readFileSync(promoteToolPath,'utf8');
+  assert.doesNotMatch(source,/UPDATE\s+catalog_memberships\s+SET\s+active\s*=\s*0\s+WHERE\s+active\s*=\s*1/i);
+  assert.match(source,/category_key\s*=\s*\?/i,'promotion deactivation must carry an explicit category predicate');
+});
 
 test('two categories share product identity while memberships, pools, baselines and checkpoints stay isolated',async t => {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'temu-two-category-'));

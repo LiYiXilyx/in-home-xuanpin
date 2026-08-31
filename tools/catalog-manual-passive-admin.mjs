@@ -6,7 +6,6 @@ import { loadCategoryProfile } from '../src/modules/catalog-scale/category-profi
 import { validateResumeCampaign } from '../src/modules/catalog-scale/campaign-selection.mjs';
 
 const MODE='MANUAL_BIND_PASSIVE_CAPTURE';
-const TARGET=3000;
 const PROFILE_NAME='Temu1店';
 const PROFILE_DIRECTORY='Profile 10';
 const { action,options }=parseArgs(process.argv.slice(2));
@@ -28,18 +27,19 @@ try {
 
 async function create(service) {
   const profile=await loadCategoryProfile(path.resolve(options.profile??'config/categories/motorcycle-accessories.json'));
+  const target=options.target===undefined?profile.target_count:positiveInteger(options.target,'target');
   if(options['resume-campaign']) { const campaign=validateResumeCampaign(service,{campaignId:options['resume-campaign'],profile,campaignType:'expansion'});return {action:'resume',...status(service,campaign.id)}; }
   const activeQueue=db.prepare("SELECT id,campaign_id,status FROM catalog_rpa_queue WHERE status IN ('opening','waiting_page_ready','capturing','waiting_load_more','manual_required') ORDER BY updated_at DESC LIMIT 1").get();
   if(activeQueue) throw coded('CATALOG_RPA_CLAIM_CONFLICT',`已有活跃Catalog queue：${activeQueue.id} / ${activeQueue.campaign_id} / ${activeQueue.status}`);
   const baseline=service.getBaselineConsistency(profile.category_key);
   if(!baseline.activePoolVersionExists||!baseline.consistent||baseline.activePoolVersionCount<=0) throw coded('CATALOG_BASELINE_INCONSISTENT','Active Pool baseline不存在或不一致。',{ baseline });
-  if(baseline.activePoolVersionCount>=TARGET) throw coded('CATALOG_TARGET_INVALID',`Active Pool已经达到或超过 ${TARGET}。`);
-  const before=formalState();
-  let campaign=service.createCampaign({ name:options.name??`catalog-manual-passive-${TARGET}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
-    campaignType:'expansion',profile,baselinePoolCount:baseline.activePoolVersionCount,targetCount:TARGET,
+  if(baseline.activePoolVersionCount>=target) throw coded('CATALOG_TARGET_INVALID',`Active Pool已经达到或超过 ${target}。`);
+  const before=formalState(profile);
+  let campaign=service.createCampaign({ name:options.name??`catalog-manual-passive-${target}-${new Date().toISOString().slice(0,10).replaceAll('-','')}`,
+    campaignType:'expansion',profile,baselinePoolCount:baseline.activePoolVersionCount,targetCount:target,
     browserContext:{ profileName:PROFILE_NAME,profileDirectory:PROFILE_DIRECTORY,controlMode:MODE } });
   const source=service.createSource(campaign.id,{ sourceKey:'manual-navigation-passive',sourceType:'category',sortOrder:profile.sort_order,
-    priority:1,targetQuota:TARGET-baseline.activePoolVersionCount,navigationHint:{ entryMethod:'human_navigation_only',automaticNavigation:false,
+    priority:1,targetQuota:target-baseline.activePoolVersionCount,navigationHint:{ entryMethod:'human_navigation_only',automaticNavigation:false,
       automaticScroll:false,automaticSeeMore:false,directApi:false,cdpEndpoint:'http://127.0.0.1:9222' } });
   campaign=service.transitionCampaign(campaign.id,'running');const claimed=service.claimNextSource(campaign.id);
   if(claimed.idle) throw coded('CATALOG_RPA_NOT_CLAIMED','Manual Passive source未能领取。');
@@ -79,22 +79,24 @@ function configureRuntime(service,campaignId) {
 }
 
 function finalize(service,campaignId) {
-  if(options.confirm!=='ACTIVATE_POOL_3000') throw coded('CONFIRMATION_REQUIRED','finalize要求 --confirm ACTIVATE_POOL_3000。');
   let report=status(service,campaignId);const queue=activeQueue(report.status);const checkpoint=queue?.checkpoint??{};
+  const target=report.metrics.target,confirmation=`ACTIVATE_POOL_${target}`;
+  if(options.confirm!==confirmation) throw coded('CONFIRMATION_REQUIRED',`finalize要求 --confirm ${confirmation}。`);
   if(checkpoint.qa_300_status!=='PASS') throw coded('STAGE_300_QA_REQUIRED','300 Goods QA未通过。');
-  if(report.metrics.accepted_unique!==TARGET) throw coded('CATALOG_TARGET_NOT_REACHED',`accepted_unique必须精确等于 ${TARGET}。`);
+  if(report.metrics.accepted_unique!==target) throw coded('CATALOG_TARGET_NOT_REACHED',`accepted_unique必须精确等于 ${target}。`);
   assertQa(report);
   if(!queue?.claimToken) throw coded('CATALOG_RPA_NOT_CLAIMED','finalize缺少queue claim。');
-  service.completeRpaSource({ queue_id:queue.id,claim_token:queue.claimToken,stop_reason:'TARGET_GATE_REACHED',checkpoint:{ ...checkpoint,runner_state:'TARGET_REACHED',accepted_unique:TARGET } });
+  service.completeRpaSource({ queue_id:queue.id,claim_token:queue.claimToken,stop_reason:'TARGET_GATE_REACHED',checkpoint:{ ...checkpoint,runner_state:'TARGET_REACHED',accepted_unique:target } });
   const materialization=service.materializeExpansion(campaignId);const qa=service.evaluateExpansionQa(campaignId);
-  if(!qa.audit?.qaPassed) throw coded('CATALOG_POOL_QA_REQUIRED','3000正式QA未通过，未激活Active Pool。',{ qa });
-  const activated=service.activatePoolVersion(campaignId,{ qaSummary:{ gate:'Manual Navigation Passive Capture 3000',mode:MODE } });
+  if(!qa.audit?.qaPassed) throw coded('CATALOG_POOL_QA_REQUIRED',`${target}正式QA未通过，未激活Active Pool。`,{ qa });
+  const activated=service.activatePoolVersion(campaignId,{ qaSummary:{ gate:`Manual Bind Passive Capture ${target}`,mode:MODE } });
   report=status(service,campaignId);return { action:'finalize',materialization,qa,activated,...report };
 }
 
 function status(service,campaignId) {
   const value=service.getStatus(campaignId);const campaign=value.campaign;const checkpoint=activeQueue(value)?.checkpoint??value.queues.at(-1)?.checkpoint??{};
-  const accepted=Number(campaign.nonElectronicUniqueCount);const trace=traceAudit(campaignId);const integrity=dataIntegrity(checkpoint.formal_state_before??null);
+  const profile=campaign.config?.categoryProfile;if(!profile)throw coded('CATEGORY_PROFILE_REQUIRED','Campaign 缺少冻结 Category Profile。');
+  const accepted=Number(campaign.nonElectronicUniqueCount);const trace=traceAudit(campaignId,profile);const integrity=dataIntegrity(checkpoint.formal_state_before??null,profile);
   return { mode:MODE,fixedBrowser:{ profile:PROFILE_DIRECTORY,profileName:PROFILE_NAME,cdpRequired:false,extensionPassiveRequired:true,localServerEndpoint:'http://127.0.0.1:37821' },campaignId,
     metrics:{ target:campaign.targetCount,accepted_unique:accepted,remaining:Math.max(0,campaign.targetCount-accepted),observed:campaign.rawObservedCount,
       eligible:accepted,existing:campaign.baselinePoolCount,new:Math.max(0,accepted-campaign.baselinePoolCount),excluded:campaign.electronicExcludedCount,
@@ -114,31 +116,34 @@ function assertQa(report) {
   if(failures.length) throw coded('MANUAL_PASSIVE_QA_FAILED',`Manual Passive QA失败：${failures.join(', ')}`,{ failures,report });
 }
 
-function traceAudit(campaignId) {
+function traceAudit(campaignId,profile) {
   const rows=db.prepare(`SELECT s.goods_id,s.raw_json,CASE WHEN s.electronic_screening_status='passed' AND b.goods_id IS NULL THEN 1 ELSE 0 END accepted
     FROM catalog_staging_products s LEFT JOIN catalog_campaign_baseline_items b ON b.campaign_id=s.campaign_id AND b.platform=s.platform AND b.goods_id=s.goods_id
     WHERE s.campaign_id=?`).all(campaignId);let validEvidence=0,invalidEvidence=0,acceptedRows=0,acceptedToSnapshotMissing=0;
+  const categories=new Set(profile.page_health?.category_names??[profile.display_name]);const expectedSort=String(profile.sort_order).toLowerCase();
   for(const row of rows){let raw={};try{raw=JSON.parse(row.raw_json??'{}');}catch{}
     const valid=raw.network_observed===true&&raw.network_endpoint==='/api/poppy/v1/opt'&&Boolean(raw.network_observed_at)&&['DOM','NETWORK_ENRICHED'].includes(raw.capture_transport)
-      &&Boolean(raw.bound_url)&&Boolean(raw.bound_at)&&raw.bound_category==='Motorcycles & Powersports Accessories'&&String(raw.bound_sort).toLowerCase()==='top sales';
+      &&Boolean(raw.bound_url)&&Boolean(raw.bound_at)&&categories.has(raw.bound_category)&&String(raw.bound_sort).toLowerCase()===expectedSort;
     if(valid)validEvidence+=1;else invalidEvidence+=1;if(Number(row.accepted)===1){acceptedRows+=1;if(!valid)acceptedToSnapshotMissing+=1;}
   }
   return { rows:rows.length,validEvidence,invalidEvidence,acceptedRows,acceptedToSnapshotMissing };
 }
-function formalState() {
-  const activePool=db.prepare("SELECT id,product_count FROM catalog_pool_versions WHERE status='active' ORDER BY activated_at DESC,id DESC LIMIT 1").get()??null;
-  const opportunity=db.prepare("SELECT id,status FROM opportunity_analysis_snapshots ORDER BY generated_at DESC,id DESC LIMIT 1").get()??null;
-  return { products:count('products'),memberships:count('catalog_memberships'),activeMemberships:Number(db.prepare('SELECT COUNT(*) count FROM catalog_memberships WHERE active=1').get().count),
+function formalState(profile) {
+  const activePool=db.prepare("SELECT id,product_count FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1").get(profile.category_key)??null;
+  const opportunity=db.prepare("SELECT id,status FROM opportunity_analysis_snapshots WHERE category_key=? ORDER BY generated_at DESC,id DESC LIMIT 1").get(profile.category_key)??null;
+  return { categoryKey:profile.category_key,products:count('products'),memberships:count('catalog_memberships'),activeMemberships:scopedActiveMembershipCount(profile),
     snapshots:count('product_snapshots'),reviews:count('reviews'),activePoolId:activePool?.id??null,activePoolCount:Number(activePool?.product_count??0),
     opportunitySnapshotId:opportunity?.id??null,opportunityStatus:opportunity?.status??null,
     migrationMax:db.prepare('SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1').get()?.filename??null };
 }
-function dataIntegrity(before) { const current=formalState();return { current,before,formalUnchanged:before?JSON.stringify(current)===JSON.stringify(before):null,
+function dataIntegrity(before,profile) { const current=formalState(profile);return { current,before,formalUnchanged:before?JSON.stringify(current)===JSON.stringify(before):null,
   sqliteIntegrity:String(db.prepare('PRAGMA integrity_check').get().integrity_check),foreignKeyViolations:db.prepare('PRAGMA foreign_key_check').all().length }; }
 function failedCount(value){return value.queues.reduce((total,queue)=>total+Number(queue.checkpoint?.failed_count??0)+(queue.status==='failed'?1:0),0);}
 function activeQueue(value){return value.queues.find(queue=>['opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(queue.status))??null;}
 function count(table){return Number(db.prepare(`SELECT COUNT(*) count FROM ${table}`).get().count);}
+function scopedActiveMembershipCount(profile){const scope=profile.membership_scope;return Number(db.prepare(`SELECT COUNT(*) count FROM catalog_memberships WHERE active=1 AND category_key=? AND site_country=? AND language=? AND currency=? AND primary_category=? AND subcategory=? AND sort_order=?`).get(profile.category_key,scope.site_country,scope.language,scope.currency,scope.primary_category,scope.subcategory,scope.sort_order).count);}
 function stage(value){const parsed=Number(value);if(![50,300].includes(parsed))throw coded('INVALID_STAGE_TARGET','--stage只能是50或300。');return parsed;}
+function positiveInteger(value,name){const parsed=Number(value);if(!Number.isInteger(parsed)||parsed<1)throw coded('INVALID_TARGET',`--${name} 必须是正整数。`);return parsed;}
 function parseArgs(argv){const [first,...rest]=argv;if(!first)throw new Error('用法：create/status/configure-runtime/approve-stage/finalize');const options={};for(let index=0;index<rest.length;index+=1){const token=rest[index];if(!token.startsWith('--'))throw new Error(`无法识别参数：${token}`);const key=token.slice(2),value=rest[index+1];if(!value||value.startsWith('--'))throw new Error(`参数 --${key} 缺少值。`);options[key]=value;index+=1;}return { action:first,options };}
 function coded(code,message,details=null){const error=new Error(message);error.code=code;if(details)error.details=details;return error;}
 function print(value){console.log(JSON.stringify(value,null,2));}

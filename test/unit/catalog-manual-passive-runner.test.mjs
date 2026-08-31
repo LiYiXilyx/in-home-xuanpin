@@ -7,6 +7,7 @@ import vm from 'node:vm';
 const root=path.resolve(import.meta.dirname,'../..');
 const bindingSource=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-binding.js'),'utf8');
 const runnerSource=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-passive-runner.js'),'utf8');
+const adminSource=fs.readFileSync(path.join(root,'tools/catalog-manual-passive-admin.mjs'),'utf8');
 
 function loadModule(){const sandbox=vm.createContext({console,URL,Date,document:{body:{innerText:''},documentElement:{},getElementById:()=>null},location:{href:'https://www.temu.com/de-en/category-b.html',pathname:'/de-en/category-b.html'}});vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);return sandbox.TemuCatalogManualPassiveRunnerModule;}
 function context({accepted=0,checkpoint={}}={}){return{campaign:{id:'campaign-b',status:'running',categoryKey:'category-b',categoryProfileVersion:'category-b-v1',targetCount:50,baselinePoolCount:0,nonElectronicUniqueCount:accepted,rawObservedCount:accepted,electronicExcludedCount:0,browserControlMode:'MANUAL_BIND_PASSIVE_CAPTURE',cdpRequired:false,extensionPassiveRequired:true},profile:{category_key:'category-b',category_profile_version:'category-b-v1',display_name:'Category B',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales'},source:{id:'source-b'},queue:{id:'queue-b',checkpoint}};}
@@ -35,4 +36,11 @@ test('Page Health blocks SEARCH_NO_RESULTS and CAPTCHA before binding',async()=>
   const {ManualPassiveRunner}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);await runner.restore(initial);
   for(const page of [healthy({searchNoResults:true}),healthy({captchaBlocking:true})]){h.setPage(page);const detected=await runner.detectCurrentPage();assert.equal(detected.detection.health.status,'BLOCKED');await assert.rejects(()=>runner.bindCurrentPage(),error=>error.code==='PAGE_HEALTH_BLOCKED');}
   assert.equal(h.submits,0);
+});
+
+test('Manual Passive admin derives category, sort and target from the bound Campaign Profile',()=>{
+  assert.doesNotMatch(adminSource,/bound_category\s*===\s*['"]Motorcycles & Powersports Accessories['"]/);
+  assert.doesNotMatch(adminSource,/const TARGET\s*=\s*3000/);
+  assert.match(adminSource,/categoryProfile/);
+  assert.match(adminSource,/campaign\.targetCount/);
 });
