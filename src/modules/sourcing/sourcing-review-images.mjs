@@ -69,7 +69,7 @@ export function createSourcingReviewImageResolver({
       const bytes=await fs.readFile(canonicalPath);
       const metadata=await decode(bytes);
       if(!(metadata.width>0)||!(metadata.height>0)) return {kind:'MISSING'};
-      return {kind:'LOCAL',contentType:contentTypeFor(metadata.format),bytes};
+      return {kind:'LOCAL',contentType:contentTypeFor(metadata.format),bytes,width:metadata.width,height:metadata.height,format:metadata.format};
     } catch {
       return {kind:'MISSING'};
     }
