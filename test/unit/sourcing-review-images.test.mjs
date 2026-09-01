@@ -96,6 +96,7 @@ test('Temu image uses exact context mapping and missing context stays MISSING',a
   const resolver=createSourcingReviewImageResolver({projectRoot:c.root,temuImageRoot:c.temuRoot});
   const valid=await resolver.resolveTemuImage(c.temuContext);
   assert.equal(valid.kind,'LOCAL');
+  assert.equal(valid.contentType,'image/avif');
   assert.deepEqual(valid.bytes,c.avif);
   assert.equal('path' in valid,false);
 

@@ -69,7 +69,7 @@ export function createSourcingReviewImageResolver({
       const bytes=await fs.readFile(canonicalPath);
       const metadata=await decode(bytes);
       if(!(metadata.width>0)||!(metadata.height>0)) return {kind:'MISSING'};
-      return {kind:'LOCAL',contentType:contentTypeFor(metadata.format),bytes,width:metadata.width,height:metadata.height,format:metadata.format};
+      return {kind:'LOCAL',contentType:contentTypeFor(metadata),bytes,width:metadata.width,height:metadata.height,format:metadata.format};
     } catch {
       return {kind:'MISSING'};
     }
@@ -90,8 +90,9 @@ function loadSharp() {
   return sharpInstance;
 }
 
-function contentTypeFor(format) {
-  const value=String(format??'').toLowerCase();
+function contentTypeFor(metadata) {
+  const value=String(metadata?.format??metadata??'').toLowerCase();
+  if(value==='heif'&&String(metadata?.compression??'').toLowerCase()==='av1') return 'image/avif';
   if(value==='jpg'||value==='jpeg') return 'image/jpeg';
   if(value==='svg') return 'image/svg+xml';
   return value?`image/${value}`:'application/octet-stream';
