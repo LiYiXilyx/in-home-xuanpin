@@ -70,7 +70,7 @@ test('goods detail preserves stable Random5 order and missing Temu context',()=>
   assert.equal(service.goodsDetail('603').temu_context.temu_context_status,'MISSING');
 });
 
-test('service rejects unfinished runs and V1 count drift',()=>{
+test('service rejects unfinished runs and frozen run metadata drift',()=>{
   const unfinished=fixture({status:'RUNNING'});
   assert.throws(()=>createSourcingReviewService({
     sourcingRepository:unfinished.sourcingRepository,temuRepository:unfinished.temuRepository,
@@ -80,7 +80,7 @@ test('service rejects unfinished runs and V1 count drift',()=>{
   assert.throws(()=>createSourcingReviewService({
     sourcingRepository:valid.sourcingRepository,temuRepository:valid.temuRepository,
     runId:'run-fixed',expectedGoods:50,expectedCandidates:250,
-  }).bootstrap(),error=>error.code==='REVIEW_V1_COUNT_MISMATCH');
+  }).bootstrap(),error=>error.code==='REVIEW_RUN_COUNT_MISMATCH');
 });
 
 test('a newly inserted run never changes the fixed session run',()=>{

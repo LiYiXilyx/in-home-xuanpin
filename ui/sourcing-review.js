@@ -1,6 +1,6 @@
 import {createReviewConsoleState} from './sourcing-review-state.js';
 
-const RUN_ID=new URLSearchParams(location.search).get('run_id')||'yingdao_random5_v1_20260831_001';
+const RUN_ID=new URLSearchParams(location.search).get('run_id');
 const $=id=>document.getElementById(id);
 const api={
   async request(path,options={}) {
@@ -14,7 +14,7 @@ const api={
     return payload;
   },
 };
-const review=createReviewConsoleState({api,runId:RUN_ID,openWindow:window.open.bind(window)});
+const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,openWindow:window.open.bind(window)}):null;
 
 function text(tag,value,className) {
   const node=document.createElement(tag);
@@ -40,6 +40,7 @@ function image(src,alt) {
 }
 
 function render() {
+  if(!review){$('reviewRunId').textContent='未指定';$('reviewNotice').textContent='缺少 run_id，请从 YingDao 运营台选择一个 Review Run。';document.querySelectorAll('button,textarea').forEach(node=>node.disabled=true);return;}
   const state=review.snapshot(),summary=state.bootstrap,detail=state.detail,candidate=state.currentCandidate;
   $('reviewRunId').textContent=RUN_ID;
   $('metricTotal').textContent=summary?.total_goods??0;
@@ -160,4 +161,4 @@ $('operatorNote').addEventListener('input',()=>review.setNoteDirty(true));
 $('reviewOpportunityToggle').addEventListener('click',()=>{review.toggleGroup();render();});
 $('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
 $('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeImagePreview();render();});
-act(()=>review.load());
+if(review)act(()=>review.load());else render();

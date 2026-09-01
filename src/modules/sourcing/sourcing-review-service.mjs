@@ -3,10 +3,11 @@ const ALLOWED_FILTERS=new Set(['ALL','PENDING','CONFIRMED','IMAGE_FAILED']);
 import {normalizeUnitPrice} from './unit-price-normalizer.mjs';
 import {buildOpportunityGroups} from './review-opportunity-groups.mjs';
 import {calculateOpportunity,normalizeSupplierCandidate} from './review-opportunity-calculator.mjs';
+import {resolveRunExpectedCounts} from './review-lifecycle-mapper.mjs';
 
 export function createSourcingReviewService({
   sourcingRepository,temuRepository,runId,
-  expectedGoods=50,expectedCandidates=250,
+  expectedGoods=null,expectedCandidates=null,
   opportunityContext=null,
 }={}) {
   const fixedRunId=required(runId,'run_id');
@@ -22,6 +23,7 @@ export function createSourcingReviewService({
       confirmed:snapshot.goods.filter(item=>item.review_status==='CONFIRMED').length,
       no_selection:snapshot.goods.filter(item=>item.review_status==='NO_SELECTION').length,
       image_failed_goods:snapshot.goods.filter(item=>item.image_failed).length,
+      expected_counts:{expected_goods_count:snapshot.run.expected_goods_count,expected_candidate_count:snapshot.run.expected_candidate_count,expected_candidates_per_goods:snapshot.run.expected_candidates_per_goods,source:snapshot.run.source},
       filter:filterKey,
       goods:visible,
     };
@@ -118,10 +120,7 @@ export function createSourcingReviewService({
     const status=run.import_status??run.status;
     if(!ALLOWED_RUN_STATUSES.has(status)) throw serviceError('REVIEW_RUN_NOT_COMPLETED',`review run 状态不可用：${status}`);
     const candidateCount=details.reduce((sum,item)=>sum+item.candidates.length,0);
-    if(goods.length!==expectedGoods||candidateCount!==expectedCandidates) throw serviceError(
-      'REVIEW_V1_COUNT_MISMATCH',
-      `V1 review 数量不匹配：goods=${goods.length}/${expectedGoods}, candidates=${candidateCount}/${expectedCandidates}`,
-    );
+    const countMetadata=resolveRunExpectedCounts({...run,...(expectedGoods?{expected_goods_count:expectedGoods}:{}),...(expectedCandidates?{expected_candidate_count:expectedCandidates}:{})},{actualGoods:goods.length,actualCandidates:candidateCount});
     const ids=details.map(item=>String(item.temu_goods_id));
     const contexts=temuRepository.getTemuContexts?.(ids)??new Map(ids.map(id=>[id,temuRepository.getTemuContext(id)]));
     const normalized=details.map(item=>{
@@ -166,7 +165,7 @@ export function createSourcingReviewService({
       return {...item,temu_context:temu,group_context:groupContext,candidates};
     });
     validateStatusConservation(joined);
-    return {run,goods:joined,details:enrichedDetails,fx};
+    return {run:{...run,...countMetadata},goods:joined,details:enrichedDetails,fx};
   }
 
   return {
