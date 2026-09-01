@@ -97,10 +97,12 @@ test('opening a link resolves the selected database identity through the API',as
 test('review page is independent, three-column and linked from the operator homepage',()=>{
   const html=readFileSync(new URL('../../ui/sourcing-review.html',import.meta.url),'utf8');
   const home=readFileSync(new URL('../../ui/index.html',import.meta.url),'utf8');
+  const yingdaoPanel=readFileSync(new URL('../../ui/modules/yingdao/panel.js',import.meta.url),'utf8');
   const css=readFileSync(new URL('../../ui/sourcing-review.css',import.meta.url),'utf8');
   for(const id of ['goodsList','currentTemu','candidateGrid','candidateDetail','reviewPrev','reviewNext']) assert.match(html,new RegExp(`id="${id}"`));
   for(const label of ['打开1688链接','设为最终候选','取消最终选择','排除候选','恢复候选','保存人工备注']) assert.match(html,new RegExp(label));
-  assert.match(home,/href="\/sourcing-review\.html"[^>]*>1688候选人工复核/);
+  assert.match(home,/id="yingdao-module-root"/);
+  assert.match(yingdaoPanel,/href="\/sourcing-review\.html"[^>]*>打开1688候选人工复核/);
   const mobile=css.slice(css.lastIndexOf('@media(max-width:700px)'));
   assert.match(mobile,/\.goods-panel\{max-height:\d+vh\}/);
 });
