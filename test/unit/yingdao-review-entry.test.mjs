@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {mountYingdaoPanel,yingdaoPanelMarkup} from '../../ui/modules/yingdao/panel.js';
+import {createYingdaoApi} from '../../ui/modules/yingdao/api.js';
 import {yingdaoDomFixture} from '../fixtures/yingdao-panel-dom-fixture.mjs';
 
 test('homepage shows read-only Review summary and independent console entry',async()=>{
@@ -14,4 +15,9 @@ test('homepage shows read-only Review summary and independent console entry',asy
 
 test('homepage Review integration exposes no mutation API or selected-candidate handler',()=>{
   const source=String(mountYingdaoPanel);assert.doesNotMatch(source,/selectCandidate|excludeCandidate|clearSelection|operator_note/);
+});
+
+test('Review bootstrap always carries the validated fixed run identity',async()=>{
+  let requested;const api=createYingdaoApi({fetchImpl:async url=>{requested=String(url);return{ok:true,json:async()=>({})};}});await api.reviewBootstrap();
+  assert.equal(requested,'/api/sourcing/review/bootstrap?run_id=yingdao_random5_v1_20260831_001');
 });
