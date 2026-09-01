@@ -41,6 +41,7 @@ import { loadVisualWorkbookUniverse } from '../modules/sourcing/visual-workbook-
 import { createLocalVisualEmbeddingBackend } from '../modules/sourcing/local-visual-embedding.mjs';
 import { createVisualIndexStore } from '../modules/sourcing/visual-index-store.mjs';
 import { createVisualReviewContext } from '../modules/sourcing/visual-review-context.mjs';
+import { createVisualDisplayImageResolver } from '../modules/sourcing/visual-display-image.mjs';
 
 const projectDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 
@@ -94,14 +95,14 @@ export async function createOperationsServer(options={}) {
     temuContextDb=openTemuContextDatabase(config.app.databasePath);
     const sourcingReviewRepository=createSourcingReviewRepository(sourcingDb);
     const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:temuPathBase,imageCacheRoot:temuImageRoot});
-    let visualContext=null;
-    if(reviewImport?.selected_workbook_path){const universe=await loadVisualWorkbookUniverse({workbookPath:reviewImport.selected_workbook_path});const visualCacheRoot=options.sourcingVisualCacheRoot??path.join(path.dirname(reviewImport.selected_workbook_path),'visual-cache');const embeddingBackend=createLocalVisualEmbeddingBackend({cacheRoot:visualCacheRoot,sourcePath:path.join(projectDir,'tools/yingdao-vision-embed.swift')});const indexStore=createVisualIndexStore({cacheRoot:visualCacheRoot,embeddingBackend});visualContext=createVisualReviewContext({universe,indexStore,currentRunId:reviewRunId,currentGoodsIds:[...new Set(reviewImport.items.map(item=>String(item.temu_goods_id)))]});}
+    const imageResolver=createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot});let visualContext=null;
+    if(reviewImport?.selected_workbook_path){const universe=await loadVisualWorkbookUniverse({workbookPath:reviewImport.selected_workbook_path});const visualCacheRoot=options.sourcingVisualCacheRoot??path.join(path.dirname(reviewImport.selected_workbook_path),'visual-cache');const embeddingBackend=createLocalVisualEmbeddingBackend({cacheRoot:visualCacheRoot,sourcePath:path.join(projectDir,'tools/yingdao-vision-embed.swift')});const indexStore=createVisualIndexStore({cacheRoot:visualCacheRoot,embeddingBackend});const displayResolver=createVisualDisplayImageResolver({runId:reviewRunId,universe,indexStore,temuRepository:temuContextRepository,temuImageResolver:imageResolver});visualContext=createVisualReviewContext({universe,indexStore,currentRunId:reviewRunId,currentGoodsIds:[...new Set(reviewImport.items.map(item=>String(item.temu_goods_id)))],displayResolver});}
     const sourcingReviewService=createSourcingReviewService({
       sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
       runId:reviewRunId,opportunityContext,visualContext,
     });
     sourcingReviewController=createSourcingReviewController({
-      service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot}),
+      service:sourcingReviewService,imageResolver,
     });
   }
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),

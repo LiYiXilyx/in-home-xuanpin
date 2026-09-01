@@ -27,6 +27,7 @@ export function createSourcingReviewController({service,imageResolver}={}) {
   }
   function visualMatches({runId,temuGoodsId,limit,fingerprint}={}) { service.assertFixedRun(runId);return service.visualMatches(temuGoodsId,{limit,fingerprint}); }
   function visualImage({runId,temuGoodsId,fingerprint}={}) { service.assertFixedRun(runId);return service.visualImage(temuGoodsId,{fingerprint}); }
+  function visualDisplayImage({runId,temuGoodsId,fingerprint}={}) { service.assertFixedRun(runId);return service.visualDisplayImage(temuGoodsId,{fingerprint}); }
 
   function select({temuGoodsId,body}={}) {
     assertRouteGoods(temuGoodsId,body);
@@ -55,7 +56,7 @@ export function createSourcingReviewController({service,imageResolver}={}) {
     return service.saveCandidateNote(input(body,temuGoodsId,{productId,operatorNote:note}));
   }
 
-  return {bootstrap,goods,temuImage,supplierImage,openLink,visualMatches,visualImage,select,clearSelection,exclude,restore,note};
+  return {bootstrap,goods,temuImage,supplierImage,openLink,visualMatches,visualImage,visualDisplayImage,select,clearSelection,exclude,restore,note};
 }
 
 function input(body,temuGoodsId,extra={}) {

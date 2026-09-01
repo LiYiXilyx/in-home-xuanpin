@@ -11,6 +11,8 @@ export function createRouter({ statusService,browserController,jobController,rev
         if(request.method==='GET'&&url.pathname==='/api/sourcing/review/bootstrap') return json(response,200,await sourcingReviewController.bootstrap({runId:url.searchParams.get('run_id'),filter:url.searchParams.get('filter')??'ALL'}));
         const visualImage=url.pathname.match(/^\/api\/sourcing\/review\/visual-index\/images\/([^/]+)$/);
         if(request.method==='GET'&&visualImage) return reviewImage(response,await sourcingReviewController.visualImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualImage[1]),fingerprint:url.searchParams.get('index_fingerprint')}));
+        const visualDisplayImage=url.pathname.match(/^\/api\/sourcing\/review\/visual-index\/display-images\/([^/]+)$/);
+        if(request.method==='GET'&&visualDisplayImage) return reviewImage(response,await sourcingReviewController.visualDisplayImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualDisplayImage[1]),fingerprint:url.searchParams.get('index_fingerprint')}));
         const visualMatches=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/visual-matches$/);
         if(request.method==='GET'&&visualMatches) return json(response,200,await sourcingReviewController.visualMatches({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualMatches[1]),limit:url.searchParams.get('limit'),fingerprint:url.searchParams.get('index_fingerprint')}));
         const temuImage=url.pathname.match(/^\/api\/sourcing\/review\/images\/temu\/([^/]+)$/);

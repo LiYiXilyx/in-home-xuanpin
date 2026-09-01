@@ -98,7 +98,7 @@ test('review page is independent, three-column and linked from the operator home
   const html=readFileSync(new URL('../../ui/sourcing-review.html',import.meta.url),'utf8');
   const home=readFileSync(new URL('../../ui/index.html',import.meta.url),'utf8');
   const yingdaoPanel=readFileSync(new URL('../../ui/modules/yingdao/panel.js',import.meta.url),'utf8');
-  const css=readFileSync(new URL('../../ui/sourcing-review.css',import.meta.url),'utf8');
+  const css=readFileSync(new URL('../../ui/sourcing-review.css',import.meta.url),'utf8')+readFileSync(new URL('../../ui/sourcing-review-display.css',import.meta.url),'utf8');
   for(const id of ['goodsList','currentTemu','candidateGrid','candidateDetail','reviewPrev','reviewNext']) assert.match(html,new RegExp(`id="${id}"`));
   for(const label of ['打开1688链接','设为最终候选','取消最终选择','排除候选','恢复候选','保存人工备注']) assert.match(html,new RegExp(label));
   assert.match(home,/id="yingdao-module-root"/);
@@ -118,4 +118,13 @@ test('review page contains accessible opportunity accordion benchmark preview an
   assert.match(js,/切换到此商品复核/);assert.match(js,/previewVisualImage/);assert.match(js,/opportunity_band/);assert.match(js,/Excel视觉相似商品/);
   assert.match(js,/value===null\|\|value===undefined\|\|value===''/,'missing prices must render as unavailable, never zero');
   assert.match(css,/\.opportunity-items\{[^}]*max-height:/);assert.match(css,/overflow:auto/);
+});
+
+test('visual cards use server-resolved display images and constrain low resolution fallbacks',()=>{
+  const js=readFileSync(new URL('../../ui/sourcing-review.js',import.meta.url),'utf8');
+  const css=readFileSync(new URL('../../ui/sourcing-review.css',import.meta.url),'utf8')+readFileSync(new URL('../../ui/sourcing-review-display.css',import.meta.url),'utf8');
+  assert.match(js,/display_image_url/);assert.match(js,/display_image_kind/);
+  assert.doesNotMatch(js,/const img=image\(visualImage\(item\.goods_id/);
+  assert.match(js,/预览图分辨率较低/);assert.match(js,/暂无图片/);
+  assert.match(css,/\.opportunity-item img\.low-resolution/);assert.match(css,/max-width:/);assert.match(css,/object-fit:contain/);
 });
