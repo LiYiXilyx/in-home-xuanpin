@@ -30,6 +30,19 @@ end run
 APPLESCRIPT
 }
 
+show_success() {
+  local message='Temu 运营台已打开'
+  if [[ "$TEST_MODE" == '1' && -n "${TEMU_OPERATOR_TEST_SUCCESS_FILE:-}" ]]; then
+    print -r -- "$message" > "$TEMU_OPERATOR_TEST_SUCCESS_FILE"
+    return
+  fi
+  /usr/bin/osascript - "$message" <<'APPLESCRIPT' >/dev/null 2>&1
+on run argv
+  display dialog (item 1 of argv) buttons {"好"} default button "好" with title "Temu 运营台"
+end run
+APPLESCRIPT
+}
+
 hard_fail() {
   show_failure "$1" "$2"
   print -u2 -- "$1: $2"
@@ -65,5 +78,6 @@ PATH="${NODE_PATH:h}:${NPM_PATH:h}:/usr/bin:/bin" \
   --worktree "$WORKTREE_PATH" --config "$CONFIG_PATH" --npm "$NPM_PATH" --port 37821
 STATUS=$?
 [[ $STATUS -eq 0 ]] || hard_fail 'OPERATOR_DASHBOARD_LAUNCH_FAILED' 'Dashboard 未能通过健康检查。'
+show_success
 
 exit 0

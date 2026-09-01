@@ -67,16 +67,19 @@ test('app hard fails missing fixed worktree or config without invoking core',t =
   assert.equal(fs.existsSync(marker),false);
 });
 
-test('Finder wrapper resolves runtime and invokes Node core with explicit fixed scope',t => {
+test('Finder wrapper resolves runtime, invokes Node core, and reports visible success',t => {
   const fixture=runtimeFixture(t,{ node:true,npm:true,recordNode:true });
   const dialog=path.join(fixture.directory,'dialog.txt');
+  const success=path.join(fixture.directory,'success.txt');
   const result=spawnApp({
     TEMU_OPERATOR_TEST_RUNTIME_PATH:fixture.bin,
     TEMU_OPERATOR_TEST_DIALOG_FILE:dialog,
+    TEMU_OPERATOR_TEST_SUCCESS_FILE:success,
     TEMU_OPERATOR_TEST_NODE_MARKER:fixture.nodeMarker
   });
   assert.equal(result.status,0,result.stderr);
   assert.equal(fs.existsSync(dialog),false);
+  assert.equal(fs.readFileSync(success,'utf8').trim(),'Temu 运营台已打开');
   const invocation=fs.readFileSync(fixture.nodeMarker,'utf8');
   assert.match(invocation,/tools\/operator-dashboard-launcher\.mjs/);
   assert.match(invocation,/--worktree\n\/Users\/chuangyangdianzi\/Desktop\/选品上架-家里版本\/temu-operator-runtime/);
