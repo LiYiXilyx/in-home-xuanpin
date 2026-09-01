@@ -48,11 +48,11 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
     return snapshot();
   }
 
-  async function move(delta) {
+  async function move(delta,options={}) {
     const ids=model.bootstrap?.goods.map(row=>String(row.temu_goods_id))??[];
     const index=ids.indexOf(model.currentGoodsId);
     const target=ids[index+delta];
-    if(target) await selectGoods(target);
+    if(target) await selectGoods(target,options);
     return snapshot();
   }
 
@@ -115,7 +115,7 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
   }
 
   return {
-    load,selectGoods,chooseCandidate,previous:()=>move(-1),next:()=>move(1),snapshot,
+    load,selectGoods,chooseCandidate,previous:options=>move(-1,options),next:options=>move(1,options),snapshot,
     selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveNote,openLink,
     toggleGroup,setGroupSort,previewGroupImage,closeImagePreview,switchToGroupGoods,setNoteDirty,
   };

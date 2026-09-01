@@ -23,6 +23,8 @@ function text(tag,value,className) {
   return node;
 }
 function field(label,value) { return `${label}：${value??'—'}`; }
+function number(value,digits=2) { return Number.isFinite(Number(value))?Number(value).toFixed(digits):'—'; }
+function money(value,currency) { return Number.isFinite(Number(value))?`${currency==='CNY'?'¥':'€'}${number(value)}`:'—'; }
 function productId(row) { return String(row?.['1688_product_id']??row?.supplier_product_id??''); }
 function supplierImage(goodsId,row) {
   const params=new URLSearchParams({run_id:RUN_ID});
@@ -46,7 +48,7 @@ function render() {
   $('metricNoSelection').textContent=summary?.no_selection??0;
   $('reviewNotice').textContent=state.notice??'';
   document.querySelectorAll('[data-filter]').forEach(button=>button.classList.toggle('active',button.dataset.filter===state.filter));
-  renderGoods(state); renderTemu(detail); renderCandidates(state); renderDetail(candidate,detail);
+  renderGoods(state); renderTemu(detail); renderOpportunity(state); renderCandidates(state); renderDetail(candidate,detail);
   const ids=summary?.goods.map(row=>String(row.temu_goods_id))??[],index=ids.indexOf(state.currentGoodsId);
   $('reviewPrev').disabled=index<=0; $('reviewNext').disabled=index<0||index>=ids.length-1;
 }
@@ -59,8 +61,10 @@ function renderGoods(state) {
     button.append(image(temuImage(id),`Temu ${id}`));
     const copy=document.createElement('span');
     copy.append(text('strong',id),text('span',item.temu_title??'Temu上下文缺失','meta'),text('span',item.review_status,'status'));
+    copy.append(text('span',`${item.group_label??'未可靠分组'} · ${item.group_item_count??1}款`,'meta'));
+    copy.append(text('span',`标价 ${money(item.temu_listed_price_eur,'EUR')} · 单个 ${money(item.temu_unit_price_eur,'EUR')}${item.temu_quantity_confidence==='LOW'||item.quantity_confidence==='LOW'?' (推定)':''}`,'meta'));
     if(item.image_failed) copy.append(text('span','图片失败','status error'));
-    button.append(copy); button.addEventListener('click',()=>act(()=>review.selectGoods(id))); root.append(button);
+    button.append(copy); button.addEventListener('click',()=>act(()=>review.selectGoods(id,{confirmDiscard:confirmDiscardNote}))); root.append(button);
   }
 }
 
@@ -69,8 +73,31 @@ function renderTemu(detail) {
   const context=detail.temu_context??{},id=detail.temu_goods_id;
   root.append(image(temuImage(id),`Temu ${id}`));
   const copy=document.createElement('div'); copy.append(text('h2',context.temu_title??'MISSING'));
-  for(const value of [field('goods_id',id),field('复核状态',detail.review_status),field('分类',[context.level1,context.level2,context.level3].filter(Boolean).join(' / ')||null),field('similar_cluster',context.similar_cluster),field('上下文',context.temu_context_status)]) copy.append(text('p',value,'meta'));
+  for(const value of [field('goods_id',id),field('复核状态',detail.review_status),field('Temu标价',money(context.temu_listed_price_eur,'EUR')),field('包装数量',context.temu_pack_quantity),field('Temu单个价',`${money(context.temu_unit_price_eur,'EUR')} / 件`),field('数量依据',context.quantity_source),field('解析置信度',context.quantity_confidence),field('价格来源',context.temu_price_source),field('同类',`${context.group_label??'未可靠分组'} (${detail.group_context?.item_count??1}款)`),field('分组依据',`${context.group_source??'—'} / ${context.group_confidence??'—'}`),field('分类',[context.level1,context.level2,context.level3].filter(Boolean).join(' / ')||null),field('上下文',context.temu_context_status)]) copy.append(text('p',value,'meta'));
   root.append(copy);
+}
+
+function renderOpportunity(state) {
+  const detail=state.detail,group=detail?.group_context,fx=detail?.fx_context;
+  const toggle=$('reviewOpportunityToggle'),panel=$('reviewOpportunityPanel'),summary=$('reviewOpportunitySummary'),items=$('reviewOpportunityItems'),benchmark=$('reviewOpportunityBenchmark');
+  summary.replaceChildren();items.replaceChildren();benchmark.replaceChildren();
+  if(!group) { toggle.disabled=true;panel.hidden=true;return; }
+  toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.groupExpanded));toggle.textContent=state.groupExpanded?'收起同类对比':'展开同类对比';panel.hidden=!state.groupExpanded;
+  const m=group.metrics??{};
+  summary.append(text('strong',`${group.group_label} · ${group.item_count}款`),text('span',`最低标价 ${money(m.group_min_listed_price_eur,'EUR')} · 最低可靠单价 ${money(m.group_min_unit_price_eur,'EUR')} · 中位数 ${money(m.group_median_unit_price_eur,'EUR')}`,'meta'));
+  const thumbs=document.createElement('div');thumbs.className='opportunity-thumbs';
+  for(const item of (group.items??[]).slice(0,6)) { const img=image(temuImage(item.temu_goods_id),`Temu ${item.temu_goods_id}`);img.addEventListener('click',()=>{review.previewGroupImage(item.temu_goods_id);render();});thumbs.append(img); }
+  summary.append(thumbs);
+  $('reviewOpportunitySort').value=state.groupSort;
+  for(const item of sortedGroupItems(group.items??[],state.groupSort,state.currentGoodsId)) {
+    const card=document.createElement('article');card.className=`opportunity-item${item.is_current?' current':''}`;
+    const img=image(temuImage(item.temu_goods_id),`Temu ${item.temu_goods_id}`);img.addEventListener('click',()=>{review.previewGroupImage(item.temu_goods_id);render();});card.append(img,text('strong',item.temu_title??item.temu_goods_id));
+    card.append(text('p',[field('goods_id',item.temu_goods_id),field('标价',money(item.temu_listed_price_eur,'EUR')),field('包装数',item.temu_pack_quantity),field('单个价',money(item.temu_unit_price_eur,'EUR')),field('数量置信',item.quantity_confidence),field('复核',item.review_status)].join('\n'),'meta'));
+    if(item.is_current)card.append(text('span','当前商品','status'));if(item.is_min_listed)card.append(text('span','组最低标价','status'));if(item.is_min_unit)card.append(text('span','组最低单价','status'));
+    const switchButton=text('button','切换到此商品复核');switchButton.type='button';switchButton.disabled=item.is_current;switchButton.addEventListener('click',()=>act(()=>review.switchToGroupGoods(item.temu_goods_id,{confirmDiscard:confirmDiscardNote})));card.append(switchButton);items.append(card);
+  }
+  benchmark.append(text('strong',`当前同类：${group.group_label}`),text('span',`组内商品 ${group.item_count} · Temu最低标价 ${money(m.group_min_listed_price_eur,'EUR')} · 最低单价 ${money(m.group_min_unit_price_eur,'EUR')} / 件 · 单价中位数 ${money(m.group_median_unit_price_eur,'EUR')} / 件 · 当前 ${money(detail.temu_context?.temu_unit_price_eur,'EUR')} / 件 · 单价可计算 ${m.group_unit_price_count??0}/${group.item_count} · 汇率 ${fx?.status==='AVAILABLE'?`1 EUR = ${number(fx.cny_per_eur,4)} CNY`:'待配置'}`,'meta'));
+  const preview=$('reviewOpportunityPreview'),previewImage=$('reviewOpportunityPreviewImage');preview.hidden=!state.imagePreview;if(state.imagePreview)previewImage.src=temuImage(state.imagePreview);
 }
 
 function renderCandidates(state) {
@@ -82,6 +109,8 @@ function renderCandidates(state) {
     const meta=[
       `#${row.random_sample_rank} · original ${row.original_rank??'—'}`,field('product_id',id),
       field('RMB',row.price_rmb??row.supplier_price_rmb),field('MOQ',row.moq),field('月销',row.monthly_sales),
+      field('包装数',row.supplier_pack_quantity),field('采购单价CNY',money(row.supplier_unit_price_cny,'CNY')),field('采购单价EUR',money(row.supplier_unit_price_eur,'EUR')),
+      field('价格倍率',row.opportunity_ratio===null?null:`${number(row.opportunity_ratio,1)}x`),field('机会标签',row.opportunity_band),
       field('累计销量',row.cumulative_sales),field('店铺',row.shop_name),field('店铺资质',row.shop_qualification),
     ];
     button.append(text('p',meta.join('\n'),'meta'));
@@ -102,6 +131,7 @@ function renderDetail(row,detail) {
   const values=[
     field('random_sample_rank',row.random_sample_rank),field('original_rank',row.original_rank),field('1688_product_id',productId(row)),
     field('标题',row['1688_title']??row.supplier_title),field('RMB价格',row.price_rmb??row.supplier_price_rmb),field('MOQ',row.moq),
+    field('价格区间',`${money(row.supplier_price_low_cny,'CNY')} - ${money(row.supplier_price_high_cny,'CNY')}`),field('价格依据',row.supplier_price_basis),field('包装数',row.supplier_pack_quantity),field('包装置信',row.supplier_quantity_confidence),field('采购单价CNY',money(row.supplier_unit_price_cny,'CNY')),field('采购单价EUR',money(row.supplier_unit_price_eur,'EUR')),field('Temu同类最低单价',money(detail.group_context?.metrics?.group_min_unit_price_eur,'EUR')),field('价格倍率',row.opportunity_ratio===null?null:`${number(row.opportunity_ratio,1)}x`),field('机会标签',row.opportunity_band),field('需要检查',(row.opportunity_reasons??[]).join(', ')||null),
     field('月销',row.monthly_sales),field('累计销量',row.cumulative_sales),field('店铺',row.shop_name),field('店铺资质',row.shop_qualification),
     field('图片状态',row.image_download_status),field('复核状态',Number(row.review_excluded)===1?'已排除':Number(row.selected_candidate)===1?'已选定':'待复核'),
   ];
@@ -112,15 +142,22 @@ function renderDetail(row,detail) {
   $('restoreCandidate').hidden=Number(row.review_excluded)!==1;
 }
 
+function sortedGroupItems(items,sort,currentGoodsId) { const rows=[...items],id=x=>String(x.temu_goods_id),num=x=>Number.isFinite(Number(x))?Number(x):Infinity;if(sort==='GOODS_ID')return rows.sort((a,b)=>id(a).localeCompare(id(b)));if(sort==='LISTED_PRICE')return rows.sort((a,b)=>num(a.temu_listed_price_eur)-num(b.temu_listed_price_eur)||id(a).localeCompare(id(b)));if(sort==='UNIT_PRICE')return rows.sort((a,b)=>num(a.temu_unit_price_eur)-num(b.temu_unit_price_eur)||id(a).localeCompare(id(b)));return rows.sort((a,b)=>(id(a)===currentGoodsId?-1:0)-(id(b)===currentGoodsId?-1:0)||num(a.temu_unit_price_eur)-num(b.temu_unit_price_eur)||id(a).localeCompare(id(b)));}
+function confirmDiscardNote() { return globalThis.confirm?.('人工备注尚未保存，确定放弃并切换商品吗？')??false; }
+
 async function act(operation) {
   try { await operation(); } catch(error) { $('reviewNotice').textContent=error.message; }
   render();
 }
 
 document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>act(()=>review.load(button.dataset.filter))));
-$('reviewPrev').addEventListener('click',()=>act(()=>review.previous())); $('reviewNext').addEventListener('click',()=>act(()=>review.next()));
+$('reviewPrev').addEventListener('click',()=>act(()=>review.previous({confirmDiscard:confirmDiscardNote}))); $('reviewNext').addEventListener('click',()=>act(()=>review.next({confirmDiscard:confirmDiscardNote})));
 $('openSupplierLink').addEventListener('click',()=>act(()=>review.openLink()));
 $('selectCandidate').addEventListener('click',()=>act(()=>review.selectCandidate())); $('clearSelection').addEventListener('click',()=>act(()=>review.clearSelection()));
 $('excludeCandidate').addEventListener('click',()=>act(()=>review.excludeCandidate())); $('restoreCandidate').addEventListener('click',()=>act(()=>review.restoreCandidate()));
 $('saveNote').addEventListener('click',()=>act(()=>review.saveNote($('operatorNote').value)));
+$('operatorNote').addEventListener('input',()=>review.setNoteDirty(true));
+$('reviewOpportunityToggle').addEventListener('click',()=>{review.toggleGroup();render();});
+$('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
+$('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeImagePreview();render();});
 act(()=>review.load());

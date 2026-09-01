@@ -106,3 +106,14 @@ test('review page is independent, three-column and linked from the operator home
   const mobile=css.slice(css.lastIndexOf('@media(max-width:700px)'));
   assert.match(mobile,/\.goods-panel\{max-height:\d+vh\}/);
 });
+
+test('review page contains accessible opportunity accordion benchmark preview and explicit switch controls',()=>{
+  const html=readFileSync(new URL('../../ui/sourcing-review.html',import.meta.url),'utf8');
+  const js=readFileSync(new URL('../../ui/sourcing-review.js',import.meta.url),'utf8');
+  const css=readFileSync(new URL('../../ui/sourcing-review.css',import.meta.url),'utf8');
+  for(const id of ['reviewOpportunityToggle','reviewOpportunityPanel','reviewOpportunitySummary','reviewOpportunityItems','reviewOpportunityBenchmark','reviewOpportunityPreview']) assert.match(html,new RegExp(`id="${id}"`));
+  assert.match(html,/aria-expanded="false"/);assert.match(html,/aria-controls="reviewOpportunityPanel"/);assert.match(html,/role="region"/);
+  assert.match(html,/价格倍率仅比较 Temu 商品价与 1688 采购价/);
+  assert.match(js,/切换到此商品复核/);assert.match(js,/previewGroupImage/);assert.match(js,/opportunity_band/);
+  assert.match(css,/\.opportunity-items\{[^}]*max-height:/);assert.match(css,/overflow:auto/);
+});
