@@ -69,6 +69,7 @@
     ,"machine:audit": "node scripts/machine-audit.mjs"
     ,"qa:multi-category:readonly": "node scripts/verify-multi-category-readonly.mjs"
     ,"qa:initial-pool": "node scripts/verify-initial-category-pool-safety.mjs"
+    ,"qa:catalog-ui-delivery": "node scripts/verify-catalog-ui-delivery.mjs"
   },
   "dependencies": {
     "playwright": "1.56.0"
