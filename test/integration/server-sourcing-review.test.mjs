@@ -101,6 +101,8 @@ test('bootstrap goods detail images and database-derived 1688 link are served',a
   assert.equal(bootstrap.status,200);
   assert.equal(bootstrap.json.total_goods,1);
   assert.equal(bootstrap.json.awaiting_review,1);
+  const discovered=await api(c.base,'/api/sourcing/review/bootstrap');
+  assert.equal(discovered.status,200);assert.equal(discovered.json.run_id,'run-api');
   const detail=await api(c.base,'/api/sourcing/review/goods/601?run_id=run-api');
   assert.equal(detail.status,200);
   assert.deepEqual(detail.json.candidates.map(x=>x.random_sample_rank),[1,2]);

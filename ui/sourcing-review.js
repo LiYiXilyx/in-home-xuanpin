@@ -15,7 +15,7 @@ const api={
     return payload;
   },
 };
-const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,initialGoodsId:INITIAL_GOODS_ID,openWindow:window.open.bind(window)}):null;
+const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,initialGoodsId:INITIAL_GOODS_ID,openWindow:window.open.bind(window),onChange:()=>render()}):null;
 
 function text(tag,value,className) {
   const node=document.createElement(tag);
@@ -84,8 +84,8 @@ function renderOpportunity(state) {
   const detail=state.detail,result=state.visualResult,index=result?.index;
   const toggle=$('reviewOpportunityToggle'),panel=$('reviewOpportunityPanel'),summary=$('reviewOpportunitySummary'),items=$('reviewOpportunityItems'),benchmark=$('reviewOpportunityBenchmark');
   summary.replaceChildren();items.replaceChildren();benchmark.replaceChildren();
-  if(!detail){toggle.disabled=true;panel.hidden=true;return;}toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.visualExpanded));toggle.textContent=state.visualExpanded?'收起视觉相似商品':'展开视觉相似商品';panel.hidden=!state.visualExpanded;
-  if(state.visualLoading){summary.append(text('strong','视觉索引查询中…'));return;}if(state.visualError){summary.append(text('strong',`视觉索引错误：${state.visualError}`,'status error'));return;}if(!result){summary.append(text('strong','Excel视觉相似商品'),text('span','展开后从当前 run 绑定的 05_细分商品明细全量索引中检索','meta'));return;}if(index?.status!=='READY'){summary.append(text('strong',`视觉索引：${index?.status??'NOT_BUILT'}`),text('span','请先运行 YingDao 视觉索引构建','meta'));return;}
+  if(!state.currentGoodsId){toggle.disabled=true;panel.hidden=true;return;}toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.visualExpanded));toggle.textContent=state.visualExpanded?'收起视觉相似商品':'展开视觉相似商品';panel.hidden=!state.visualExpanded;
+  if(state.visualLoading){summary.append(text('strong',`正在检索当前商品 ${state.currentGoodsId} 的视觉相似商品…`));return;}if(state.visualError){summary.append(text('strong',`视觉索引错误：${state.visualError}`,'status error'));return;}if(!result){summary.append(text('strong','Excel视觉相似商品'),text('span','当前商品尚未加载视觉相似结果','meta'));return;}if(index?.status!=='READY'){summary.append(text('strong',`视觉索引：${index?.status??'NOT_BUILT'}`),text('span','请先运行 YingDao 视觉索引构建','meta'));return;}if(state.visualState.status==='EMPTY'){summary.append(text('strong','当前商品没有达到阈值的视觉相似商品'));benchmark.append(text('strong','视觉相似市场价格基准'),text('span','无可用视觉市场参考','meta'));return;}
   const m=result.market_metrics??{};summary.append(text('strong',`Excel视觉相似商品 · 命中 ${result.search?.match_count??0}`),text('span',`来源：05_细分商品明细 · 检索范围 ${index.universe_goods_count}款 · 可用图片 ${index.universe_image_count}张 · 模型 ${index.model_id} r${index.model_revision}`,'meta'),text('span',`其他相似最低 ${money(m.min_other_listed_price_eur,'EUR')} · 最低可靠单价 ${money(m.min_reliable_unit_price_eur,'EUR')} · 中位数 ${money(m.median_reliable_unit_price_eur,'EUR')}`,'meta'));
   const thumbs=document.createElement('div');thumbs.className='opportunity-thumbs';
   for(const item of (result.matches??[]).slice(0,6)){const img=image(visualImage(item.goods_id,index.index_fingerprint),`视觉匹配 ${item.goods_id}`);img.addEventListener('click',()=>{review.previewVisualImage(item.goods_id);render();});thumbs.append(img);}summary.append(thumbs);$('reviewOpportunitySort').hidden=true;

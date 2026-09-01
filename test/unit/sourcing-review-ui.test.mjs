@@ -102,7 +102,8 @@ test('review page is independent, three-column and linked from the operator home
   for(const id of ['goodsList','currentTemu','candidateGrid','candidateDetail','reviewPrev','reviewNext']) assert.match(html,new RegExp(`id="${id}"`));
   for(const label of ['打开1688链接','设为最终候选','取消最终选择','排除候选','恢复候选','保存人工备注']) assert.match(html,new RegExp(label));
   assert.match(home,/id="yingdao-module-root"/);
-  assert.match(yingdaoPanel,/href="\/sourcing-review\.html"[^>]*>打开1688候选人工复核/);
+  assert.match(yingdaoPanel,/buildSourcingReviewUrl/);
+  assert.doesNotMatch(yingdaoPanel,/href="\/sourcing-review\.html"[^?]/);
   const mobile=css.slice(css.lastIndexOf('@media(max-width:700px)'));
   assert.match(mobile,/\.goods-panel\{max-height:\d+vh\}/);
 });

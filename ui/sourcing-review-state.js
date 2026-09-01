@@ -1,10 +1,13 @@
 const FILTERS=new Set(['ALL','PENDING','CONFIRMED','IMAGE_FAILED']);
 
-export function createReviewConsoleState({api,runId,initialGoodsId=null,openWindow=globalThis.open?.bind(globalThis)}={}) {
+export function createReviewConsoleState({api,runId,initialGoodsId=null,openWindow=globalThis.open?.bind(globalThis),onChange=()=>{}}={}) {
   if(!api||!runId) throw new TypeError('api and runId are required');
   let model={filter:'ALL',bootstrap:null,detail:null,currentGoodsId:initialGoodsId?String(initialGoodsId):null,currentProductId:null,notice:'',
     groupExpanded:false,groupSort:'DEFAULT',comparisonGoodsId:null,imagePreview:null,noteDirty:false,
-    visualExpanded:false,visualLoading:false,visualResult:null,visualError:null,visualPreviewGoodsId:null};
+    visualExpanded:false,visualLoading:false,visualResult:null,visualError:null,visualPreviewGoodsId:null,
+    visualState:emptyVisualState(null)};
+  let goodsRequestSequence=0,visualRequestSequence=0,activeIndexFingerprint=null;
+  const visualMatchesByGoodsId=new Map();
 
   const request=(path,options)=>api.request(path,options);
   const query=()=>`run_id=${encodeURIComponent(runId)}`;
@@ -31,14 +34,17 @@ export function createReviewConsoleState({api,runId,initialGoodsId=null,openWind
     if(model.noteDirty&&model.currentGoodsId&&key!==model.currentGoodsId) {
       if(typeof confirmDiscard!=='function'||!confirmDiscard()) return false;
     }
+    const goodsToken=++goodsRequestSequence;
+    model.currentGoodsId=key;model.detail=null;model.currentProductId=null;model.noteDirty=false;model.comparisonGoodsId=null;model.imagePreview=null;model.visualPreviewGoodsId=null;
+    invalidateVisualMatches(key);notify();
     const response=await request(`/api/sourcing/review/goods/${encodeURIComponent(key)}?${query()}`);
+    if(goodsToken!==goodsRequestSequence||model.currentGoodsId!==key)return snapshot();
     response.candidates=[...(response.candidates??[])].sort((a,b)=>Number(a.random_sample_rank)-Number(b.random_sample_rank));
     model.detail=response;
-    model.currentGoodsId=key;
-    model.noteDirty=false;model.comparisonGoodsId=null;model.imagePreview=null;model.visualResult=null;model.visualError=null;model.visualPreviewGoodsId=null;
     if(!response.candidates.some(row=>productId(row)===model.currentProductId)) {
       model.currentProductId=productId(response.candidates[0])||null;
     }
+    if(model.visualExpanded){markCandidateVisualLoading();notify();await refreshVisualMatches(key,{allowCache:false});}else notify();
     return snapshot();
   }
 
@@ -92,7 +98,27 @@ export function createReviewConsoleState({api,runId,initialGoodsId=null,openWind
   function setNoteDirty(value) { model.noteDirty=Boolean(value);return snapshot(); }
   async function switchToGroupGoods(goodsId,{confirmDiscard}={}) { const key=groupGoodsId(goodsId);const result=await selectGoods(key,{confirmDiscard});return result===false?false:true; }
 
-  async function toggleVisual() { model.visualExpanded=!model.visualExpanded;if(model.visualExpanded&&!model.visualResult){model.visualLoading=true;model.visualError=null;try{model.visualResult=await request(`/api/sourcing/review/goods/${encodeURIComponent(model.currentGoodsId)}/visual-matches?${query()}&limit=20`);const byProduct=new Map((model.visualResult.candidate_opportunities??[]).map(row=>[String(row.product_id),row]));if(model.detail)model.detail.candidates=model.detail.candidates.map(row=>({...row,...byProduct.get(productId(row))}));}catch(error){model.visualError=error.code??error.message;}finally{model.visualLoading=false;}}return snapshot(); }
+  async function toggleVisual() { model.visualExpanded=!model.visualExpanded;if(!model.visualExpanded){notify();return snapshot();}await refreshVisualMatches(model.currentGoodsId,{allowCache:true});return snapshot(); }
+  async function refreshVisualMatches(goodsId,{allowCache=false,ignoreFingerprint=false}={}){
+    const anchor=String(goodsId??'');if(!anchor||anchor!==model.currentGoodsId)return snapshot();
+    const cached=allowCache&&activeIndexFingerprint?visualMatchesByGoodsId.get(visualCacheKey(runId,anchor,activeIndexFingerprint)):null;
+    if(cached){applyVisualResult(anchor,cached);notify();return snapshot();}
+    const requestToken=++visualRequestSequence;setVisualState(anchor,'LOADING');markCandidateVisualLoading();notify();
+    const params=new URLSearchParams({run_id:runId,limit:'20'});if(activeIndexFingerprint&&!ignoreFingerprint)params.set('index_fingerprint',activeIndexFingerprint);
+    try{
+      const result=await request(`/api/sourcing/review/goods/${encodeURIComponent(anchor)}/visual-matches?${params}`);
+      if(requestToken!==visualRequestSequence||model.currentGoodsId!==anchor||String(result?.anchor_goods_id??'')!==anchor)return snapshot();
+      if(result?.run_id&&String(result.run_id)!==String(runId))return snapshot();
+      const fingerprint=result?.index?.index_fingerprint??null;activeIndexFingerprint=fingerprint;
+      if(fingerprint)visualMatchesByGoodsId.set(visualCacheKey(runId,anchor,fingerprint),result);
+      applyVisualResult(anchor,result);notify();
+    }catch(error){
+      if(requestToken!==visualRequestSequence||model.currentGoodsId!==anchor)return snapshot();
+      if(error?.code==='VISUAL_INDEX_STALE'&&!ignoreFingerprint){activeIndexFingerprint=null;visualMatchesByGoodsId.clear();return refreshVisualMatches(anchor,{allowCache:false,ignoreFingerprint:true});}
+      setVisualState(anchor,'ERROR',{error:error.code??error.message});notify();
+    }
+    return snapshot();
+  }
   function previewVisualImage(goodsId){model.visualPreviewGoodsId=String(goodsId);return snapshot();}
   function closeVisualPreview(){model.visualPreviewGoodsId=null;return snapshot();}
   async function switchVisualCurrentRun(goodsId,options={}){const match=model.visualResult?.matches?.find(row=>String(row.goods_id)===String(goodsId));if(match?.navigation_action!=='SWITCH_CURRENT_RUN')throw new TypeError('visual match is not in current run');return selectGoods(goodsId,options);}
@@ -121,10 +147,19 @@ export function createReviewConsoleState({api,runId,initialGoodsId=null,openWind
     return {...model,currentCandidate:currentCandidate(),runId};
   }
 
+  function invalidateVisualMatches(anchor){visualRequestSequence+=1;setVisualState(anchor,'IDLE');}
+  function setVisualState(anchor,status,{result=null,error=null}={}){const matches=result?.matches??[],marketMetrics=result?.market_metrics??null,indexFingerprint=result?.index?.index_fingerprint??null;model.visualState={anchorGoodsId:anchor,status,matches,marketMetrics,error,indexFingerprint};model.visualLoading=status==='LOADING';model.visualResult=result;model.visualError=error;}
+  function applyVisualResult(anchor,result){const status=result?.index?.status==='READY'&&(result.matches??[]).length===0?'EMPTY':'READY';setVisualState(anchor,status,{result});const byProduct=new Map((result.candidate_opportunities??[]).map(row=>[String(row.product_id),row]));if(model.detail&&model.currentGoodsId===anchor)model.detail.candidates=model.detail.candidates.map(row=>({...row,...byProduct.get(productId(row))}));}
+  function markCandidateVisualLoading(){if(!model.detail)return;model.detail.candidates=model.detail.candidates.map(row=>({...row,opportunity_ratio:null,opportunity_band:'VISUAL_MATCH_LOADING',opportunity_reasons:['VISUAL_MATCH_LOADING']}));}
+  function notify(){onChange(snapshot());}
+
   return {
     load,selectGoods,chooseCandidate,previous:options=>move(-1,options),next:options=>move(1,options),snapshot,
     selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveNote,openLink,
     toggleGroup,setGroupSort,previewGroupImage,closeImagePreview,switchToGroupGoods,setNoteDirty,
-    toggleVisual,previewVisualImage,closeVisualPreview,switchVisualCurrentRun,openVisualOtherRun,
+    toggleVisual,refreshVisualMatches,previewVisualImage,closeVisualPreview,switchVisualCurrentRun,openVisualOtherRun,
   };
 }
+
+function emptyVisualState(anchorGoodsId){return{anchorGoodsId,status:'IDLE',matches:[],marketMetrics:null,error:null,indexFingerprint:null};}
+function visualCacheKey(runId,goodsId,fingerprint){return`${runId}\u0000${goodsId}\u0000${fingerprint}`;}

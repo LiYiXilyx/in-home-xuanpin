@@ -2,7 +2,7 @@ export function createSourcingReviewController({service,imageResolver}={}) {
   if(!service||!imageResolver) throw new TypeError('sourcing review controller dependencies are required');
 
   function bootstrap({runId,filter}={}) {
-    service.assertFixedRun(runId);
+    if(runId!==null&&runId!==undefined&&String(runId)!=='') service.assertFixedRun(runId);
     return service.bootstrap({filter});
   }
 

@@ -1,6 +1,9 @@
 export class FakeElement {
-  constructor(tagName='div',id=''){this.tagName=tagName.toUpperCase();this.id=id;this.value='';this.textContent='';this.hidden=false;this.disabled=false;this.children=[];this.listeners=new Map();}
+  constructor(tagName='div',id=''){this.tagName=tagName.toUpperCase();this.id=id;this.value='';this.textContent='';this.hidden=false;this.disabled=false;this.href='';this.title='';this.children=[];this.listeners=new Map();this.attributes=new Map();}
   addEventListener(type,listener){const rows=this.listeners.get(type)??[];rows.push(listener);this.listeners.set(type,rows);}
+  setAttribute(name,value){this.attributes.set(name,String(value));}
+  getAttribute(name){return this.attributes.get(name)??null;}
+  removeAttribute(name){this.attributes.delete(name);if(name==='href')this.href='';}
   replaceChildren(...children){this.children=children;}
   append(...children){this.children.push(...children);}
   async emit(type,properties={}){const event={type,target:this,preventDefault(){},...properties};for(const listener of this.listeners.get(type)??[])await listener(event);}
