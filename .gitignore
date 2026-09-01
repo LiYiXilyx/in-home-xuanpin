@@ -19,6 +19,9 @@ test-results/
 .artifact-work/
 .docx-review/
 .tmp/
+visual-index/
+model-cache/
+*.visual-index.tmp
 
 # Dual-machine 1688 runtime and handoff artifacts (never commit)
 runtime/
