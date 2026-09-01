@@ -26,4 +26,11 @@ test('group sort and preview are module-private state transitions',async()=>{
   state.previewGroupImage('g2');state.closeImagePreview();assert.equal(state.snapshot().imagePreview,null);
 });
 
-function fixture(){const calls=[];return {calls,async request(path){calls.push(path);if(path.includes('bootstrap'))return {goods:[{temu_goods_id:'g1'},{temu_goods_id:'g2'}]};const id=path.includes('/g2?')?'g2':'g1';return {temu_goods_id:id,review_revision:0,group_context:{items:[{temu_goods_id:'g1'},{temu_goods_id:'g2'}]},candidates:[{'1688_product_id':'p1',random_sample_rank:1}]};}};}
+test('visual matches load lazily and preview never switches current review goods',async()=>{
+  const api=fixture(),state=createReviewConsoleState({api,runId:'run'});await state.load();
+  assert.equal(api.calls.some(x=>x.includes('/visual-matches')),false);
+  await state.toggleVisual();assert.equal(api.calls.some(x=>x.includes('/visual-matches')),true);
+  state.previewVisualImage('g9');assert.equal(state.snapshot().currentGoodsId,'g1');assert.equal(state.snapshot().visualPreviewGoodsId,'g9');
+});
+
+function fixture(){const calls=[];return {calls,async request(path){calls.push(path);if(path.includes('bootstrap'))return {goods:[{temu_goods_id:'g1'},{temu_goods_id:'g2'}]};if(path.includes('/visual-matches'))return {index:{status:'READY',index_fingerprint:'f'},search:{match_count:1},matches:[{goods_id:'g9',navigation_action:'NONE'}]};const id=path.includes('/g2?')?'g2':'g1';return {temu_goods_id:id,review_revision:0,group_context:{items:[{temu_goods_id:'g1'},{temu_goods_id:'g2'}]},candidates:[{'1688_product_id':'p1',random_sample_rank:1}]};}};}

@@ -1,9 +1,10 @@
 const FILTERS=new Set(['ALL','PENDING','CONFIRMED','IMAGE_FAILED']);
 
-export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.bind(globalThis)}={}) {
+export function createReviewConsoleState({api,runId,initialGoodsId=null,openWindow=globalThis.open?.bind(globalThis)}={}) {
   if(!api||!runId) throw new TypeError('api and runId are required');
-  let model={filter:'ALL',bootstrap:null,detail:null,currentGoodsId:null,currentProductId:null,notice:'',
-    groupExpanded:false,groupSort:'DEFAULT',comparisonGoodsId:null,imagePreview:null,noteDirty:false};
+  let model={filter:'ALL',bootstrap:null,detail:null,currentGoodsId:initialGoodsId?String(initialGoodsId):null,currentProductId:null,notice:'',
+    groupExpanded:false,groupSort:'DEFAULT',comparisonGoodsId:null,imagePreview:null,noteDirty:false,
+    visualExpanded:false,visualLoading:false,visualResult:null,visualError:null,visualPreviewGoodsId:null};
 
   const request=(path,options)=>api.request(path,options);
   const query=()=>`run_id=${encodeURIComponent(runId)}`;
@@ -34,7 +35,7 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
     response.candidates=[...(response.candidates??[])].sort((a,b)=>Number(a.random_sample_rank)-Number(b.random_sample_rank));
     model.detail=response;
     model.currentGoodsId=key;
-    model.noteDirty=false;model.comparisonGoodsId=null;model.imagePreview=null;
+    model.noteDirty=false;model.comparisonGoodsId=null;model.imagePreview=null;model.visualResult=null;model.visualError=null;model.visualPreviewGoodsId=null;
     if(!response.candidates.some(row=>productId(row)===model.currentProductId)) {
       model.currentProductId=productId(response.candidates[0])||null;
     }
@@ -91,6 +92,12 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
   function setNoteDirty(value) { model.noteDirty=Boolean(value);return snapshot(); }
   async function switchToGroupGoods(goodsId,{confirmDiscard}={}) { const key=groupGoodsId(goodsId);const result=await selectGoods(key,{confirmDiscard});return result===false?false:true; }
 
+  async function toggleVisual() { model.visualExpanded=!model.visualExpanded;if(model.visualExpanded&&!model.visualResult){model.visualLoading=true;model.visualError=null;try{model.visualResult=await request(`/api/sourcing/review/goods/${encodeURIComponent(model.currentGoodsId)}/visual-matches?${query()}&limit=20`);const byProduct=new Map((model.visualResult.candidate_opportunities??[]).map(row=>[String(row.product_id),row]));if(model.detail)model.detail.candidates=model.detail.candidates.map(row=>({...row,...byProduct.get(productId(row))}));}catch(error){model.visualError=error.code??error.message;}finally{model.visualLoading=false;}}return snapshot(); }
+  function previewVisualImage(goodsId){model.visualPreviewGoodsId=String(goodsId);return snapshot();}
+  function closeVisualPreview(){model.visualPreviewGoodsId=null;return snapshot();}
+  async function switchVisualCurrentRun(goodsId,options={}){const match=model.visualResult?.matches?.find(row=>String(row.goods_id)===String(goodsId));if(match?.navigation_action!=='SWITCH_CURRENT_RUN')throw new TypeError('visual match is not in current run');return selectGoods(goodsId,options);}
+  function openVisualOtherRun(goodsId){const match=model.visualResult?.matches?.find(row=>String(row.goods_id)===String(goodsId));if(match?.navigation_action!=='OPEN_OTHER_RUN'||!match.review_run_id)throw new TypeError('visual match has no other run');const url=`/sourcing-review.html?run_id=${encodeURIComponent(match.review_run_id)}&goods_id=${encodeURIComponent(goodsId)}`;openWindow?.(url,'_blank','noopener,noreferrer');return url;}
+
   function groupGoodsId(value) {
     const key=String(value),items=model.detail?.group_context?.items??[];
     if(!items.some(item=>String(item.temu_goods_id)===key)) throw new TypeError('goods is not in current opportunity group');
@@ -118,5 +125,6 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
     load,selectGoods,chooseCandidate,previous:options=>move(-1,options),next:options=>move(1,options),snapshot,
     selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveNote,openLink,
     toggleGroup,setGroupSort,previewGroupImage,closeImagePreview,switchToGroupGoods,setNoteDirty,
+    toggleVisual,previewVisualImage,closeVisualPreview,switchVisualCurrentRun,openVisualOtherRun,
   };
 }

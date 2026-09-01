@@ -33,11 +33,11 @@
       <aside class="review-panel goods-panel"><h2>Temu商品</h2><div id="goodsList" class="goods-list"></div></aside>
       <section class="review-panel candidates-panel">
         <div id="currentTemu" class="current-temu"></div>
-        <section class="opportunity-comparison" aria-label="同类 Temu 商品对比">
-          <button id="reviewOpportunityToggle" class="opportunity-toggle" type="button" aria-expanded="false" aria-controls="reviewOpportunityPanel">展开同类对比</button>
+        <section class="opportunity-comparison" aria-label="Excel视觉相似商品">
+          <button id="reviewOpportunityToggle" class="opportunity-toggle" type="button" aria-expanded="false" aria-controls="reviewOpportunityPanel">展开视觉相似商品</button>
           <div id="reviewOpportunitySummary" class="opportunity-summary"></div>
           <div id="reviewOpportunityPanel" role="region" aria-labelledby="reviewOpportunityToggle" hidden>
-            <label for="reviewOpportunitySort">组内排序</label>
+            <label for="reviewOpportunitySort">视觉匹配排序</label>
             <select id="reviewOpportunitySort"><option value="DEFAULT">当前商品优先</option><option value="UNIT_PRICE">单个价从低到高</option><option value="LISTED_PRICE">标价从低到高</option><option value="GOODS_ID">goods_id</option></select>
             <div id="reviewOpportunityItems" class="opportunity-items"></div>
           </div>

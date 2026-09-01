@@ -1,6 +1,7 @@
 import {createReviewConsoleState} from './sourcing-review-state.js';
 
 const RUN_ID=new URLSearchParams(location.search).get('run_id');
+const INITIAL_GOODS_ID=new URLSearchParams(location.search).get('goods_id');
 const $=id=>document.getElementById(id);
 const api={
   async request(path,options={}) {
@@ -14,7 +15,7 @@ const api={
     return payload;
   },
 };
-const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,openWindow:window.open.bind(window)}):null;
+const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,initialGoodsId:INITIAL_GOODS_ID,openWindow:window.open.bind(window)}):null;
 
 function text(tag,value,className) {
   const node=document.createElement(tag);
@@ -33,6 +34,7 @@ function supplierImage(goodsId,row) {
 function temuImage(goodsId) {
   return `/api/sourcing/review/images/temu/${encodeURIComponent(goodsId)}?run_id=${encodeURIComponent(RUN_ID)}`;
 }
+function visualImage(goodsId,fingerprint) { const params=new URLSearchParams({run_id:RUN_ID,index_fingerprint:fingerprint});return `/api/sourcing/review/visual-index/images/${encodeURIComponent(goodsId)}?${params}`; }
 function image(src,alt) {
   const img=document.createElement('img'); img.src=src; img.alt=alt; img.loading='lazy';
   img.addEventListener('error',()=>{const missing=text('span','MISSING','status error');img.replaceWith(missing);},{once:true});
@@ -79,26 +81,17 @@ function renderTemu(detail) {
 }
 
 function renderOpportunity(state) {
-  const detail=state.detail,group=detail?.group_context,fx=detail?.fx_context;
+  const detail=state.detail,result=state.visualResult,index=result?.index;
   const toggle=$('reviewOpportunityToggle'),panel=$('reviewOpportunityPanel'),summary=$('reviewOpportunitySummary'),items=$('reviewOpportunityItems'),benchmark=$('reviewOpportunityBenchmark');
   summary.replaceChildren();items.replaceChildren();benchmark.replaceChildren();
-  if(!group) { toggle.disabled=true;panel.hidden=true;return; }
-  toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.groupExpanded));toggle.textContent=state.groupExpanded?'收起同类对比':'展开同类对比';panel.hidden=!state.groupExpanded;
-  const m=group.metrics??{};
-  summary.append(text('strong',`${group.group_label} · ${group.item_count}款`),text('span',`最低标价 ${money(m.group_min_listed_price_eur,'EUR')} · 最低可靠单价 ${money(m.group_min_unit_price_eur,'EUR')} · 中位数 ${money(m.group_median_unit_price_eur,'EUR')}`,'meta'));
+  if(!detail){toggle.disabled=true;panel.hidden=true;return;}toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.visualExpanded));toggle.textContent=state.visualExpanded?'收起视觉相似商品':'展开视觉相似商品';panel.hidden=!state.visualExpanded;
+  if(state.visualLoading){summary.append(text('strong','视觉索引查询中…'));return;}if(state.visualError){summary.append(text('strong',`视觉索引错误：${state.visualError}`,'status error'));return;}if(!result){summary.append(text('strong','Excel视觉相似商品'),text('span','展开后从当前 run 绑定的 05_细分商品明细全量索引中检索','meta'));return;}if(index?.status!=='READY'){summary.append(text('strong',`视觉索引：${index?.status??'NOT_BUILT'}`),text('span','请先运行 YingDao 视觉索引构建','meta'));return;}
+  const m=result.market_metrics??{};summary.append(text('strong',`Excel视觉相似商品 · 命中 ${result.search?.match_count??0}`),text('span',`来源：05_细分商品明细 · 检索范围 ${index.universe_goods_count}款 · 可用图片 ${index.universe_image_count}张 · 模型 ${index.model_id} r${index.model_revision}`,'meta'),text('span',`其他相似最低 ${money(m.min_other_listed_price_eur,'EUR')} · 最低可靠单价 ${money(m.min_reliable_unit_price_eur,'EUR')} · 中位数 ${money(m.median_reliable_unit_price_eur,'EUR')}`,'meta'));
   const thumbs=document.createElement('div');thumbs.className='opportunity-thumbs';
-  for(const item of (group.items??[]).slice(0,6)) { const img=image(temuImage(item.temu_goods_id),`Temu ${item.temu_goods_id}`);img.addEventListener('click',()=>{review.previewGroupImage(item.temu_goods_id);render();});thumbs.append(img); }
-  summary.append(thumbs);
-  $('reviewOpportunitySort').value=state.groupSort;
-  for(const item of sortedGroupItems(group.items??[],state.groupSort,state.currentGoodsId)) {
-    const card=document.createElement('article');card.className=`opportunity-item${item.is_current?' current':''}`;
-    const img=image(temuImage(item.temu_goods_id),`Temu ${item.temu_goods_id}`);img.addEventListener('click',()=>{review.previewGroupImage(item.temu_goods_id);render();});card.append(img,text('strong',item.temu_title??item.temu_goods_id));
-    card.append(text('p',[field('goods_id',item.temu_goods_id),field('标价',money(item.temu_listed_price_eur,'EUR')),field('包装数',item.temu_pack_quantity),field('单个价',money(item.temu_unit_price_eur,'EUR')),field('数量置信',item.quantity_confidence),field('复核',item.review_status)].join('\n'),'meta'));
-    if(item.is_current)card.append(text('span','当前商品','status'));if(item.is_min_listed)card.append(text('span','组最低标价','status'));if(item.is_min_unit)card.append(text('span','组最低单价','status'));
-    const switchButton=text('button','切换到此商品复核');switchButton.type='button';switchButton.disabled=item.is_current;switchButton.addEventListener('click',()=>act(()=>review.switchToGroupGoods(item.temu_goods_id,{confirmDiscard:confirmDiscardNote})));card.append(switchButton);items.append(card);
-  }
-  benchmark.append(text('strong',`当前同类：${group.group_label}`),text('span',`组内商品 ${group.item_count} · Temu最低标价 ${money(m.group_min_listed_price_eur,'EUR')} · 最低单价 ${money(m.group_min_unit_price_eur,'EUR')} / 件 · 单价中位数 ${money(m.group_median_unit_price_eur,'EUR')} / 件 · 当前 ${money(detail.temu_context?.temu_unit_price_eur,'EUR')} / 件 · 单价可计算 ${m.group_unit_price_count??0}/${group.item_count} · 汇率 ${fx?.status==='AVAILABLE'?`1 EUR = ${number(fx.cny_per_eur,4)} CNY`:'待配置'}`,'meta'));
-  const preview=$('reviewOpportunityPreview'),previewImage=$('reviewOpportunityPreviewImage');preview.hidden=!state.imagePreview;if(state.imagePreview)previewImage.src=temuImage(state.imagePreview);
+  for(const item of (result.matches??[]).slice(0,6)){const img=image(visualImage(item.goods_id,index.index_fingerprint),`视觉匹配 ${item.goods_id}`);img.addEventListener('click',()=>{review.previewVisualImage(item.goods_id);render();});thumbs.append(img);}summary.append(thumbs);$('reviewOpportunitySort').hidden=true;
+  for(const item of (result.matches??[]).slice(0,20)){const card=document.createElement('article');card.className='opportunity-item';const img=image(visualImage(item.goods_id,index.index_fingerprint),`视觉匹配 ${item.goods_id}`);img.addEventListener('click',()=>{review.previewVisualImage(item.goods_id);render();});card.append(img,text('strong',item.title??item.goods_id),text('p',[field('goods_id',item.goods_id),field('视觉相似度',number(item.final_similarity_score,3)),field('匹配原因',item.match_reason),field('Temu标价',money(item.price_eur,'EUR')),field('销量',item.sales_count),field('评分',item.rating),field('生命周期',item.review_plan_status)].join('\n'),'meta'));if(item.navigation_action==='SWITCH_CURRENT_RUN'){const button=text('button','切换到此商品复核');button.addEventListener('click',()=>act(()=>review.switchVisualCurrentRun(item.goods_id,{confirmDiscard:confirmDiscardNote})));card.append(button);}else if(item.navigation_action==='OPEN_OTHER_RUN'){const button=text('button',`打开 Batch ${item.review_batch_number??''} 复核`);button.addEventListener('click',()=>review.openVisualOtherRun(item.goods_id));card.append(button);}else card.append(text('span','尚未生成1688候选','status'));items.append(card);}
+  benchmark.append(text('strong','视觉相似市场价格基准'),text('span',`当前商品 ${money(m.anchor_listed_price_eur,'EUR')} · 其他视觉相似最低 ${money(m.min_other_listed_price_eur,'EUR')} · 视觉市场最低可靠单价 ${money(m.min_reliable_unit_price_eur,'EUR')} · 中位数 ${money(m.median_reliable_unit_price_eur,'EUR')} · 可靠样本 ${m.reliable_unit_price_count??0}`,'meta'));
+  const preview=$('reviewOpportunityPreview'),previewImage=$('reviewOpportunityPreviewImage');preview.hidden=!state.visualPreviewGoodsId;if(state.visualPreviewGoodsId)previewImage.src=visualImage(state.visualPreviewGoodsId,index.index_fingerprint);
 }
 
 function renderCandidates(state) {
@@ -158,7 +151,7 @@ $('selectCandidate').addEventListener('click',()=>act(()=>review.selectCandidate
 $('excludeCandidate').addEventListener('click',()=>act(()=>review.excludeCandidate())); $('restoreCandidate').addEventListener('click',()=>act(()=>review.restoreCandidate()));
 $('saveNote').addEventListener('click',()=>act(()=>review.saveNote($('operatorNote').value)));
 $('operatorNote').addEventListener('input',()=>review.setNoteDirty(true));
-$('reviewOpportunityToggle').addEventListener('click',()=>{review.toggleGroup();render();});
+$('reviewOpportunityToggle').addEventListener('click',()=>act(()=>review.toggleVisual()));
 $('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
-$('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeImagePreview();render();});
+$('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeVisualPreview();render();});
 if(review)act(()=>review.load());else render();
