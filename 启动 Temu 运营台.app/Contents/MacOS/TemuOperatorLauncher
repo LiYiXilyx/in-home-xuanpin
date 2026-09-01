@@ -2,7 +2,7 @@
 
 set -u
 
-DEFAULT_WORKTREE_PATH='/private/tmp/temu-multi-category-safety-v1'
+DEFAULT_WORKTREE_PATH='/Users/chuangyangdianzi/Desktop/选品上架-家里版本/temu-operator-runtime'
 DEFAULT_CONFIG_PATH='/Users/chuangyangdianzi/Desktop/选品上架-家里版本/temu选品/config.json'
 TEST_MODE="${TEMU_OPERATOR_LAUNCHER_TEST_MODE:-0}"
 WORKTREE_PATH="$DEFAULT_WORKTREE_PATH"

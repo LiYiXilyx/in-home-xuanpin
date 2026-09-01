@@ -16,7 +16,8 @@ test('macOS app is executable, fixed-path, and contains no unsafe automation',()
   const mode=fs.statSync(appExecutable).mode;
   assert.notEqual(mode & 0o111,0);
   const source=fs.readFileSync(appExecutable,'utf8');
-  assert.match(source,/\/private\/tmp\/temu-multi-category-safety-v1/);
+  assert.match(source,/\/Users\/chuangyangdianzi\/Desktop\/选品上架-家里版本\/temu-operator-runtime/);
+  assert.doesNotMatch(source,/\/private\/tmp\//);
   assert.match(source,/选品上架-家里版本\/temu选品\/config\.json/);
   assert.doesNotMatch(source,/find .*config|git rev-parse|schema_migrations|migration.*repair|campaign|capture|scroll|navigation|see more|chrome|temu\.com|pkill|kill |xattr|spctl/i);
   const plist=fs.readFileSync(plistPath,'utf8');
@@ -78,7 +79,7 @@ test('Finder wrapper resolves runtime and invokes Node core with explicit fixed 
   assert.equal(fs.existsSync(dialog),false);
   const invocation=fs.readFileSync(fixture.nodeMarker,'utf8');
   assert.match(invocation,/tools\/operator-dashboard-launcher\.mjs/);
-  assert.match(invocation,/--worktree\n\/private\/tmp\/temu-multi-category-safety-v1/);
+  assert.match(invocation,/--worktree\n\/Users\/chuangyangdianzi\/Desktop\/选品上架-家里版本\/temu-operator-runtime/);
   assert.match(invocation,/--config\n\/Users\/chuangyangdianzi\/Desktop\/选品上架-家里版本\/temu选品\/config\.json/);
   assert.match(invocation,/--npm\n/);
   assert.match(invocation,/--port\n37821/);
