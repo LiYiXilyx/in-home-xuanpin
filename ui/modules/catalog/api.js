@@ -1,0 +1,24 @@
+export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
+  if(typeof fetchImpl!=='function')throw new Error('Catalog API缺少 fetch。');
+  const request=async(path,options={})=>{
+    assertCatalogPath(path);
+    const method=options.method??'GET';
+    const response=await fetchImpl(path,{method,headers:{'Content-Type':'application/json'},
+      body:options.body===undefined?undefined:JSON.stringify(options.body)});
+    const payload=await response.json();
+    if(!response.ok){const error=new Error(payload?.error?.message??'Catalog 操作失败。');
+      error.code=payload?.error?.code??'OPERATION_FAILED';throw error;}
+    return payload;
+  };
+  return{
+    listProfiles:()=>request('/api/catalog/operator/profiles'),
+    currentCampaign:()=>request('/api/catalog/operator-campaign/current'),
+    createExpansion:body=>request('/api/catalog/operator-campaigns',{method:'POST',body}),
+    createInitial:body=>request('/api/catalog/operator/initial-campaigns',{method:'POST',body}),
+    runInitialQa:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/qa-runs`,{method:'POST',body}),
+    activateInitial:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/activate`,{method:'POST',body})
+  };
+}
+
+function assertCatalogPath(path){if(!String(path).startsWith('/api/catalog/')){const error=new Error('Catalog API越界。');
+  error.code='CATALOG_API_NAMESPACE_INVALID';throw error;}}
