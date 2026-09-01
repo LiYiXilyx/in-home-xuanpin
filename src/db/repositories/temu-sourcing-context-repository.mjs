@@ -24,6 +24,9 @@ export function createTemuSourcingContextRepository(db,{
       ORDER BY CASE WHEN download_status='completed' OR status='downloaded' THEN 0 ELSE 1 END,id DESC LIMIT 1`).get(product.id);
     const classification=db.prepare(`SELECT level1,level2,level3
       FROM product_classifications WHERE product_id=? ORDER BY created_at DESC,id DESC LIMIT 1`).get(product.id);
+    const cluster=tableExists('sourcing_run_items')?db.prepare(`SELECT similar_cluster
+      FROM sourcing_run_items WHERE temu_goods_id=? AND similar_cluster IS NOT NULL
+      ORDER BY run_id DESC LIMIT 1`).get(goodsId):null;
     const resolved=resolveValidatedImage(goodsId,image);
     const available=Boolean(product.title&&resolved);
     return {
@@ -37,14 +40,14 @@ export function createTemuSourcingContextRepository(db,{
       level1:classification?.level1??null,
       level2:classification?.level2??null,
       level3:classification?.level3??null,
-      similar_cluster:null,
+      similar_cluster:cluster?.similar_cluster??null,
     };
   }
 
   function getTemuContexts(temuGoodsIds) {
     const result=new Map();
     for(const goodsId of [...new Set((temuGoodsIds??[]).map(String))].sort(compareUtf8)) {
-      result.set(goodsId,getTemuContext(goodsId));
+      result.set(goodsId,{...getTemuContext(goodsId),similar_cluster:null});
     }
     return result;
   }

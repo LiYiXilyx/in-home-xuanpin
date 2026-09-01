@@ -78,14 +78,13 @@ export async function createOperationsServer(options={}) {
   if(!sourcingReviewController) {
     const reviewRunId=options.sourcingReviewRunId??process.env.SOURCING_REVIEW_RUN_ID??'yingdao_random5_v1_20260831_001';
     const reviewImport=sourcingRepository.getImport(reviewRunId);
-    if(!reviewImport) throw new Error(`Review run 不存在：${reviewRunId}`);
-    const opportunityContext=options.sourcingReviewOpportunityContext??{
+    const opportunityContext=options.sourcingReviewOpportunityContext??(reviewImport?.selected_workbook_path?{
       ...await loadRunOpportunityWorkbook({
         workbookPath:reviewImport.selected_workbook_path,
         runGoodsIds:reviewImport.items.map(item=>String(item.temu_goods_id)),
       }),
       fx:resolveReviewFx(loadSourcingConfig(options.sourcingConfigPath??path.join(projectDir,'config/1688-sourcing-v1.json'))),
-    };
+    }:null);
     const temuPathBase=config.configPath?path.dirname(config.configPath):projectDir;
     const temuImageRoot=config.export?.imageCacheDir??path.join(temuPathBase,'outputs/week1-mvp/image-cache');
     temuContextDb=openTemuContextDatabase(config.app.databasePath);

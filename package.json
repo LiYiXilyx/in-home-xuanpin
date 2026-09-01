@@ -59,6 +59,7 @@
     ,"sourcing:yingdao:import": "node scripts/1688/import-yingdao-results.mjs"
     ,"sourcing:yingdao:random5": "node scripts/1688/import-yingdao-random5-v1.mjs"
     ,"sourcing:yingdao:random5:qa": "node scripts/1688/qa-yingdao-random5-v1.mjs"
+    ,"sourcing:review:opportunity:qa": "node scripts/1688/verify-review-opportunity-v1.mjs"
     ,"verify-sourcing-safety": "node scripts/1688/verify-sourcing-safety.mjs"
     ,"sourcing:safety": "node scripts/1688/verify-sourcing-safety.mjs"
     ,"sourcing:1688:init-db": "node scripts/1688/init-sourcing-db.mjs"
