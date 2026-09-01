@@ -10,8 +10,8 @@ test('Catalog and YingDao refresh polling error and destroy are symmetric and is
   const catalogFixture=catalogDomFixture(),yingdaoFixture=yingdaoDomFixture(),scheduler=sharedScheduler(),catalogApi={listProfiles:async()=>({profiles:[]}),currentCampaign:async()=>({current:null})};
   const yingdaoApi={settings:async()=>({state:'READY_TO_SCAN'}),currentImport:async()=>({state:'READY_TO_SCAN'}),reviewBootstrap:async()=>({total_goods:50,awaiting_review:50,confirmed:0,no_selection:0})};
   const catalog=mountCatalogPanel({root:catalogFixture.catalogRoot,scheduler,api:catalogApi}),yingdao=mountYingdaoPanel({root:yingdaoFixture.yingdaoRoot,scheduler,api:yingdaoApi});
-  await Promise.all([catalog.refresh(),yingdao.refresh()]);const catalogBefore=catalog.getState(),yingdaoBefore=yingdao.getState();
-  await yingdao.refresh();assert.deepEqual(catalog.getState(),catalogBefore);await catalog.refresh();assert.deepEqual(yingdao.getState(),yingdaoBefore);
+  await Promise.all([catalog.refresh(),yingdao.refresh()]);const catalogBefore=businessState(catalog.getState()),yingdaoBefore=businessState(yingdao.getState());
+  for(let index=0;index<50;index++){await yingdao.refresh();assert.deepEqual(businessState(catalog.getState()),catalogBefore);await catalog.refresh();assert.deepEqual(businessState(yingdao.getState()),yingdaoBefore);}
   catalog.destroy();assert.match(yingdaoFixture.yingdaoRoot.innerHTML,/yingdao-panel/);assert.equal(scheduler.active.size,1);yingdao.destroy();assert.equal(scheduler.active.size,0);
 });
 
@@ -25,3 +25,4 @@ test('YingDao run identity cannot substitute for Catalog campaign identity',()=>
 });
 
 function sharedScheduler(){let id=0;const active=new Map();return{active,setInterval(fn,delay){const key=++id;active.set(key,{fn,delay});return key;},clearInterval(key){active.delete(key);}};}
+function businessState({lastRefreshedAt,...state}){return state;}
