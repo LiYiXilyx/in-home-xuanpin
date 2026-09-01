@@ -10,4 +10,7 @@ test('builds atomically, is idempotent, and reports stale identity',async()=>{
  assert.equal(first.status,'READY');assert.equal(second.reused,true);assert.equal(calls,1);assert.equal((await store.status({universe})).status,'READY');
  assert.equal((await store.status({universe:{...universe,fingerprint:'changed'}})).status,'NOT_BUILT');
  assert.equal(JSON.parse(await readFile(path.join(first.index_path,'manifest.json'),'utf8')).indexed_image_count,1);
+ const loadedOnce=await store.loadReady({universe});
+ const loadedTwice=await store.loadReady({universe});
+ assert.strictEqual(loadedTwice,loadedOnce,'same index fingerprint must reuse the parsed in-memory index');
 });
