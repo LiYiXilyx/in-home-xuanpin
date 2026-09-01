@@ -1,3 +1,7 @@
+import {createYingdaoApi} from './api.js';
+import {applySourcingPayload} from './model.js';
+import {createYingdaoState,patchYingdaoState,snapshotYingdaoState} from './state.js';
+
 const mounts=new WeakMap();
 let currentController=null;
 
@@ -25,16 +29,14 @@ export function mountYingdaoPanel({root,pollIntervalMs=3000,scheduler=globalThis
   const existing=mounts.get(root);if(existing)return existing;
   if(currentController)throw coded('YINGDAO_PANEL_ALREADY_MOUNTED','YingDao panel already has a root');
   root.innerHTML=yingdaoPanelMarkup;
-  let active=true,refreshPromise=null,yingdaoPollingTimer=null,state={mounted:true,scanStatus:'UNCONFIGURED'};
-  const client=api??defaultApi();
+  let active=true,refreshPromise=null,yingdaoPollingTimer=null,state=createYingdaoState();patchYingdaoState(state,{mounted:true});
+  const client=api??createYingdaoApi();
   async function refresh(){if(!active)throw coded('YINGDAO_PANEL_NOT_MOUNTED','YingDao panel 已卸载。');if(refreshPromise)return refreshPromise;
-    refreshPromise=(async()=>{const [settings,current]=await Promise.all([client.settings(),client.currentImport()]);state={...state,...settings,...current};refreshPromise=null;return structuredClone(state);})();return refreshPromise;}
-  const controller={refresh,getState:()=>structuredClone(state),destroy(){if(!active)return;active=false;if(yingdaoPollingTimer!==null)scheduler.clearInterval(yingdaoPollingTimer);yingdaoPollingTimer=null;root.replaceChildren();mounts.delete(root);if(currentController===controller)currentController=null;}};
+    refreshPromise=(async()=>{const [settings,current]=await Promise.all([client.settings(),client.currentImport()]);patchYingdaoState(state,applySourcingPayload(state,settings));patchYingdaoState(state,applySourcingPayload(state,current));refreshPromise=null;return snapshotYingdaoState(state);})();return refreshPromise;}
+  const controller={refresh,getState:()=>snapshotYingdaoState(state),destroy(){if(!active)return;active=false;if(yingdaoPollingTimer!==null)scheduler.clearInterval(yingdaoPollingTimer);yingdaoPollingTimer=null;root.replaceChildren();mounts.delete(root);if(currentController===controller)currentController=null;}};
   mounts.set(root,controller);currentController=controller;void refresh();yingdaoPollingTimer=scheduler.setInterval(()=>{void refresh();},Number(pollIntervalMs));return controller;
 }
 
 export async function refreshYingdaoPanel(){if(!currentController)throw coded('YINGDAO_PANEL_NOT_MOUNTED','YingDao panel 尚未挂载。');return currentController.refresh();}
 
-function defaultApi(){return{async settings(){return fetchJson('/api/sourcing/settings');},async currentImport(){return fetchJson('/api/sourcing/imports/current');}};}
-async function fetchJson(url){const response=await fetch(url),payload=await response.json();if(!response.ok)throw coded(payload?.error?.code??'OPERATION_FAILED',payload?.error?.message??'YingDao 操作失败。');return payload;}
 function coded(code,message){const error=new Error(message);error.code=code;return error;}
