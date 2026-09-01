@@ -1,8 +1,9 @@
 import { mountCatalogPanel } from './modules/catalog/panel.js';
-import { sourcingControls } from './sourcing-ui-state.js';
+import { mountYingdaoPanel } from './modules/yingdao/panel.js';
 
 const $=selector => document.querySelector(selector);
 const catalogRoot=$('#catalog-module-root');
+const yingdaoRoot=$('#yingdao-module-root');
 const elements={
   environmentBanner:$('#environmentBanner'),consoleTitle:$('#consoleTitle'),resetTestData:$('#resetTestData'),
   notice:$('#notice'),browserPulse:$('#browserPulse'),browserStatus:$('#browserStatus'),openBrowser:$('#openBrowser'),newBrowser:$('#newBrowser'),connectExisting:$('#connectExisting'),validatePage:$('#validatePage'),
@@ -16,7 +17,6 @@ const elements={
   events:$('#events'),eventCount:$('#eventCount'),pause:$('#pause'),resume:$('#resume'),cancel:$('#cancel'),
   retry:$('#retry'),sessionRecoveryControls:$('#sessionRecoveryControls'),validateSessionRecovery:$('#validateSessionRecovery'),resumeReviewCapture:$('#resumeReviewCapture'),sessionStatus:$('#sessionStatus'),export:$('#export'),openExcel:$('#openExcel'),clearExcel:$('#clearExcel'),openFolder:$('#openFolder'),toast:$('#toast')
 };
-const sourcing={state:$('#sourcingState'),raw:$('#sourcingRawDir'),images:$('#sourcingImageDir'),workbook:$('#sourcingWorkbook'),chooseRaw:$('#chooseSourcingRaw'),chooseImages:$('#chooseSourcingImages'),chooseWorkbook:$('#chooseSourcingWorkbook'),scan:$('#scanSourcing'),start:$('#startSourcingImport'),retry:$('#retrySourcingImages'),runId:$('#sourcingRunId'),sourceFiles:$('#sourcingSourceFiles'),goods:$('#sourcingGoods'),invalid:$('#sourcingInvalid'),parsed:$('#sourcingParsed'),random5:$('#sourcingRandom5'),imageSuccess:$('#sourcingImageSuccess'),imageFailed:$('#sourcingImageFailed'),qa:$('#sourcingQa'),preview:$('#sourcingPreview')};
 const startButtons=[...document.querySelectorAll('[data-start]')];
 let state=null,toastTimer;
 
@@ -193,35 +193,6 @@ function renderNotice(job,payload) {
 async function action(path,message,body) { try { toast(message); await api(path,{ method:'POST',body }); await refresh(); } catch(error) { toast(error.message); await refresh(); } }
 async function refresh() { try { render(await api('/api/status')); } catch(error) { elements.notice.textContent=`运营台连接异常：${error.message}`; elements.notice.className='notice show error'; } }
 
-let sourcingModel={state:'UNCONFIGURED',settings:{},image_failed:0},pathsDirty=false;
-function renderSourcing(model,{fromServer=false}={}) {
-  if(fromServer&&pathsDirty) model={...model,state:'SCAN_STALE',scan_token:null};
-  sourcingModel={...sourcingModel,...model};const settings=sourcingModel.settings??{};
-  if(document.activeElement!==sourcing.raw)sourcing.raw.value=settings.sourceDir??'';
-  if(document.activeElement!==sourcing.images)sourcing.images.value=settings.imageCacheDir??'';
-  if(document.activeElement!==sourcing.workbook)sourcing.workbook.value=settings.selectedWorkbookPath??'';
-  sourcing.state.textContent=sourcingModel.state;sourcing.runId.textContent=sourcingModel.current_run_id??'—';
-  sourcing.sourceFiles.textContent=number(sourcingModel.source_files);sourcing.goods.textContent=number(sourcingModel.valid_goods_id);
-  sourcing.invalid.textContent=number(sourcingModel.invalid_files?.length);sourcing.parsed.textContent=number(sourcingModel.parsed_candidates);
-  sourcing.random5.textContent=number(sourcingModel.random5_candidates);sourcing.imageSuccess.textContent=number(sourcingModel.image_success);
-  sourcing.imageFailed.textContent=number(sourcingModel.image_failed);sourcing.qa.textContent=sourcingModel.qa_status??'—';
-  const controls=sourcingControls({state:sourcingModel.state,imageFailed:sourcingModel.image_failed});
-  [sourcing.raw,sourcing.images,sourcing.workbook,sourcing.chooseRaw,sourcing.chooseImages,sourcing.chooseWorkbook].forEach(element=>element.disabled=controls.pathsLocked);
-  sourcing.scan.disabled=!controls.canScan;sourcing.start.disabled=!controls.canImport;sourcing.retry.disabled=!controls.canRetry;
-  const rows=sourcingModel.preview?.files??[];
-  sourcing.preview.replaceChildren(...(rows.length?rows.map(file=>{const row=document.createElement('tr');for(const value of [file.filename,file.goods_id,file.row_count,file.parse_status]){const cell=document.createElement('td');cell.textContent=value??'';row.append(cell);}return row;}):[Object.assign(document.createElement('tr'),{innerHTML:'<td colspan="4">尚未扫描</td>'})]));
-}
-async function refreshSourcing() { try { renderSourcing(await api('/api/sourcing/settings'),{fromServer:true});const current=await api('/api/sourcing/imports/current');if(current.current_run_id)renderSourcing(current,{fromServer:true}); } catch(error) { toast(error.message); } }
-async function saveSourcingPaths() { const result=await api('/api/sourcing/settings',{method:'PUT',body:{sourceDir:sourcing.raw.value,imageCacheDir:sourcing.images.value,selectedWorkbookPath:sourcing.workbook.value}});pathsDirty=false;renderSourcing(result); }
-for(const input of [sourcing.raw,sourcing.images,sourcing.workbook]) {
-  input.addEventListener('input',()=>{pathsDirty=true;renderSourcing({...sourcingModel,state:'SCAN_STALE',scan_token:null});});
-  input.addEventListener('change',()=>saveSourcingPaths().catch(error=>toast(error.message)));
-}
-for(const [button,kind] of [[sourcing.chooseRaw,'RAW_DIRECTORY'],[sourcing.chooseImages,'IMAGE_CACHE_DIRECTORY'],[sourcing.chooseWorkbook,'ANALYSIS_WORKBOOK']]) button.addEventListener('click',async()=>{try{const result=await api('/api/sourcing/path-dialog',{method:'POST',body:{kind}});pathsDirty=false;renderSourcing(result);}catch(error){toast(error.message);}});
-sourcing.scan.addEventListener('click',async()=>{try{await saveSourcingPaths();renderSourcing({...sourcingModel,state:'SCANNING'});renderSourcing(await api('/api/sourcing/scan',{method:'POST',body:{}}));}catch(error){toast(error.message);await refreshSourcing();}});
-sourcing.start.addEventListener('click',async()=>{try{renderSourcing({...sourcingModel,state:'IMPORTING'});renderSourcing(await api('/api/sourcing/imports',{method:'POST',body:{scanToken:sourcingModel.scan_token}}));}catch(error){toast(error.message);await refreshSourcing();}});
-sourcing.retry.addEventListener('click',async()=>{try{renderSourcing({...sourcingModel,state:'RETRYING_FAILED_IMAGES'});renderSourcing(await api(`/api/sourcing/imports/${encodeURIComponent(sourcingModel.current_run_id)}/retry-failed-images`,{method:'POST',body:{}}));}catch(error){toast(error.message);await refreshSourcing();}});
-
 elements.openBrowser.addEventListener('click',() => action('/api/browser/open','正在打开采集 Chrome…'));
 elements.connectExisting.addEventListener('click',() => action('/api/browser/connect','正在连接已有 Chrome…'));
 elements.newBrowser.addEventListener('click',() => {
@@ -253,6 +224,6 @@ elements.resetTestData.addEventListener('click',() => {
 elements.openFolder.addEventListener('click',() => action('/api/open/folder','正在打开结果目录…'));
 
 mountCatalogPanel({root:catalogRoot});
-await Promise.all([refresh(),refreshSourcing()]);
-setInterval(refresh,1500);
-setInterval(refreshSourcing,3000);
+mountYingdaoPanel({root:yingdaoRoot});
+await refresh();
+setInterval(()=>{refresh();},1500);
