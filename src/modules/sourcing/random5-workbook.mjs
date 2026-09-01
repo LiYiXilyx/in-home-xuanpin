@@ -79,7 +79,7 @@ export async function fingerprintSheet05(workbookPath,{ artifact=null }={}) {
   const values=used?.values??[];
   const formulas=used?.formulas??[];
   const hyperlinks=formulas.flat().filter(value=>/^=HYPERLINK\(/i.test(String(value??'')));
-  const packageSemantics=await sheet05PackageSemantics(workbookPath);
+  const packageSemantics=await readSheet05PackageSemantics(workbookPath);
   return {
     valuesSha256:hashJson(values),formulasSha256:hashJson(formulas),
     hyperlinksSha256:hashJson(hyperlinks),tableRangeSha256:hashJson(packageSemantics.tables),
@@ -224,7 +224,7 @@ async function extractTemuImages(workbookPath,sheet05) {
   const goodsIndex=headers.findIndex(header=>['goods_id','Temu goods_id'].includes(String(header??'').trim()));
   const imageIndex=headers.findIndex(header=>String(header??'').trim()==='Temu主图');
   if(goodsIndex<0 || imageIndex<0) throw workbookError('WORKBOOK_SHEET05_MAPPING','Sheet 05 goods_id/Temu主图 headers are required');
-  const semantics=await sheet05PackageSemantics(workbookPath,{ includeBytes:true });
+  const semantics=await readSheet05PackageSemantics(workbookPath,{ includeBytes:true });
   const byGoods=new Map();
   for(const image of semantics.images) {
     if(image.anchor.from.col!==imageIndex) continue;
@@ -281,7 +281,7 @@ async function validateTemporaryWorkbook({
   return { pass:true,selectedNonNull,formulaErrors };
 }
 
-async function sheet05PackageSemantics(workbookPath,{ includeBytes=false }={}) {
+export async function readSheet05PackageSemantics(workbookPath,{ includeBytes=false }={}) {
   const zip=await loadJsZip().loadAsync(await fs.readFile(workbookPath));
   const workbookXml=await textFile(zip,'xl/workbook.xml');
   const workbookRels=relationshipMap(await textFile(zip,'xl/_rels/workbook.xml.rels'));
