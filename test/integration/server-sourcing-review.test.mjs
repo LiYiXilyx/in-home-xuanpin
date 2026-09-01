@@ -44,6 +44,7 @@ async function setup(t) {
   const repository=createSourcingReviewRepository(sourcingDb,{now:()=> '2026-08-31T09:00:00.000Z'});
   const temuRepository=createTemuSourcingContextRepository(temuDb,{projectRoot:root, imageCacheRoot:temuRoot});
   const service=createSourcingReviewService({sourcingRepository:repository,temuRepository,runId:'run-api',expectedGoods:1,expectedCandidates:2,
+    visualContext:{query:async()=>({index:{status:'READY',index_fingerprint:'visual-f'},search:{match_count:1},matches:[{goods_id:'visual-1',display_image_url:'/api/sourcing/review/visual-index/display-images/visual-1?run_id=run-api&index_fingerprint=visual-f',display_image_kind:'TEMU_LOCAL_ORIGINAL',display_image_width:640,display_image_height:480,display_image_low_resolution:false,display_image_source:'TEMU_IMAGE_CACHE'}]}),displayImage:async()=>({kind:'LOCAL',display_image_kind:'TEMU_LOCAL_ORIGINAL',contentType:'image/jpeg',bytes:jpeg,width:640,height:480})},
     opportunityContext:{itemsByGoodsId:new Map([['601',{temu_goods_id:'601',temu_title:'10pcs Temu clips',temu_listed_price_eur:12,temu_currency:'EUR',temu_price_source:'RUN_SELECTED_WORKBOOK_SHEET05',temu_price_source_id:'fixture',similar_cluster:'夹子',level1:'L1',level2:'L2',level3:'L3'}]]),fx:{status:'AVAILABLE',eur_per_cny:.12,cny_per_eur:8.333333,source:'TEST',as_of:'2026-09-01'}},
   });
   const imageResolver=createSourcingReviewImageResolver({projectRoot:root,temuImageRoot:temuRoot});
@@ -122,6 +123,16 @@ test('bootstrap goods detail images and database-derived 1688 link are served',a
   assert.deepEqual(link.json,{url:'https://detail.1688.com/offer/p1.html'});
   const blocked=await api(c.base,'/api/sourcing/review/goods/601/candidates/p2/open-link?run_id=run-api');
   assert.equal(blocked.status,400);
+});
+
+test('visual match metadata and dedicated display image endpoint stay run scoped',async t=>{
+  const c=await setup(t);
+  const matches=await api(c.base,'/api/sourcing/review/goods/601/visual-matches?run_id=run-api');
+  assert.equal(matches.status,200);assert.equal(matches.json.matches[0].display_image_kind,'TEMU_LOCAL_ORIGINAL');
+  assert.doesNotMatch(JSON.stringify(matches.json),/supplier-cache|temu\.db/);
+  const image=await api(c.base,'/api/sourcing/review/visual-index/display-images/visual-1?run_id=run-api&index_fingerprint=visual-f',{binary:true});
+  assert.equal(image.status,200);assert.deepEqual(image.bytes,c.jpeg);
+  assert.equal((await api(c.base,'/api/sourcing/review/visual-index/display-images/visual-1?run_id=wrong&index_fingerprint=visual-f',{binary:true})).status,400);
 });
 
 test('select clear exclude restore and note routes preserve revisions',async t=>{

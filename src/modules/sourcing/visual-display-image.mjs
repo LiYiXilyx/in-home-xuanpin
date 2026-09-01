@@ -27,7 +27,7 @@ export function createVisualDisplayImageResolver({runId,universe,indexStore,temu
     return {display_image_url:endpoint(String(input.goodsId),String(input.fingerprint)),display_image_kind:asset.kind,
       display_image_width:asset.width,display_image_height:asset.height,display_image_low_resolution:Boolean(asset.lowResolution),display_image_source:asset.source};
   }
-  async function image(input) {const asset=await resolve(input);if(!asset)throw fault('VISUAL_IMAGE_NOT_FOUND','display image unavailable');return asset;}
+  async function image(input) {const asset=await resolve(input);if(!asset)throw fault('VISUAL_IMAGE_NOT_FOUND','display image unavailable');return {...asset,display_image_kind:asset.kind,kind:'LOCAL'};}
   return {describe,image};
 }
 function fault(code,message){return Object.assign(new Error(message),{code});}
