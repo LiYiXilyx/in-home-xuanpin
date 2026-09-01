@@ -1,3 +1,6 @@
+import { createCatalogApi } from './api.js';
+import { createCatalogState,patchCatalogState,snapshotCatalogState } from './state.js';
+
 const mounts=new WeakMap();
 let currentController=null;
 
@@ -44,18 +47,42 @@ export function catalogPanelMarkup(){return `
     </section>
   </section>`;}
 
-export function mountCatalogPanel({root}={}){
+export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis.fetch,scheduler=globalThis,api=null}={}){
   if(!root||typeof root!=='object')throw coded('CATALOG_ROOT_REQUIRED','缺少 Catalog mount root。');
   const existing=mounts.get(root);if(existing)return existing;
   root.innerHTML=catalogPanelMarkup();
-  const state=Object.freeze({mounted:true});
-  let active=true;
+  const catalogState=createCatalogState(),catalogApi=api??createCatalogApi({fetchImpl});
+  patchCatalogState(catalogState,{mounted:true});
+  let active=true,refreshPromise=null,catalogPollingTimer=null;
+  async function refresh(){
+    if(!active)throw coded('CATALOG_PANEL_NOT_MOUNTED','Catalog panel 已卸载。');
+    if(refreshPromise)return refreshPromise;
+    refreshPromise=(async()=>{
+      patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});
+      try{
+        const [profiles,current]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign()]);
+        const campaign=current.current??null;
+        patchCatalogState(catalogState,{profiles:profiles.profiles??[],currentCampaign:campaign,
+          currentPool:campaign?.pool_version_id??null,quantityPolicy:campaign?{
+            quantityMode:campaign.quantity_mode??'TARGETED',targetCount:campaign.target_count??null,
+            remaining:campaign.remaining??null,targetReached:campaign.target_reached??null
+          }:null,initialQa:campaign?.qa??null,lastRefreshedAt:new Date().toISOString()});
+      }catch(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:error.message??'Catalog 刷新失败。'}});}
+      finally{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:false,current:false}});refreshPromise=null;}
+      return snapshotCatalogState(catalogState);
+    })();
+    return refreshPromise;
+  }
   const controller={
-    async refresh(){return state;},
-    getState(){return state;},
-    destroy(){if(!active)return;active=false;root.replaceChildren();mounts.delete(root);if(currentController===controller)currentController=null;}
+    refresh,
+    getState(){return snapshotCatalogState(catalogState);},
+    destroy(){if(!active)return;active=false;if(catalogPollingTimer!==null)scheduler.clearInterval(catalogPollingTimer);
+      catalogPollingTimer=null;patchCatalogState(catalogState,{mounted:false});root.replaceChildren();mounts.delete(root);
+      if(currentController===controller)currentController=null;}
   };
-  mounts.set(root,controller);currentController=controller;return controller;
+  mounts.set(root,controller);currentController=controller;
+  void refresh();catalogPollingTimer=scheduler.setInterval(()=>{void refresh();},Number(pollIntervalMs));
+  return controller;
 }
 
 export async function refreshCatalogPanel(){
