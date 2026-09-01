@@ -2,7 +2,8 @@ const FILTERS=new Set(['ALL','PENDING','CONFIRMED','IMAGE_FAILED']);
 
 export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.bind(globalThis)}={}) {
   if(!api||!runId) throw new TypeError('api and runId are required');
-  let model={filter:'ALL',bootstrap:null,detail:null,currentGoodsId:null,currentProductId:null,notice:''};
+  let model={filter:'ALL',bootstrap:null,detail:null,currentGoodsId:null,currentProductId:null,notice:'',
+    groupExpanded:false,groupSort:'DEFAULT',comparisonGoodsId:null,imagePreview:null,noteDirty:false};
 
   const request=(path,options)=>api.request(path,options);
   const query=()=>`run_id=${encodeURIComponent(runId)}`;
@@ -24,12 +25,16 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
     model.bootstrap=await request(`/api/sourcing/review/bootstrap?${query()}&filter=${encodeURIComponent(model.filter)}`);
   }
 
-  async function selectGoods(goodsId) {
+  async function selectGoods(goodsId,{confirmDiscard}={}) {
     const key=String(goodsId);
+    if(model.noteDirty&&model.currentGoodsId&&key!==model.currentGoodsId) {
+      if(typeof confirmDiscard!=='function'||!confirmDiscard()) return false;
+    }
     const response=await request(`/api/sourcing/review/goods/${encodeURIComponent(key)}?${query()}`);
     response.candidates=[...(response.candidates??[])].sort((a,b)=>Number(a.random_sample_rank)-Number(b.random_sample_rank));
     model.detail=response;
     model.currentGoodsId=key;
+    model.noteDirty=false;model.comparisonGoodsId=null;model.imagePreview=null;
     if(!response.candidates.some(row=>productId(row)===model.currentProductId)) {
       model.currentProductId=productId(response.candidates[0])||null;
     }
@@ -77,7 +82,20 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
   function clearSelection() { return mutate(()=>'/clear-selection','POST'); }
   function excludeCandidate() { return mutate(candidateSuffix('exclude'),'POST'); }
   function restoreCandidate() { return mutate(candidateSuffix('restore'),'POST'); }
-  function saveNote(operatorNote) { return mutate(candidateSuffix('note'),'PUT',{operator_note:operatorNote}); }
+  async function saveNote(operatorNote) { const result=await mutate(candidateSuffix('note'),'PUT',{operator_note:operatorNote});model.noteDirty=false;return result; }
+
+  function toggleGroup() { model.groupExpanded=!model.groupExpanded;return snapshot(); }
+  function setGroupSort(value) { const key=String(value);if(!new Set(['DEFAULT','UNIT_PRICE','LISTED_PRICE','GOODS_ID']).has(key))throw new TypeError(`unsupported group sort: ${key}`);model.groupSort=key;return snapshot(); }
+  function previewGroupImage(goodsId) { const key=groupGoodsId(goodsId);model.comparisonGoodsId=key;model.imagePreview=key;return snapshot(); }
+  function closeImagePreview() { model.imagePreview=null;return snapshot(); }
+  function setNoteDirty(value) { model.noteDirty=Boolean(value);return snapshot(); }
+  async function switchToGroupGoods(goodsId,{confirmDiscard}={}) { const key=groupGoodsId(goodsId);const result=await selectGoods(key,{confirmDiscard});return result===false?false:true; }
+
+  function groupGoodsId(value) {
+    const key=String(value),items=model.detail?.group_context?.items??[];
+    if(!items.some(item=>String(item.temu_goods_id)===key)) throw new TypeError('goods is not in current opportunity group');
+    return key;
+  }
 
   async function openLink() {
     const candidate=currentCandidate();
@@ -99,5 +117,6 @@ export function createReviewConsoleState({api,runId,openWindow=globalThis.open?.
   return {
     load,selectGoods,chooseCandidate,previous:()=>move(-1),next:()=>move(1),snapshot,
     selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveNote,openLink,
+    toggleGroup,setGroupSort,previewGroupImage,closeImagePreview,switchToGroupGoods,setNoteDirty,
   };
 }
