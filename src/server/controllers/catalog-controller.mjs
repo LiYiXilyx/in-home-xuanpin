@@ -1,7 +1,9 @@
 import { AppError } from '../../shared/errors.mjs';
 
-export function createCatalogController({ catalogService,categoryProfileRegistry }) {
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository }) {
   return {
+    poolProducts(poolVersionId,searchParams){return catalogPoolReadRepository.listPoolProducts({poolVersionId,
+      categoryKey:searchParams.get('category_key'),categoryProfileVersion:searchParams.get('category_profile_version')});},
     async operatorProfiles() {
       const {profiles,invalid}=await categoryProfileRegistry.list();
       return {profiles:profiles.map(profile=>catalogService.describeOperatorProfile(profile)),invalid};

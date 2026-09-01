@@ -8,6 +8,9 @@ export function createRouter({ statusService,browserController,jobController,rev
       if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog-rpa/')) return catalogCors(response,204);
+      const poolProducts=url.pathname.match(/^\/api\/catalog\/pools\/([^/]+)\/products$/);
+      if(request.method==='GET'&&poolProducts){const result=catalogController.poolProducts(decodeURIComponent(poolProducts[1]),url.searchParams);
+        return json(response,200,{ok:true,...result},CATALOG_HEADERS);}
       if (request.method === 'GET' && url.pathname === '/api/catalog/operator/profiles') {
         const result=await catalogController.operatorProfiles();
         return json(response,200,{ ok:true,...result },CATALOG_HEADERS);
@@ -159,7 +162,7 @@ async function readJson(request,maxBytes=16_384) {
   if (!body) return {};
   try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
 }
-function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS'].includes(code)) return 409; return 400; }
+function statusFor(code) { if (['JOB_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND'].includes(code)) return 404; if (['BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH'].includes(code)) return 409; return 400; }
 function mapOperatorCampaignResult(result) {
   return { campaign_id:result.campaignId,category_key:result.categoryKey,
     category_profile_version:result.categoryProfileVersion,campaign_name:result.campaignName,

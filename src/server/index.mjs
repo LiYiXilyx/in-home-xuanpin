@@ -8,6 +8,7 @@ import { createJobRepository } from '../db/repositories/job-repository.mjs';
 import { createReviewRepository } from '../db/repositories/review-repository.mjs';
 import { createReviewQueueRepository } from '../db/repositories/review-queue-repository.mjs';
 import { createNavigationResolutionRepository } from '../db/repositories/navigation-resolution-repository.mjs';
+import { createCatalogPoolReadRepository } from '../db/repositories/catalog-pool-read-repository.mjs';
 import { createCatalogCampaignService } from '../modules/catalog-scale/catalog-campaign-service.mjs';
 import { createCategoryProfileRegistry } from '../modules/catalog-scale/category-profile-registry.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
@@ -43,9 +44,10 @@ export async function createOperationsServer(options={}) {
   const reviewQueueService=createReviewQueueService({ db,jobRepository:repository,queueRepository:reviewQueueRepository,navigationRepository:navigationResolutionRepository,config });
   const reviewQueueController=createReviewQueueController({ queueService:reviewQueueService });
   const catalogService=createCatalogCampaignService(db);
+  const catalogPoolReadRepository=createCatalogPoolReadRepository(db);
   const categoryProfileDirectory=path.resolve(options.categoryProfileDirectory ?? path.join(projectDir,'config/categories'));
   const categoryProfileRegistry=options.categoryProfileRegistry ?? createCategoryProfileRegistry({ directory:categoryProfileDirectory });
-  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry });
+  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository });
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
