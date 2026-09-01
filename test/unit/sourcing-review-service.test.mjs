@@ -132,4 +132,15 @@ test('bootstrap and detail expose deterministic run-bound groups prices and oppo
   assert.equal(detail.candidates[0].opportunity_band,'HIGH');
 });
 
+test('visual opportunity basis prefers reliable then provisional and never marks provisional HIGH',async()=>{
+ const {sourcingRepository,temuRepository}=fixture(),original=sourcingRepository.getReviewGoods.bind(sourcingRepository);
+ sourcingRepository.getReviewGoods=(run,id)=>{const value=original(run,id);return {...value,candidates:value.candidates.map(row=>({...row,supplier_title:'10pcs clips',price_rmb:10}))};};
+ const opportunityContext={itemsByGoodsId:new Map([['601',workbook('601','tail bag',30,'包')],['602',workbook('602','tail bag',20,'包')],['603',workbook('603','tail bag',10,'包')]]),fx:{status:'AVAILABLE',eur_per_cny:.12,cny_per_eur:8.333333,source:'TEST',as_of:'2026-09-01'}};
+ let metrics={min_reliable_unit_price_eur:null,min_provisional_unit_price_eur:12,other_min_listed_price_eur:12,metadata_conflict_count:1};
+ const service=createSourcingReviewService({sourcingRepository,temuRepository,runId:'run-fixed',expectedGoods:3,expectedCandidates:4,opportunityContext,visualContext:{query:async()=>({market_metrics:metrics,matches:[],index:{status:'READY'},search:{match_count:1}})}});
+ let result=await service.visualMatches('601');assert.equal(result.candidate_opportunities[0].opportunity_price_basis,'PROVISIONAL_VISUAL_UNIT_MIN');assert.equal(result.candidate_opportunities[0].opportunity_band,'UNIT_REVIEW_REQUIRED');assert.notEqual(result.candidate_opportunities[0].opportunity_band,'HIGH');
+ metrics={...metrics,min_reliable_unit_price_eur:10};result=await service.visualMatches('601');assert.equal(result.candidate_opportunities[0].opportunity_price_basis,'RELIABLE_VISUAL_UNIT_MIN');
+ metrics={min_reliable_unit_price_eur:null,min_provisional_unit_price_eur:null,other_min_listed_price_eur:12};result=await service.visualMatches('601');assert.equal(result.candidate_opportunities[0].opportunity_price_basis,'LISTED_PRICE_ONLY');assert.equal(result.candidate_opportunities[0].opportunity_ratio,null);
+});
+
 function workbook(id,title,price,cluster){return {temu_goods_id:id,temu_title:title,temu_listed_price_eur:price,temu_currency:'EUR',temu_price_source:'RUN_SELECTED_WORKBOOK_SHEET05',temu_price_source_id:'source',similar_cluster:cluster,level1:'L1',level2:'L2',level3:'L3'};}

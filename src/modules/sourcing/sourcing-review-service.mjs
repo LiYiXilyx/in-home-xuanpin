@@ -107,7 +107,22 @@ export function createSourcingReviewService({
     return {url:validated1688Url(candidate['1688_product_url']??candidate.supplier_url)};
   }
 
-  async function visualMatches(temuGoodsId,options={}) { const detail=goodsDetail(temuGoodsId);if(!visualContext)return {run_id:fixedRunId,anchor_goods_id:String(temuGoodsId),index:{status:'NOT_BUILT'},search:{match_count:0,reliable_match_count:0},matches:[],candidate_opportunities:[]};const result=await visualContext.query({goodsId:String(temuGoodsId),...options}),minimum=result.market_metrics?.min_reliable_unit_price_eur??null;const candidate_opportunities=detail.candidates.map(candidate=>{if(minimum===null)return {product_id:String(candidate['1688_product_id']??candidate.supplier_product_id),opportunity_ratio:null,opportunity_band:'VISUAL_MATCH_REQUIRED',opportunity_reasons:['VISUAL_MATCH_REQUIRED']};return {product_id:String(candidate['1688_product_id']??candidate.supplier_product_id),...calculateOpportunity({group:{metrics:{group_min_unit_price_eur:minimum},group_confidence:'HIGH'},candidate,fx:detail.fx_context})};});return {...result,candidate_opportunities}; }
+  async function visualMatches(temuGoodsId,options={}) {
+    const detail=goodsDetail(temuGoodsId);
+    if(!visualContext)return {run_id:fixedRunId,anchor_goods_id:String(temuGoodsId),index:{status:'NOT_BUILT'},search:{match_count:0,reliable_match_count:0},matches:[],candidate_opportunities:[]};
+    const result=await visualContext.query({goodsId:String(temuGoodsId),...options}),metrics=result.market_metrics??{};
+    const reliable=positivePrice(metrics.min_reliable_unit_price_eur),provisional=positivePrice(metrics.min_provisional_unit_price_eur),listed=positivePrice(metrics.other_min_listed_price_eur??metrics.min_other_listed_price_eur);
+    const basis=reliable!==null?'RELIABLE_VISUAL_UNIT_MIN':provisional!==null?'PROVISIONAL_VISUAL_UNIT_MIN':listed!==null?'LISTED_PRICE_ONLY':'NO_USABLE_PRICE';
+    const candidate_opportunities=detail.candidates.map(candidate=>{
+      const product_id=String(candidate['1688_product_id']??candidate.supplier_product_id);
+      if(basis==='LISTED_PRICE_ONLY')return {product_id,opportunity_ratio:null,opportunity_band:'TEMU_UNIT_PRICE_REQUIRED',opportunity_reasons:['TEMU_UNIT_PRICE_REQUIRED','LISTED_PRICE_ONLY'],opportunity_price_basis:basis};
+      if(basis==='NO_USABLE_PRICE')return {product_id,opportunity_ratio:null,opportunity_band:'VISUAL_MATCH_REQUIRED',opportunity_reasons:['VISUAL_MATCH_REQUIRED'],opportunity_price_basis:basis};
+      const resultValue=calculateOpportunity({group:{metrics:{group_min_unit_price_eur:reliable??provisional},group_confidence:'HIGH'},candidate,fx:detail.fx_context});
+      if(basis==='PROVISIONAL_VISUAL_UNIT_MIN')return {...resultValue,product_id,opportunity_band:'UNIT_REVIEW_REQUIRED',opportunity_reasons:[...new Set([...(resultValue.opportunity_reasons??[]),'VISUAL_UNIT_PRICE_PROVISIONAL',...(metrics.metadata_conflict_count>0?['METADATA_CONFLICT_PRESENT']:[])])],opportunity_price_basis:basis};
+      return {product_id,...resultValue,opportunity_price_basis:basis};
+    });
+    return {...result,candidate_opportunities};
+  }
   async function visualImage(temuGoodsId,options={}) { if(!visualContext)throw serviceError('VISUAL_INDEX_NOT_BUILT','visual index not built');return visualContext.image({goodsId:String(temuGoodsId),...options}); }
   async function visualDisplayImage(temuGoodsId,options={}) { if(!visualContext)throw serviceError('VISUAL_INDEX_NOT_BUILT','visual index not built');return visualContext.displayImage({goodsId:String(temuGoodsId),...options}); }
 
@@ -201,6 +216,12 @@ function required(value,name) {
   const text=value===null||value===undefined?'':String(value);
   if(text==='') throw serviceError('REVIEW_IDENTITY_REQUIRED',`${name} 不能为空`);
   return text;
+}
+
+function positivePrice(value) {
+  if(value===null||value===undefined||String(value).trim()==='') return null;
+  const number=Number(value);
+  return Number.isFinite(number)&&number>0?number:null;
 }
 
 function serviceError(code,message) {

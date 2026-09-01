@@ -128,3 +128,4 @@ test('visual cards use server-resolved display images and constrain low resoluti
   assert.match(js,/预览图分辨率较低/);assert.match(js,/暂无图片/);
   assert.match(css,/\.opportunity-item img\.low-resolution/);assert.match(css,/max-width:/);assert.match(css,/object-fit:contain/);
 });
+test('visual price summary renders listed reliable and provisional semantics explicitly',()=>{const js=readFileSync(new URL('../../ui/sourcing-review.js',import.meta.url),'utf8');for(const label of ['其他相似最低标价','其他相似标价中位数','可靠单价最低','推定单价最低','推定：未从标题或结构化字段确认包装数量','部分视觉匹配与分类/商品类型信息存在冲突'])assert.match(js,new RegExp(label));assert.match(js,/reliable_unit_price_sample_count/);assert.match(js,/provisional_unit_price_sample_count/);assert.match(js,/视觉相似商品存在，但没有可用 EUR 标价/);});
