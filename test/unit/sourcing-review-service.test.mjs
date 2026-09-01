@@ -92,6 +92,17 @@ test('a newly inserted run never changes the fixed session run',()=>{
   assert.equal(service.fixedRunId,'run-fixed');
 });
 
+test('visual image may resolve an indexed workbook goods outside the current review run',async()=>{
+  const {sourcingRepository,temuRepository}=fixture();
+  const calls=[];
+  const service=createSourcingReviewService({sourcingRepository,temuRepository,runId:'run-fixed',expectedGoods:3,expectedCandidates:4,
+    visualContext:{image:async input=>{calls.push(input);return {kind:'LOCAL',contentType:'image/jpeg',bytes:Buffer.from('jpeg')};}},
+  });
+  const result=await service.visualImage('outside-workbook-goods',{fingerprint:'index-v1'});
+  assert.equal(result.kind,'LOCAL');
+  assert.deepEqual(calls,[{goodsId:'outside-workbook-goods',fingerprint:'index-v1'}]);
+});
+
 test('bootstrap and detail expose deterministic run-bound groups prices and opportunities',()=>{
   const {sourcingRepository,temuRepository}=fixture();
   sourcingRepository.getReviewGoods('run-fixed','601').candidates;
