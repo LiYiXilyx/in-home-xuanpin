@@ -1,9 +1,13 @@
 const ALLOWED_RUN_STATUSES=new Set(['COMPLETED','COMPLETED_WITH_WARNINGS']);
 const ALLOWED_FILTERS=new Set(['ALL','PENDING','CONFIRMED','IMAGE_FAILED']);
+import {normalizeUnitPrice} from './unit-price-normalizer.mjs';
+import {buildOpportunityGroups} from './review-opportunity-groups.mjs';
+import {calculateOpportunity,normalizeSupplierCandidate} from './review-opportunity-calculator.mjs';
 
 export function createSourcingReviewService({
   sourcingRepository,temuRepository,runId,
   expectedGoods=50,expectedCandidates=250,
+  opportunityContext=null,
 }={}) {
   const fixedRunId=required(runId,'run_id');
 
@@ -34,8 +38,8 @@ export function createSourcingReviewService({
       review_status:item.review_status,
       review_revision:item.review_revision,
       review_updated_at:item.review_updated_at,
-      temu_context:temuRepository.getTemuContext(goodsId),
-      candidates:[...item.candidates].sort((a,b)=>a.random_sample_rank-b.random_sample_rank),
+      temu_context:item.temu_context,group_context:item.group_context,fx_context:snapshot.fx,
+      candidates:item.candidates,
     };
   }
 
@@ -118,17 +122,51 @@ export function createSourcingReviewService({
       'REVIEW_V1_COUNT_MISMATCH',
       `V1 review 数量不匹配：goods=${goods.length}/${expectedGoods}, candidates=${candidateCount}/${expectedCandidates}`,
     );
+    const ids=details.map(item=>String(item.temu_goods_id));
+    const contexts=temuRepository.getTemuContexts?.(ids)??new Map(ids.map(id=>[id,temuRepository.getTemuContext(id)]));
+    const normalized=details.map(item=>{
+      const goodsId=String(item.temu_goods_id),context=contexts.get(goodsId)??temuRepository.getTemuContext(goodsId);
+      const evidence=opportunityContext?.itemsByGoodsId?.get(goodsId)??{temu_goods_id:goodsId};
+      const unit=normalizeUnitPrice({listedPrice:evidence.temu_listed_price_eur,currency:'EUR',title:evidence.temu_title??context.temu_title});
+      return {...context,...evidence,temu_title:context.temu_title??evidence.temu_title??null,
+        temu_pack_quantity:unit.pack_quantity,temu_unit_price_eur:unit.unit_price,
+        quantity_source:unit.quantity_source,quantity_confidence:unit.quantity_confidence,
+        price_basis:unit.price_basis,normalization_status:unit.normalization_status,quantity_evidence:unit.evidence,
+        review_status:item.review_status,review_revision:item.review_revision,review_updated_at:item.review_updated_at,
+      };
+    });
+    const grouped=buildOpportunityGroups(normalized),fx=opportunityContext?.fx??{
+      status:'FX_RATE_REQUIRED',cny_per_eur:null,eur_per_cny:null,source:null,as_of:null,
+    };
     const joined=details.map(item=>{
-      const context=temuRepository.getTemuContext(String(item.temu_goods_id));
+      const goodsId=String(item.temu_goods_id),temu=grouped.itemByGoodsId.get(goodsId),group=grouped.groupsByKey.get(temu.group_key);
       return {
         temu_goods_id:String(item.temu_goods_id),review_status:item.review_status,
         review_revision:item.review_revision,review_updated_at:item.review_updated_at,
         image_failed:item.candidates.some(candidate=>candidate.image_download_status!=='SUCCESS'),
-        candidate_count:item.candidates.length,...context,
+        candidate_count:item.candidates.length,...temu,group_item_count:group.metrics.group_item_count,
       };
     });
+    const enrichedDetails=details.map(item=>{
+      const goodsId=String(item.temu_goods_id),temu=grouped.itemByGoodsId.get(goodsId),group=grouped.groupsByKey.get(temu.group_key);
+      const groupItems=group.items.map(row=>({
+        temu_goods_id:row.temu_goods_id,temu_title:row.temu_title,review_status:row.review_status,
+        group_key:row.group_key,group_label:row.group_label,temu_listed_price_eur:row.temu_listed_price_eur??null,
+        temu_pack_quantity:row.temu_pack_quantity,temu_unit_price_eur:row.temu_unit_price_eur,
+        quantity_source:row.quantity_source,quantity_confidence:row.quantity_confidence,
+        is_current:row.temu_goods_id===goodsId,is_min_listed:row.temu_goods_id===group.metrics.group_min_listed_goods_id,
+        is_min_unit:row.temu_goods_id===group.metrics.group_min_unit_goods_id,
+      }));
+      const groupContext={group_key:group.group_key,group_label:group.group_label,group_source:group.group_source,
+        group_confidence:group.group_confidence,item_count:group.metrics.group_item_count,metrics:group.metrics,items:groupItems};
+      const candidates=[...item.candidates].sort((a,b)=>a.random_sample_rank-b.random_sample_rank).map(raw=>{
+        const normalizedCandidate=normalizeSupplierCandidate(raw,fx);
+        return {...normalizedCandidate,...calculateOpportunity({group:groupContext,candidate:normalizedCandidate,fx})};
+      });
+      return {...item,temu_context:temu,group_context:groupContext,candidates};
+    });
     validateStatusConservation(joined);
-    return {run,goods:joined,details};
+    return {run,goods:joined,details:enrichedDetails,fx};
   }
 
   return {

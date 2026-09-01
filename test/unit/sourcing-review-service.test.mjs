@@ -91,3 +91,34 @@ test('a newly inserted run never changes the fixed session run',()=>{
   assert.equal(service.bootstrap().run_id,'run-fixed');
   assert.equal(service.fixedRunId,'run-fixed');
 });
+
+test('bootstrap and detail expose deterministic run-bound groups prices and opportunities',()=>{
+  const {sourcingRepository,temuRepository}=fixture();
+  sourcingRepository.getReviewGoods('run-fixed','601').candidates;
+  const original=sourcingRepository.getReviewGoods.bind(sourcingRepository);
+  sourcingRepository.getReviewGoods=(run,id)=>{
+    const value=original(run,id);
+    return {...value,candidates:value.candidates.map(row=>({...row,supplier_title:row['1688_product_id']==='p1'?'10pcs clips':'single clip',price_rmb:8}))};
+  };
+  const itemsByGoodsId=new Map([
+    ['601',workbook('601','Pack of 10 clips',12,'夹子')],['602',workbook('602','5pcs clips',10,'夹子')],
+    ['603',workbook('603','37L bag',20,null)],
+  ]);
+  const service=createSourcingReviewService({sourcingRepository,temuRepository,runId:'run-fixed',expectedGoods:3,expectedCandidates:4,
+    opportunityContext:{itemsByGoodsId,fx:{status:'AVAILABLE',eur_per_cny:.12,cny_per_eur:8.333333,source:'TEST',as_of:'2026-09-01'}},
+  });
+  const bootstrap=service.bootstrap();
+  assert.deepEqual(bootstrap.goods.slice(0,2).map(x=>[x.group_label,x.group_item_count,x.temu_listed_price_eur,x.temu_pack_quantity,x.temu_unit_price_eur]),[
+    ['夹子',2,12,10,1.2],['夹子',2,10,5,2],
+  ]);
+  const detail=service.goodsDetail('601');
+  assert.equal(detail.group_context.item_count,2);assert.equal(detail.group_context.metrics.group_min_unit_price_eur,1.2);
+  assert.deepEqual(detail.group_context.items.map(x=>x.temu_goods_id),['601','602']);
+  assert.equal(detail.fx_context.cny_per_eur,8.333333);
+  assert.equal(detail.temu_context.temu_price_source,'RUN_SELECTED_WORKBOOK_SHEET05');
+  assert.equal(detail.candidates[0].supplier_pack_quantity,10);
+  assert.equal(detail.candidates[0].opportunity_ratio,12.5);
+  assert.equal(detail.candidates[0].opportunity_band,'HIGH');
+});
+
+function workbook(id,title,price,cluster){return {temu_goods_id:id,temu_title:title,temu_listed_price_eur:price,temu_currency:'EUR',temu_price_source:'RUN_SELECTED_WORKBOOK_SHEET05',temu_price_source_id:'source',similar_cluster:cluster,level1:'L1',level2:'L2',level3:'L3'};}

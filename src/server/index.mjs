@@ -34,6 +34,9 @@ import { createYingdaoImportService } from '../modules/sourcing/yingdao-import-s
 import { createSourcingReviewService } from '../modules/sourcing/sourcing-review-service.mjs';
 import { createSourcingReviewImageResolver } from '../modules/sourcing/sourcing-review-images.mjs';
 import { createSourcingReviewController } from './controllers/sourcing-review-controller.mjs';
+import { loadRunOpportunityWorkbook } from '../modules/sourcing/review-opportunity-workbook.mjs';
+import { resolveReviewFx } from '../modules/sourcing/review-opportunity-calculator.mjs';
+import { loadSourcingConfig } from '../modules/sourcing/sourcing-1688.mjs';
 
 const projectDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 
@@ -73,6 +76,16 @@ export async function createOperationsServer(options={}) {
   let temuContextDb=null;
   let sourcingReviewController=options.sourcingReviewController??null;
   if(!sourcingReviewController) {
+    const reviewRunId=options.sourcingReviewRunId??process.env.SOURCING_REVIEW_RUN_ID??'yingdao_random5_v1_20260831_001';
+    const reviewImport=sourcingRepository.getImport(reviewRunId);
+    if(!reviewImport) throw new Error(`Review run 不存在：${reviewRunId}`);
+    const opportunityContext=options.sourcingReviewOpportunityContext??{
+      ...await loadRunOpportunityWorkbook({
+        workbookPath:reviewImport.selected_workbook_path,
+        runGoodsIds:reviewImport.items.map(item=>String(item.temu_goods_id)),
+      }),
+      fx:resolveReviewFx(loadSourcingConfig(options.sourcingConfigPath??path.join(projectDir,'config/1688-sourcing-v1.json'))),
+    };
     const temuPathBase=config.configPath?path.dirname(config.configPath):projectDir;
     const temuImageRoot=config.export?.imageCacheDir??path.join(temuPathBase,'outputs/week1-mvp/image-cache');
     temuContextDb=openTemuContextDatabase(config.app.databasePath);
@@ -80,7 +93,7 @@ export async function createOperationsServer(options={}) {
     const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:temuPathBase,imageCacheRoot:temuImageRoot});
     const sourcingReviewService=createSourcingReviewService({
       sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
-      runId:options.sourcingReviewRunId??process.env.SOURCING_REVIEW_RUN_ID??'yingdao_random5_v1_20260831_001',
+      runId:reviewRunId,opportunityContext,
     });
     sourcingReviewController=createSourcingReviewController({
       service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot}),

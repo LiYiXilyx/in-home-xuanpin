@@ -10,7 +10,7 @@ export function resolveReviewFx(config) {
 }
 
 export function normalizeSupplierCandidate(candidate,fx) {
-  const low=positive(candidate.price_min_rmb),high=positive(candidate.price_max_rmb),single=positive(candidate.price_rmb??candidate.supplier_price_rmb);
+  const low=positive(candidate.price_min_rmb),high=positive(candidate.price_max_rmb),single=positive(candidate.price_rmb??candidate.supplier_price_rmb??singleRawPrice(candidate.price_raw));
   let effective=single,basis='LISTED_SINGLE_VALUE',tierAmbiguous=false;
   if(low!==null&&high!==null&&high!==low) { effective=high;basis='RANGE_HIGH_CONSERVATIVE'; }
   else if(effective===null&&low!==null&&high===null) { effective=low;basis='MINIMUM_TIER_PROVISIONAL';tierAmbiguous=true; }
@@ -46,4 +46,5 @@ export function calculateOpportunity({group,candidate,fx}={}) {
 }
 
 function positive(value){if(value===null||value===undefined||String(value).trim()==='')return null;const n=Number(value);return Number.isFinite(n)&&n>0?n:null;}
+function singleRawPrice(value){const matches=String(value??'').match(/\d+(?:\.\d+)?/g)??[];return matches.length===1?matches[0]:null;}
 function round(value,digits){const factor=10**digits;return Math.round((value+Number.EPSILON)*factor)/factor;}

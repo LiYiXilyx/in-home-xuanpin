@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { loadArtifactTool } from '../analysis/artifact-runtime.mjs';
 
 const SHEET='05_细分商品明细';
-const REQUIRED=['goods_id','当前价格 EUR','当前 Pool Version','相似产品簇','用户场景','产品类型','Level3具体细分'];
+const REQUIRED=['goods_id','商品标题','当前价格 EUR','当前 Pool Version','相似产品簇','用户场景','产品类型','Level3具体细分'];
 
 export async function loadRunOpportunityWorkbook({workbookPath,runGoodsIds,artifact=null}={}) {
   const bytes=await fs.readFile(workbookPath);
@@ -30,6 +30,7 @@ export function parseRunOpportunitySheet(values,{runGoodsIds,sourceId}={}) {
     const pool=text(row[indexes['当前 Pool Version']]);
     found.set(goodsId,{
       temu_goods_id:goodsId,
+      temu_title:text(row[indexes['商品标题']]),
       temu_listed_price_eur:positiveNumber(row[indexes['当前价格 EUR']]),
       temu_currency:'EUR',temu_price_source:'RUN_SELECTED_WORKBOOK_SHEET05',
       temu_price_source_id:`${sourceId}#${pool??'NO_POOL'}`,pool_version_id:pool,

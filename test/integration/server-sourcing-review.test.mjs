@@ -43,7 +43,9 @@ async function setup(t) {
 
   const repository=createSourcingReviewRepository(sourcingDb,{now:()=> '2026-08-31T09:00:00.000Z'});
   const temuRepository=createTemuSourcingContextRepository(temuDb,{projectRoot:root, imageCacheRoot:temuRoot});
-  const service=createSourcingReviewService({sourcingRepository:repository,temuRepository,runId:'run-api',expectedGoods:1,expectedCandidates:2});
+  const service=createSourcingReviewService({sourcingRepository:repository,temuRepository,runId:'run-api',expectedGoods:1,expectedCandidates:2,
+    opportunityContext:{itemsByGoodsId:new Map([['601',{temu_goods_id:'601',temu_title:'10pcs Temu clips',temu_listed_price_eur:12,temu_currency:'EUR',temu_price_source:'RUN_SELECTED_WORKBOOK_SHEET05',temu_price_source_id:'fixture',similar_cluster:'夹子',level1:'L1',level2:'L2',level3:'L3'}]]),fx:{status:'AVAILABLE',eur_per_cny:.12,cny_per_eur:8.333333,source:'TEST',as_of:'2026-09-01'}},
+  });
   const imageResolver=createSourcingReviewImageResolver({projectRoot:root,temuImageRoot:temuRoot});
   const sourcingReviewController=createSourcingReviewController({service,imageResolver});
   const router=createRouter({
@@ -102,6 +104,12 @@ test('bootstrap goods detail images and database-derived 1688 link are served',a
   const detail=await api(c.base,'/api/sourcing/review/goods/601?run_id=run-api');
   assert.equal(detail.status,200);
   assert.deepEqual(detail.json.candidates.map(x=>x.random_sample_rank),[1,2]);
+  assert.equal(detail.json.group_context.group_label,'夹子');
+  assert.equal(detail.json.group_context.metrics.group_min_unit_price_eur,1.2);
+  assert.equal(detail.json.fx_context.cny_per_eur,8.333333);
+  assert.equal(detail.json.temu_context.temu_listed_price_eur,12);
+  assert.equal(detail.json.candidates[0].supplier_unit_price_eur,1.188);
+  assert.equal(detail.json.candidates[0].opportunity_band,'UNIT_REVIEW_REQUIRED');
   const temuImage=await api(c.base,'/api/sourcing/review/images/temu/601?run_id=run-api',{binary:true});
   assert.equal(temuImage.status,200);
   assert.deepEqual(temuImage.bytes,c.avif);
