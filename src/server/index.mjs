@@ -73,15 +73,17 @@ export async function createOperationsServer(options={}) {
   let temuContextDb=null;
   let sourcingReviewController=options.sourcingReviewController??null;
   if(!sourcingReviewController) {
+    const temuPathBase=config.configPath?path.dirname(config.configPath):projectDir;
+    const temuImageRoot=config.export?.imageCacheDir??path.join(temuPathBase,'outputs/week1-mvp/image-cache');
     temuContextDb=openTemuContextDatabase(config.app.databasePath);
     const sourcingReviewRepository=createSourcingReviewRepository(sourcingDb);
-    const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:projectDir});
+    const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:temuPathBase,imageCacheRoot:temuImageRoot});
     const sourcingReviewService=createSourcingReviewService({
       sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
       runId:options.sourcingReviewRunId??process.env.SOURCING_REVIEW_RUN_ID??'yingdao_random5_v1_20260831_001',
     });
     sourcingReviewController=createSourcingReviewController({
-      service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir}),
+      service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot}),
     });
   }
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),

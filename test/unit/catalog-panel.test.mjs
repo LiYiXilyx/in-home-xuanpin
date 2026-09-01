@@ -78,3 +78,25 @@ test('Catalog API and validation errors render only inside Catalog root',async()
   await panel.refresh();fixture.byId('catalog-campaign-name').value='Initial B';await fixture.byId('catalog-create-form').emit('submit');
   assert.match(fixture.byId('catalog-error').textContent,/CATALOG_RPA_CLAIM_CONFLICT/);assert.equal(fixture.yingdao.marker,'untouched');panel.destroy();
 });
+
+test('initial refresh shows loading while background polling refresh stays silent',async()=>{
+  const fixture=catalogDomFixture();let gate=deferred(),round=0;
+  const api={
+    async listProfiles(){const pending=gate;await pending.promise;return{profiles:[{...expansionProfile,active_pool_count:10+round}]};},
+    async currentCampaign(){const pending=gate;await pending.promise;return{current:null};},
+  };
+  const panel=mountCatalogPanel({root:fixture.catalogRoot,api,scheduler:fixture.scheduler});
+  assert.equal(fixture.byId('catalog-loading').hidden,false,'initial load should be visible');
+  gate.resolve();await panel.refresh();
+  assert.equal(fixture.byId('catalog-loading').hidden,true);
+  assert.equal(panel.getState().profiles[0].active_pool_count,10);
+
+  round=1;gate=deferred();
+  const polling=[...fixture.timers.values()][0];polling.callback();await Promise.resolve();
+  assert.equal(fixture.byId('catalog-loading').hidden,true,'background poll must not show loading');
+  gate.resolve();await panel.refresh();
+  assert.equal(panel.getState().profiles[0].active_pool_count,11,'silent poll must still refresh data');
+  assert.equal(fixture.yingdao.marker,'untouched');panel.destroy();
+});
+
+function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}

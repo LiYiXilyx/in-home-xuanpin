@@ -73,18 +73,19 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
         remaining:current.remaining??null,targetReached:current.target_reached??null
       }:null,initialQa:current?.qa??null,lastRefreshedAt:new Date().toISOString()});
   }
-  async function refresh(){
+  async function refresh({silent=false}={}){
     if(!active)throw coded('CATALOG_PANEL_NOT_MOUNTED','Catalog panel 已卸载。');
     if(refreshPromise)return refreshPromise;
     refreshPromise=(async()=>{
-      patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});render();
+      if(silent)patchCatalogState(catalogState,{error:null});
+      else{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});render();}
       try{
         const [profiles,current]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign()]);
         const campaign=current.current??null;
         applyRemote(profiles.profiles??[],campaign);
         emitContextIfChanged(root,campaign,context=>{if(context!==lastContextKey){lastContextKey=context;return true;}return false;});
       }catch(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});}
-      finally{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:false,current:false}});render();refreshPromise=null;}
+      finally{if(!silent)patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:false,current:false}});render();refreshPromise=null;}
       return snapshotCatalogState(catalogState);
     })();
     return refreshPromise;
@@ -99,7 +100,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
     getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},applyRemote,refresh});
   mounts.set(root,controller);currentController=controller;
-  void refresh();catalogPollingTimer=scheduler.setInterval(()=>{void refresh();},Number(pollIntervalMs));
+  void refresh();catalogPollingTimer=scheduler.setInterval(()=>{void refresh({silent:true});},Number(pollIntervalMs));
   return controller;
 }
 

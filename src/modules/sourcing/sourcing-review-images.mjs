@@ -7,10 +7,12 @@ let sharpInstance=null;
 
 export function createSourcingReviewImageResolver({
   projectRoot=process.cwd(),
+  temuPathBase=projectRoot,
   temuImageRoot=path.join(projectRoot,'outputs/week1-mvp/image-cache'),
   decode=decodeWithSharp,
 }={}) {
   const projectPath=path.resolve(projectRoot);
+  const temuBase=path.resolve(temuPathBase);
   const temuRoot=path.resolve(temuImageRoot);
 
   async function resolveSupplierImage({run,candidate}) {
@@ -58,7 +60,7 @@ export function createSourcingReviewImageResolver({
     const goodsId=String(context?.temu_goods_id??'');
     const relativePath=String(context?.temu_image_local_path??'').replaceAll('\\','/');
     if(!safeSegment(goodsId)||path.parse(relativePath).name!==goodsId||path.isAbsolute(relativePath)) return {kind:'MISSING'};
-    const requested=path.resolve(projectPath,relativePath);
+    const requested=path.resolve(temuBase,relativePath);
     if(!isContained(temuRoot,requested)) return {kind:'MISSING'};
     try {
       const [canonicalRoot,canonicalPath]=await Promise.all([fs.realpath(temuRoot),fs.realpath(requested)]);

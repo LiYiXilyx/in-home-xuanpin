@@ -104,6 +104,17 @@ test('Temu image uses exact context mapping and missing context stays MISSING',a
   assert.deepEqual(await resolver.resolveTemuImage({temu_goods_id:'601',temu_context_status:'MISSING'}),{kind:'MISSING'});
 });
 
+test('Temu image resolves from an explicit data path base after runtime relocation',async t=>{
+  const c=await setup(t),runtimeRoot=path.join(c.root,'stable-runtime');
+  await fs.mkdir(runtimeRoot);
+  const resolver=createSourcingReviewImageResolver({
+    projectRoot:runtimeRoot,temuPathBase:c.root,temuImageRoot:c.temuRoot,
+  });
+  const result=await resolver.resolveTemuImage(c.temuContext);
+  assert.equal(result.kind,'LOCAL');
+  assert.deepEqual(result.bytes,c.avif);
+});
+
 test('failed DB status is an image failure and empty URL yields placeholder',async t=>{
   const c=await setup(t);
   const resolver=createSourcingReviewImageResolver({projectRoot:c.root,temuImageRoot:c.temuRoot});
