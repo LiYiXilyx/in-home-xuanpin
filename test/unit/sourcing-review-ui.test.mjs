@@ -115,5 +115,6 @@ test('review page contains accessible opportunity accordion benchmark preview an
   assert.match(html,/aria-expanded="false"/);assert.match(html,/aria-controls="reviewOpportunityPanel"/);assert.match(html,/role="region"/);
   assert.match(html,/价格倍率仅比较 Temu 商品价与 1688 采购价/);
   assert.match(js,/切换到此商品复核/);assert.match(js,/previewVisualImage/);assert.match(js,/opportunity_band/);assert.match(js,/Excel视觉相似商品/);
+  assert.match(js,/value===null\|\|value===undefined\|\|value===''/,'missing prices must render as unavailable, never zero');
   assert.match(css,/\.opportunity-items\{[^}]*max-height:/);assert.match(css,/overflow:auto/);
 });

@@ -25,7 +25,7 @@ function text(tag,value,className) {
 }
 function field(label,value) { return `${label}：${value??'—'}`; }
 function number(value,digits=2) { return Number.isFinite(Number(value))?Number(value).toFixed(digits):'—'; }
-function money(value,currency) { return Number.isFinite(Number(value))?`${currency==='CNY'?'¥':'€'}${number(value)}`:'—'; }
+function money(value,currency) { return value===null||value===undefined||value===''?'—':Number.isFinite(Number(value))?`${currency==='CNY'?'¥':'€'}${number(value)}`:'—'; }
 function productId(row) { return String(row?.['1688_product_id']??row?.supplier_product_id??''); }
 function supplierImage(goodsId,row) {
   const params=new URLSearchParams({run_id:RUN_ID});
