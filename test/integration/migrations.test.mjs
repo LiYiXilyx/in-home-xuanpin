@@ -62,19 +62,94 @@ test('an applied migration cannot be edited silently', t => {
   assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
 });
 
-test('migration checksums tolerate Windows line endings and trailing blank lines only', t => {
+test('migration checksums accept a historical CRLF checksum for the same multiline LF SQL', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-eol-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const migrationsDir = path.join(directory, 'migrations');
   fs.mkdirSync(migrationsDir);
-  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(id INTEGER);\n');
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(\r\n  id INTEGER\r\n);\r\n');
   const databasePath = path.join(directory, 'v2.db');
   migrateDatabase({ databasePath, migrationsDir });
 
-  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(id INTEGER);\r\n\r\n');
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(\n  id INTEGER\n);\n');
   const repeated = migrateDatabase({ databasePath, migrationsDir });
   assert.deepEqual(repeated.applied, []);
   assert.deepEqual(repeated.skipped, ['001_sample.sql']);
+});
+
+test('migration checksums accept a historical LF checksum for the same multiline CRLF SQL', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-reverse-eol-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  const migrationPath = path.join(migrationsDir, '001_sample.sql');
+  fs.writeFileSync(migrationPath, 'CREATE TABLE sample(\n  id INTEGER\n);\n');
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  fs.writeFileSync(migrationPath, 'CREATE TABLE sample(\r\n  id INTEGER\r\n);\r\n');
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.deepEqual(repeated.applied, []);
+  assert.deepEqual(repeated.skipped, ['001_sample.sql']);
+});
+
+test('migration checksum compatibility is limited to line endings and the existing final-newline rule', async t => {
+  const cases = [
+    { name: 'final newline', before: 'CREATE TABLE sample(id INTEGER);', after: 'CREATE TABLE sample(id INTEGER);\n', compatible: true },
+    { name: 'SQL character', before: 'CREATE TABLE sample(id INTEGER);\n', after: 'CREATE TABLE sample(id TEXT);\n', compatible: false },
+    { name: 'comment content', before: '-- original\nCREATE TABLE sample(id INTEGER);\n', after: '-- changed\nCREATE TABLE sample(id INTEGER);\n', compatible: false },
+    { name: 'SQL whitespace', before: 'CREATE TABLE sample(id INTEGER);\n', after: 'CREATE  TABLE sample(id INTEGER);\n', compatible: false }
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-bounds-'));
+      t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const migrationsDir = path.join(directory, 'migrations');
+      fs.mkdirSync(migrationsDir);
+      const migrationPath = path.join(migrationsDir, '001_sample.sql');
+      fs.writeFileSync(migrationPath, fixture.before);
+      const databasePath = path.join(directory, 'v2.db');
+      migrateDatabase({ databasePath, migrationsDir });
+      fs.writeFileSync(migrationPath, fixture.after);
+      if (fixture.compatible) {
+        assert.deepEqual(migrateDatabase({ databasePath, migrationsDir }).skipped, ['001_sample.sql']);
+      } else {
+        assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
+      }
+    });
+  }
+});
+
+test('the nine historical CRLF migrations remain compatible with their LF runtime files', t => {
+  const historicalCrlfMigrations = new Set([
+    '001_core.sql',
+    '002_catalog.sql',
+    '003_quality_and_classification.sql',
+    '004_job_control.sql',
+    '009_market_analysis.sql',
+    '010_fine_classification.sql',
+    '011_ai_provider_audit.sql',
+    '012_reviews.sql',
+    '013_review_session_recovery.sql'
+  ]);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-historical-crlf-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  for (const filename of fs.readdirSync(projectMigrations)) {
+    const sql = fs.readFileSync(path.join(projectMigrations, filename), 'utf8');
+    const historicalSql = historicalCrlfMigrations.has(filename) ? sql.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n') : sql;
+    fs.writeFileSync(path.join(migrationsDir, filename), historicalSql);
+  }
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  for (const filename of historicalCrlfMigrations) {
+    fs.copyFileSync(path.join(projectMigrations, filename), path.join(migrationsDir, filename));
+  }
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.equal(repeated.applied.length, 0);
+  assert.equal(repeated.skipped.length, fs.readdirSync(projectMigrations).filter(filename => /^\d+_.+\.sql$/.test(filename)).length);
 });
 
 test('a failed migration is rolled back completely', t => {

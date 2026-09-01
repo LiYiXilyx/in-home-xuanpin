@@ -64,8 +64,9 @@ function compatibleMigrationChecksums(sql) {
   const body = normalized.replace(/\n+$/, '');
   const candidates = new Set([migrationChecksum(sql)]);
   for (const eol of ['\n', '\r\n']) {
+    const encodedBody = body.replace(/\n/g, eol);
     for (let trailingLines = 0; trailingLines <= 2; trailingLines += 1) {
-      candidates.add(migrationChecksum(body + eol.repeat(trailingLines)));
+      candidates.add(migrationChecksum(encodedBody + eol.repeat(trailingLines)));
     }
   }
   return candidates;
