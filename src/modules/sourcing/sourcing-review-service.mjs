@@ -8,7 +8,7 @@ import {resolveRunExpectedCounts} from './review-lifecycle-mapper.mjs';
 export function createSourcingReviewService({
   sourcingRepository,temuRepository,runId,
   expectedGoods=null,expectedCandidates=null,
-  opportunityContext=null,
+  opportunityContext=null,visualContext=null,
 }={}) {
   const fixedRunId=required(runId,'run_id');
 
@@ -107,6 +107,9 @@ export function createSourcingReviewService({
     return {url:validated1688Url(candidate['1688_product_url']??candidate.supplier_url)};
   }
 
+  async function visualMatches(temuGoodsId,options={}) { goodsDetail(temuGoodsId);return visualContext?visualContext.query({goodsId:String(temuGoodsId),...options}):{run_id:fixedRunId,anchor_goods_id:String(temuGoodsId),index:{status:'NOT_BUILT'},search:{match_count:0,reliable_match_count:0},matches:[]}; }
+  async function visualImage(temuGoodsId,options={}) { goodsDetail(temuGoodsId);if(!visualContext)throw serviceError('VISUAL_INDEX_NOT_BUILT','visual index not built');return visualContext.image({goodsId:String(temuGoodsId),...options}); }
+
   function assertFixedRun(value) {
     if(String(value??'')!==fixedRunId) throw serviceError('REVIEW_RUN_MISMATCH',`review run 必须固定为：${fixedRunId}`);
     return fixedRunId;
@@ -171,7 +174,7 @@ export function createSourcingReviewService({
   return {
     fixedRunId,bootstrap,goodsDetail,navigation,assertFixedRun,
     selectCandidate,clearSelection,excludeCandidate,restoreCandidate,saveCandidateNote,
-    resolveTemuImage,resolveSupplierImage,resolveOpenLink,
+    resolveTemuImage,resolveSupplierImage,resolveOpenLink,visualMatches,visualImage,
   };
 }
 

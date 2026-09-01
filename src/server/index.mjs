@@ -37,6 +37,10 @@ import { createSourcingReviewController } from './controllers/sourcing-review-co
 import { loadRunOpportunityWorkbook } from '../modules/sourcing/review-opportunity-workbook.mjs';
 import { resolveReviewFx } from '../modules/sourcing/review-opportunity-calculator.mjs';
 import { loadSourcingConfig } from '../modules/sourcing/sourcing-1688.mjs';
+import { loadVisualWorkbookUniverse } from '../modules/sourcing/visual-workbook-universe.mjs';
+import { createLocalVisualEmbeddingBackend } from '../modules/sourcing/local-visual-embedding.mjs';
+import { createVisualIndexStore } from '../modules/sourcing/visual-index-store.mjs';
+import { createVisualReviewContext } from '../modules/sourcing/visual-review-context.mjs';
 
 const projectDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 
@@ -90,9 +94,11 @@ export async function createOperationsServer(options={}) {
     temuContextDb=openTemuContextDatabase(config.app.databasePath);
     const sourcingReviewRepository=createSourcingReviewRepository(sourcingDb);
     const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:temuPathBase,imageCacheRoot:temuImageRoot});
+    let visualContext=null;
+    if(reviewImport?.selected_workbook_path){const universe=await loadVisualWorkbookUniverse({workbookPath:reviewImport.selected_workbook_path});const visualCacheRoot=options.sourcingVisualCacheRoot??path.join(path.dirname(reviewImport.selected_workbook_path),'visual-cache');const embeddingBackend=createLocalVisualEmbeddingBackend({cacheRoot:visualCacheRoot,sourcePath:path.join(projectDir,'tools/yingdao-vision-embed.swift')});const indexStore=createVisualIndexStore({cacheRoot:visualCacheRoot,embeddingBackend});visualContext=createVisualReviewContext({universe,indexStore,currentRunId:reviewRunId,currentGoodsIds:[...new Set(reviewImport.items.map(item=>String(item.temu_goods_id)))]});}
     const sourcingReviewService=createSourcingReviewService({
       sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
-      runId:reviewRunId,opportunityContext,
+      runId:reviewRunId,opportunityContext,visualContext,
     });
     sourcingReviewController=createSourcingReviewController({
       service:sourcingReviewService,imageResolver:createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot}),
