@@ -10,7 +10,8 @@ test('shared shell exposes distinct Catalog and empty YingDao roots in stable or
   assert.ok(html.indexOf('catalog-module-root')<html.indexOf('yingdao-module-root'));
 });
 
-test('Task 5 keeps the legacy Catalog panel inside the compatibility root',()=>{
+test('shared shell leaves both business module roots empty',()=>{
   const start=html.indexOf('id="catalog-module-root"'),end=html.indexOf('id="yingdao-module-root"');
-  assert.match(html.slice(start,end),/id="operatorCampaignForm"/);
+  assert.match(html.slice(start,end),/id="catalog-module-root"[^>]*><\/section>/);
+  assert.doesNotMatch(html,/id="operatorCampaignForm"/);
 });

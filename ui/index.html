@@ -16,43 +16,7 @@
 
     <section id="notice" class="notice" aria-live="polite"></section>
 
-    <section id="catalog-module-root" aria-label="Temu 商品采集">
-    <section class="panel operator-campaign-panel" aria-labelledby="operatorCampaignTitle">
-      <div class="section-title"><div><p class="eyebrow">MANUAL BIND</p><h2 id="operatorCampaignTitle">新建采集任务</h2></div><span>创建后仍需在 Temu 页面人工检测、绑定和采集</span></div>
-      <form id="operatorCampaignForm" class="operator-form">
-        <label>Category<select id="operatorCategory" required></select></label>
-        <label>Category Profile<select id="operatorProfile" required></select></label>
-        <label>采集模式<input id="operatorMode" value="MANUAL_BIND_PASSIVE_CAPTURE" readonly></label>
-        <label>当前 Active Pool 数量<output id="operatorActivePool">0</output></label>
-        <label id="operatorRequestedNewField">本次新增目标数量<input id="operatorRequestedNew" type="number" min="1" step="1"></label>
-        <label id="operatorCalculatedTargetField">Campaign Target<output id="operatorCalculatedTarget">—</output></label>
-        <label>任务名称<input id="operatorCampaignName" maxlength="200" required></label>
-        <button id="createOperatorCampaign" class="primary" type="submit">创建采集任务</button>
-      </form>
-      <p id="operatorCampaignError" class="operator-error" role="alert" hidden></p>
-      <section id="operatorCurrentCampaign" class="operator-current" hidden>
-        <h3>当前采集任务</h3>
-        <dl class="operator-current-grid">
-          <div><dt>Category</dt><dd id="operatorCurrentCategory">—</dd></div>
-          <div><dt>Campaign Name</dt><dd id="operatorCurrentName">—</dd></div>
-          <div><dt>Campaign ID（诊断）</dt><dd id="operatorCurrentId">—</dd></div>
-          <div><dt>Baseline</dt><dd id="operatorCurrentBaseline">0</dd></div>
-          <div><dt>Target</dt><dd id="operatorCurrentTarget">0</dd></div>
-          <div><dt>Current Unique</dt><dd id="operatorCurrentUnique">0</dd></div>
-          <div><dt>Remaining</dt><dd id="operatorCurrentRemaining">0</dd></div>
-          <div><dt>Status</dt><dd id="operatorCurrentStatus">—</dd></div>
-          <div><dt>Bind</dt><dd id="operatorCurrentBinding">等待页面绑定</dd></div>
-        </dl>
-        <div id="initialPoolActions" class="initial-pool-actions" hidden>
-          <p id="initialQuantityMode">采集模式：不限数量 / OPEN_ENDED</p>
-          <p id="initialQaStatus">QA：NOT_RUN</p>
-          <button id="runInitialQa" type="button">运行首池 QA</button>
-          <button id="activateInitialPool" class="primary" type="button" disabled>建立首个商品池</button>
-        </div>
-        <div id="initialActivationResult" class="initial-pool-result" hidden></div>
-      </section>
-    </section>
-    </section>
+    <section id="catalog-module-root" aria-label="Temu 商品采集"></section>
     <section id="yingdao-module-root" aria-label="1688 / 影刀寻源"></section>
 
     <section class="controls panel">
