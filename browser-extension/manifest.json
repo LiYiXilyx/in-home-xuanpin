@@ -29,7 +29,7 @@
     },
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","catalog-manual-binding.js","catalog-manual-passive-runner.js","catalog-auto-runner.js","content-script.js"],
+      "js": ["review-loader.js","catalog-parser.js","catalog-capture.js","catalog-overlay-mode.js","catalog-manual-binding.js","catalog-manual-passive-runner.js","catalog-auto-runner.js","content-script.js"],
       "run_at": "document_idle"
     }
   ]

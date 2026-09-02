@@ -314,6 +314,7 @@
   const module=Object.freeze({ CatalogAutoRunner,STATES,difference,scanDom,findLoadControl,waitForProgress,uiSummary,humanAction });
   globalThis.TemuCatalogAutoRunnerModule=module;
   if (typeof document!=='undefined' && typeof chrome!=='undefined') { (async()=>{const dependencies=realDependencies();let context=null;try{context=await dependencies.getContext();}catch{}
-    if(context?.campaign?.browserControlMode==='MANUAL_NAVIGATION_PASSIVE_CAPTURE'&&globalThis.TemuCatalogManualPassiveRunnerModule){await globalThis.TemuCatalogManualPassiveRunnerModule.bootstrap(context);return;}
+    const mode=globalThis.TemuCatalogOverlayMode?.resolveCatalogOverlayMode(context)??'BLOCKED';
+    if(mode!=='LEGACY_AUTO_RUNNER')return;
     const runner=new CatalogAutoRunner(dependencies);globalThis.TemuCatalogAutoRunner=runner;installUi(runner);runner.restore().catch(()=>{});})().catch(()=>{}); }
 })();
