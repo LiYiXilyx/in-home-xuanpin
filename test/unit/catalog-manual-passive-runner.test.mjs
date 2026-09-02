@@ -76,9 +76,9 @@ test('Manual Passive CLI delegates create to atomic operator service and keeps r
   assert.doesNotMatch(createBody,/service\.createCampaign\(|service\.createSource\(|service\.claimNextSource\(/);
 });
 
-test('scanDom returns ordered breadcrumbs and category candidates instead of relying on h1 alone',()=>{
+test('scanDom prefers the terminal breadcrumb as category source while retaining h1 as conflict evidence',()=>{
   const items=['Home',"Kids' Fashion","Girls' Sets"].map(value=>({hidden:false,getAttribute:()=>null,getClientRects:()=>[{}],querySelector:()=>({innerText:value,hidden:false,getAttribute:()=>null,getClientRects:()=>[{}]})})),container={querySelectorAll:selector=>selector===':scope > li'?items:[]};
-  const document={body:{innerText:'€'},documentElement:{lang:'en'},getElementById:()=>null,querySelector:selector=>selector==='h1'?null:null,querySelectorAll:selector=>selector==='nav[aria-label*="breadcrumb" i],[aria-label*="breadcrumb" i],nav > ol'?[container]:selector==='script[type="application/ld+json"]'?[]:[]};
+  const document={body:{innerText:'€'},documentElement:{lang:'en'},getElementById:()=>null,querySelector:selector=>selector==='h1'?{textContent:"Girls' Sets"}:null,querySelectorAll:selector=>selector==='nav[aria-label*="breadcrumb" i],[aria-label*="breadcrumb" i],nav > ol'?[container]:selector==='script[type="application/ld+json"]'?[]:[]};
   const sandbox=vm.createContext({console,URL,Date,document,location:{href:'https://www.temu.com/de-en/girls-sets-o3-1088.html',pathname:'/de-en/girls-sets-o3-1088.html'},TemuCatalogParser:{parseDocument:()=>[{goods_id:'1'}]}});vm.runInContext(breadcrumbSource,sandbox);vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);const result=sandbox.TemuCatalogManualPassiveRunnerModule.scanDom();
-  assert.deepEqual(Array.from(result.breadcrumbs),['Home',"Kids' Fashion","Girls' Sets"]);assert.equal(result.category,"Girls' Sets");assert.equal(result.categorySource,'BREADCRUMB_TERMINAL');assert.equal(result.categoryCandidates[0].source,'BREADCRUMB_TERMINAL');
+  assert.deepEqual(Array.from(result.breadcrumbs),['Home',"Kids' Fashion","Girls' Sets"]);assert.equal(result.category,"Girls' Sets");assert.equal(result.categorySource,'BREADCRUMB_TERMINAL');assert.deepEqual(Array.from(result.categoryCandidates,row=>row.source),['H1','BREADCRUMB_TERMINAL']);
 });
