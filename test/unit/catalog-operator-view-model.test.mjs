@@ -40,3 +40,10 @@ test('context identity is exact and different Profiles cannot share stale state'
   assert.equal(api.contextIdentity(first),'girls-c1\u001fgirls-sets\u001foperator-girls-sets-v1-bf7cb4caf08d');
   assert.notEqual(api.contextIdentity(first),api.contextIdentity(second));
 });
+
+test('Page Health exposes path, breadcrumb, CAPTCHA, search and DOM/network rows plus every failure',()=>{
+  const value=girls({detection:{health:{status:'BLOCKED',code:'LISTING_PATH_MISMATCH',checks:{country:true,language:true,currency:true,listingPath:false,category:false,breadcrumbs:false,sort:true,products:true,notCaptchaBlocking:true,notSearchNoResults:true,evidenceReady:true},failed:['listingPath','category','breadcrumbs']},observed:{url:'https://www.temu.com/de-en/boys-sets.html',siteCountry:'DE',language:'en',currency:'EUR',category:"Boys' Sets",categorySource:'BREADCRUMB_TERMINAL',breadcrumbs:['Home',"Kids' Fashion","Boys' Sets"],sortOrder:'Top Sales',cardCount:20,domReady:true,networkReady:false}}});
+  value.context.profile={...value.context.profile,profile_kind:'CAPTURE_ONLY',listing_url:'https://www.temu.com/de-en/girls-sets-o3-1088.html',breadcrumbs:["Kids' Fashion","Girls' Sets"]};
+  const model=load().build(value),keys=model.health.rows.map(row=>row.key);for(const key of ['listingPath','breadcrumbs','notCaptchaBlocking','notSearchNoResults','evidenceReady'])assert.ok(keys.includes(key));
+  assert.deepEqual(Array.from(model.health.failed),['listingPath','category','breadcrumbs']);assert.equal(model.health.rows.find(row=>row.key==='category').source,'BREADCRUMB_TERMINAL');
+});

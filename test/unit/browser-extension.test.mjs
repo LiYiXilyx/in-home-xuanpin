@@ -17,13 +17,13 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.deepEqual(manifest.content_scripts[0].js,['catalog-network-endpoints.js','temu-network-interceptor.js']);
   assert.deepEqual(manifest.content_scripts[1].js,['catalog-network-endpoints.js','catalog-network-parser.js','catalog-network-cache.js','catalog-product-merger.js','catalog-network-bridge.js']);
   assert.equal(manifest.content_scripts[1].run_at,'document_start');
-  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
+  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-breadcrumbs.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
 });
 
 test('extension does not request or access browser secrets',() => {
-  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-popup-view.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
+  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-breadcrumbs.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-popup-view.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
   assert.doesNotMatch(files,/\b(?:cookies|localStorage|sessionStorage|chrome\.history|chrome\.identity)\b/i);
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);

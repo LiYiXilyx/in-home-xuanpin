@@ -4,18 +4,19 @@
   function contextIdentity(value){const context=value?.context??value??{},campaign=context.campaign??{},profile=context.profile??{};return[campaign.id??'',profile.category_key??campaign.categoryKey??'',profile.category_profile_version??campaign.categoryProfileVersion??''].join('\u001f');}
   function build(value={}){
     const context=value.context??{},campaign=context.campaign??{},profile=context.profile??{},detection=value.detection??null,observed=detection?.observed??{},checks=detection?.health?.checks??{},binding=value.binding??null,checkpoint=context.queue?.checkpoint??{},lastAudit=value.lastResult?.audit??{};
-    const expectedCategory=first(profile.page_health?.category_names,profile.category_aliases,profile.navigation?.breadcrumbs?.slice?.(-1),[profile.display_name])??profile.category_key??campaign.categoryKey??'—';
+    const expectedBreadcrumbs=profile.breadcrumbs??profile.navigation?.breadcrumbs??[],expectedCategory=first([profile.page_category_name],expectedBreadcrumbs.slice(-1),profile.page_health?.category_names,profile.category_aliases,[profile.display_name])??profile.category_key??campaign.categoryKey??'—';
     const display=String(profile.display_name??expectedCategory),categoryLabel=normalize(display)===normalize(expectedCategory)?display:`${display} / ${expectedCategory}`;
     const openEnded=campaign.quantityMode==='OPEN_ENDED',currentUnique=number(campaign.nonElectronicUniqueCount),healthStatus=detection?.health?.status??'NOT_DETECTED',bound=binding?.status==='BOUND';
     const rows=[
       row('country','国家',profile.site_country,observed.siteCountry,checks.country),row('language','语言',profile.language==='en'?'English':profile.language,observed.language==='en'?'English':observed.language,checks.language),
-      row('currency','币种',profile.currency,observed.currency,checks.currency),row('category','类目',expectedCategory,observed.category,checks.category),
-      row('products','商品列表','存在',Number(observed.cardCount)>0?`存在（${Number(observed.cardCount)}）`:'不存在',checks.products),row('sort','排序',profile.sort_order,observed.sortOrder,checks.sort)
+      row('currency','币种',profile.currency,observed.currency,checks.currency),row('listingPath','页面路径',pathname(profile.listing_url),pathname(observed.url),checks.listingPath),row('category','类目',expectedCategory,observed.category,checks.category,observed.categorySource),
+      row('breadcrumbs','面包屑',expectedBreadcrumbs.join(' > '),observed.breadcrumbs?.join?.(' > '),checks.breadcrumbs),row('sort','排序',profile.sort_order,observed.sortOrder,checks.sort),row('products','商品列表','存在',Number(observed.cardCount)>0?`存在（${Number(observed.cardCount)}）`:'不存在',checks.products),
+      row('notCaptchaBlocking','CAPTCHA','不存在',observed.captchaBlocking?'阻断':'不存在',checks.notCaptchaBlocking),row('notSearchNoResults','SEARCH_NO_RESULTS','不存在',observed.searchNoResults?'存在':'不存在',checks.notSearchNoResults),row('evidenceReady','DOM / Network evidence','至少一个 READY',`${observed.domReady?'READY':'NO'} / ${observed.networkReady?'READY':'NO'}`,checks.evidenceReady)
     ];
     const error=humanError(value.lastError,detection,rows);
     return freeze({contextIdentity:contextIdentity(value),categoryLabel,quantity:{mode:openEnded?'OPEN_ENDED':'TARGETED',label:openEnded?'不限数量':'固定目标',currentUnique,target:openEnded?null:number(campaign.targetCount),remaining:openEnded?null:Math.max(0,number(campaign.targetCount)-currentUnique),lastAdded:number(lastAudit.acceptedGoods)},
       task:{status:taskStatus(value.state,healthStatus,bound),modeLabel:openEnded?'手工采集 · 不限数量':'手工采集 · 固定目标'},
-      health:{status:healthStatus,statusLabel:healthStatus==='READY'?'页面已就绪':healthStatus==='NOT_DETECTED'?'等待页面检测':'页面尚未就绪',rows},binding:{status:bound?'BOUND':'UNBOUND'},
+      health:{status:healthStatus,statusLabel:healthStatus==='READY'?'页面已就绪':healthStatus==='NOT_DETECTED'?'等待页面检测':'页面尚未就绪',rows,failed:Object.freeze([...(detection?.health?.failed??[])]),warnings:Object.freeze([...(detection?.health?.warnings??[])])},binding:{status:bound?'BOUND':'UNBOUND'},
       steps:{detect:step(true,healthStatus==='READY'?'已完成':healthStatus==='BLOCKED'?'失败':'待处理',null),bind:step(healthStatus==='READY',bound?'已完成':'待处理',healthStatus==='READY'?null:'请先完成页面检测并达到 READY'),capture:step(bound,'待处理',bound?null:'请先绑定当前页面')},
       counts:{added:number(lastAudit.acceptedGoods),duplicates:number(lastAudit.campaignStagingDeduped),failed:number(checkpoint.failed_count)},error,
       technical:{expanded:false,campaignId:campaign.id??null,categoryKey:profile.category_key??campaign.categoryKey??null,profileVersion:profile.category_profile_version??campaign.categoryProfileVersion??null,bindingFingerprint:binding?.context_fingerprint??null,networkReady:Boolean(detection?.observed?.networkReady),domReady:Boolean(observed.domReady),fetchCount:number(value.networkDiagnostics?.total_fetch_seen),xhrCount:number(value.networkDiagnostics?.total_xhr_seen),parserVersion:value.parserVersion??null,lastErrorCode:value.lastError?.code??null,checkpoint}
@@ -23,7 +24,8 @@
   }
   function humanError(lastError,detection,rows){if(!lastError&&detection?.health?.status!=='BLOCKED')return null;const failed=rows.find(item=>item.passed===false),code=lastError?.code??detection?.health?.code??'PAGE_HEALTH_BLOCKED';if(failed?.key==='sort')return{title:'无法绑定当前页面',reason:`当前页面排序为 ${failed.actual||'未识别'}，不是 ${failed.expected}。`,action:`请人工将排序切换为 ${failed.expected}，然后重新检测。`,code};if(failed)return{title:'页面尚未就绪',reason:`${failed.label}不符合要求（预期 ${failed.expected||'—'}，实际 ${failed.actual||'—'}）。`,action:'请人工修正页面后重新检测。',code};return{title:'操作未完成',reason:lastError?.message??'页面状态不符合要求。',action:'请检查页面后重试。',code};}
   function taskStatus(state,health,bound){if(bound)return'页面已绑定，可人工采集';if(health==='READY')return'页面已检测，等待绑定';if(state==='CAPTURING')return'正在采集当前页面';return'等待页面检测';}
-  function row(key,label,expected,actual,passed){return{key,label,expected:String(expected??'—'),actual:String(actual??'—'),passed:passed===undefined?null:Boolean(passed)};}
+  function row(key,label,expected,actual,passed,source=null){return{key,label,expected:String(expected??'—'),actual:String(actual??'—'),passed:passed===undefined?null:Boolean(passed),source};}
+  function pathname(value){try{return new URL(String(value)).pathname;}catch{return String(value??'—');}}
   function step(enabled,status,disabledReason){return{enabled:Boolean(enabled),status,disabledReason};}
   function first(...groups){for(const group of groups)for(const value of group??[])if(String(value??'').trim())return String(value).trim();return null;}
   function normalize(value){return String(value??'').trim().toLocaleLowerCase();}

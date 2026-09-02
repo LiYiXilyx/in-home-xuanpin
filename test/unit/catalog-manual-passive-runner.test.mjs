@@ -6,10 +6,11 @@ import vm from 'node:vm';
 
 const root=path.resolve(import.meta.dirname,'../..');
 const bindingSource=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-binding.js'),'utf8');
+const breadcrumbSource=fs.readFileSync(path.join(root,'browser-extension/catalog-breadcrumbs.js'),'utf8');
 const runnerSource=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-passive-runner.js'),'utf8');
 const adminSource=fs.readFileSync(path.join(root,'tools/catalog-manual-passive-admin.mjs'),'utf8');
 
-function loadModule(){const sandbox=vm.createContext({console,URL,Date,document:{body:{innerText:''},documentElement:{},getElementById:()=>null},location:{href:'https://www.temu.com/de-en/category-b.html',pathname:'/de-en/category-b.html'}});vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);return sandbox.TemuCatalogManualPassiveRunnerModule;}
+function loadModule(){const sandbox=vm.createContext({console,URL,Date,document:{body:{innerText:''},documentElement:{},getElementById:()=>null},location:{href:'https://www.temu.com/de-en/category-b.html',pathname:'/de-en/category-b.html'}});vm.runInContext(breadcrumbSource,sandbox);vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);return sandbox.TemuCatalogManualPassiveRunnerModule;}
 function context({accepted=0,checkpoint={}}={}){return{campaign:{id:'campaign-b',status:'running',categoryKey:'category-b',categoryProfileVersion:'category-b-v1',targetCount:50,baselinePoolCount:0,nonElectronicUniqueCount:accepted,rawObservedCount:accepted,electronicExcludedCount:0,browserControlMode:'MANUAL_BIND_PASSIVE_CAPTURE',cdpRequired:false,extensionPassiveRequired:true},profile:{category_key:'category-b',category_profile_version:'category-b-v1',display_name:'Category B',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales'},source:{id:'source-b'},queue:{id:'queue-b',checkpoint}};}
 function openEndedContext(){const value=context({accepted:1000,checkpoint:{quantity_mode:'OPEN_ENDED'}});value.campaign={...value.campaign,campaignType:'initial',quantityMode:'OPEN_ENDED',targetCount:null,captureLimit:null,remaining:null,targetReached:null};return value;}
 function healthy(overrides={}){return{url:'https://www.temu.com/de-en/category-b.html?sort=top',siteCountry:'DE',language:'en',currency:'EUR',category:'Category B',sortOrder:'Top Sales',cardCount:2,goodsIds:new Set(['1','2']),domReady:true,searchNoResults:false,captchaBlocking:false,...overrides};}
@@ -73,4 +74,11 @@ test('Manual Passive CLI delegates create to atomic operator service and keeps r
   const approveStart=adminSource.indexOf('function approveStage',createStart);
   const createBody=adminSource.slice(createStart,approveStart);
   assert.doesNotMatch(createBody,/service\.createCampaign\(|service\.createSource\(|service\.claimNextSource\(/);
+});
+
+test('scanDom returns ordered breadcrumbs and category candidates instead of relying on h1 alone',()=>{
+  const items=['Home',"Kids' Fashion","Girls' Sets"].map(value=>({hidden:false,getAttribute:()=>null,getClientRects:()=>[{}],querySelector:()=>({innerText:value,hidden:false,getAttribute:()=>null,getClientRects:()=>[{}]})})),container={querySelectorAll:selector=>selector===':scope > li'?items:[]};
+  const document={body:{innerText:'€'},documentElement:{lang:'en'},getElementById:()=>null,querySelector:selector=>selector==='h1'?null:null,querySelectorAll:selector=>selector==='nav[aria-label*="breadcrumb" i],[aria-label*="breadcrumb" i],nav > ol'?[container]:selector==='script[type="application/ld+json"]'?[]:[]};
+  const sandbox=vm.createContext({console,URL,Date,document,location:{href:'https://www.temu.com/de-en/girls-sets-o3-1088.html',pathname:'/de-en/girls-sets-o3-1088.html'},TemuCatalogParser:{parseDocument:()=>[{goods_id:'1'}]}});vm.runInContext(breadcrumbSource,sandbox);vm.runInContext(bindingSource,sandbox);vm.runInContext(runnerSource,sandbox);const result=sandbox.TemuCatalogManualPassiveRunnerModule.scanDom();
+  assert.deepEqual(Array.from(result.breadcrumbs),['Home',"Kids' Fashion","Girls' Sets"]);assert.equal(result.category,"Girls' Sets");assert.equal(result.categorySource,'BREADCRUMB_TERMINAL');assert.equal(result.categoryCandidates[0].source,'BREADCRUMB_TERMINAL');
 });

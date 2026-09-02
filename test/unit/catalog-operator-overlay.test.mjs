@@ -28,4 +28,9 @@ test('explicit action adapter calls only the matching existing runner method',as
   await actions.detect();await actions.bind();await actions.capture();assert.deepEqual(calls,['detect','bind','capture']);
 });
 
+test('health markup shows listing path, breadcrumb source, DOM/network and every failed check',()=>{
+  const api=modules(),value=snapshot({health:'READY'});value.context.profile={...value.context.profile,profile_kind:'CAPTURE_ONLY',listing_url:'https://www.temu.com/de-en/girls-sets-o3-1088.html',breadcrumbs:["Kids' Fashion","Girls' Sets"]};value.detection.observed={...value.detection.observed,url:'https://www.temu.com/de-en/girls-sets-o3-1088.html',breadcrumbs:['Home',"Kids' Fashion","Girls' Sets"],categorySource:'BREADCRUMB_TERMINAL',networkReady:false,captchaBlocking:false,searchNoResults:false};value.detection.health.checks={...value.detection.health.checks,listingPath:true,breadcrumbs:true,notCaptchaBlocking:true,notSearchNoResults:true,evidenceReady:true};value.detection.health.failed=[];
+  const html=api.TemuCatalogOperatorOverlay.renderMarkup(api.TemuCatalogOperatorViewModel.build(value),{collapsed:false});for(const text of ['页面路径','面包屑','Breadcrumb','CAPTCHA','SEARCH_NO_RESULTS','DOM / Network'])assert.match(html,new RegExp(text));
+});
+
 function button(html,id){return html.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`))?.[0]??'';}
