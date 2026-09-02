@@ -13,7 +13,7 @@ function loadModule(){const sandbox=vm.createContext({console,URL,Date,document:
 function context({accepted=0,checkpoint={}}={}){return{campaign:{id:'campaign-b',status:'running',categoryKey:'category-b',categoryProfileVersion:'category-b-v1',targetCount:50,baselinePoolCount:0,nonElectronicUniqueCount:accepted,rawObservedCount:accepted,electronicExcludedCount:0,browserControlMode:'MANUAL_BIND_PASSIVE_CAPTURE',cdpRequired:false,extensionPassiveRequired:true},profile:{category_key:'category-b',category_profile_version:'category-b-v1',display_name:'Category B',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales'},source:{id:'source-b'},queue:{id:'queue-b',checkpoint}};}
 function openEndedContext(){const value=context({accepted:1000,checkpoint:{quantity_mode:'OPEN_ENDED'}});value.campaign={...value.campaign,campaignType:'initial',quantityMode:'OPEN_ENDED',targetCount:null,captureLimit:null,remaining:null,targetReached:null};return value;}
 function healthy(overrides={}){return{url:'https://www.temu.com/de-en/category-b.html?sort=top',siteCountry:'DE',language:'en',currency:'EUR',category:'Category B',sortOrder:'Top Sales',cardCount:2,goodsIds:new Set(['1','2']),domReady:true,searchNoResults:false,captchaBlocking:false,...overrides};}
-function harness(initial){let current=structuredClone(initial),page=healthy(),submits=0;const writes=[];return{dependencies:{getContext:async()=>structuredClone(current),scan:()=>page,networkDiagnostics:()=>({network_cache_size:2}),passiveCandidates:()=>[{goods_id:'1'},{goods_id:'2'}],submitPassive:async options=>{submits+=1;return{batch:{batchId:options.batchId},audit:{acceptedGoods:2,campaignStagingDeduped:0}};},checkpoint:async payload=>{writes.push(payload);current.queue.checkpoint={...current.queue.checkpoint,...payload.checkpoint};return current.queue;},now:()=> '2026-08-31T00:00:00.000Z'},setPage:value=>{page=value;},get submits(){return submits;},get writes(){return writes;}};}
+function harness(initial){let current=structuredClone(initial),page=healthy(),submits=0;const writes=[];return{dependencies:{getContext:async()=>structuredClone(current),scan:()=>page,networkDiagnostics:()=>({network_cache_size:2}),passiveCandidates:()=>[{goods_id:'1'},{goods_id:'2'}],submitPassive:async options=>{submits+=1;return{batch:{batchId:options.batchId},audit:{acceptedGoods:2,campaignStagingDeduped:0}};},checkpoint:async payload=>{writes.push(payload);current.queue.checkpoint={...current.queue.checkpoint,...payload.checkpoint};return current.queue;},now:()=> '2026-08-31T00:00:00.000Z'},setPage:value=>{page=value;},setContext:value=>{current=structuredClone(value);},get submits(){return submits;},get writes(){return writes;}};}
 
 test('binding checkpoints carry an explicit renewable lease identity',async()=>{const {ManualPassiveRunner}=loadModule(),h=harness(context()),runner=new ManualPassiveRunner(h.dependencies);await runner.restore();await runner.detectCurrentPage();await runner.bindCurrentPage();const cp=h.writes.at(-1).checkpoint;assert.equal(cp.binding_heartbeat_at,'2026-08-31T00:00:00.000Z');assert.equal(cp.binding_generation,1);assert.equal(cp.binding_fingerprint,cp.context_fingerprint);});
 
@@ -46,6 +46,14 @@ test('Page Health blocks SEARCH_NO_RESULTS and CAPTCHA before binding',async()=>
   const {ManualPassiveRunner}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);await runner.restore(initial);
   for(const page of [healthy({searchNoResults:true}),healthy({captchaBlocking:true})]){h.setPage(page);const detected=await runner.detectCurrentPage();assert.equal(detected.detection.health.status,'BLOCKED');await assert.rejects(()=>runner.bindCurrentPage(),error=>error.code==='PAGE_HEALTH_BLOCKED');}
   assert.equal(h.submits,0);
+});
+
+test('exact Campaign/Profile context change clears stale detection and binding',async()=>{
+  const {ManualPassiveRunner,STATES}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);
+  await runner.restore(initial);await runner.detectCurrentPage();await runner.bindCurrentPage();
+  const next=context();next.campaign.id='campaign-c';next.campaign.categoryKey='category-c';next.campaign.categoryProfileVersion='category-c-v1';next.profile={...next.profile,category_key:'category-c',category_profile_version:'category-c-v1',display_name:'Category C'};
+  h.setContext(next);await runner.refreshContext();
+  assert.equal(runner.state,STATES.UNBOUND);assert.equal(runner.detection,null);assert.equal(runner.binding,null);
 });
 
 test('Manual Passive admin derives category, sort and target from the bound Campaign Profile',()=>{
