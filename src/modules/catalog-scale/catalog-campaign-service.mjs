@@ -583,12 +583,14 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   }
 
   function resumeRpa(input) {
-    const queue=requireClaim(input);
-    if (queue.status!=='manual_required') throw new AppError('只有manual_required队列可以恢复。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
-    const checkpoint=mergeCheckpoint(queue,input.checkpoint,{ phase:'opening',resumedAt:now(),manualGateResolved:true });
-    repository.transitionCampaign(queue.campaignId,'running');
-    repository.transitionSource(queue.sourceId,'opening');
-    return repository.transitionRpaQueue(queue.id,'opening',{ checkpoint,clearError:true });
+    return transaction(db,() => {
+      const queue=requireClaim(input);
+      if (queue.status!=='manual_required') throw new AppError('只有manual_required队列可以恢复。',{ code:'CATALOG_RPA_INVALID_TRANSITION' });
+      const checkpoint=withoutPageBinding(mergeCheckpoint(queue,input.checkpoint,{ phase:'opening',resumedAt:now(),manualGateResolved:true }));
+      repository.transitionCampaign(queue.campaignId,'running');
+      repository.transitionSource(queue.sourceId,'opening');
+      return repository.transitionRpaQueue(queue.id,'opening',{ checkpoint,clearError:true });
+    });
   }
 
   function saveExtensionCheckpoint(input) {
@@ -1008,6 +1010,7 @@ function optionalInteger(value,field) { const result=optionalNumber(value,field,
 function optionalPositiveInteger(value,field) { const result=optionalNumber(value,field,{ min:1 });if (result!==null && !Number.isInteger(result)) throw new AppError(`${field}必须是正整数。`,{ code:'CATALOG_BATCH_INVALID' });return result; }
 function isoTimestamp(value,field) { const result=requiredString(value,field,64);if (!Number.isFinite(Date.parse(result))) throw new AppError(`${field}不是有效时间。`,{ code:'CATALOG_BATCH_INVALID' });return new Date(result).toISOString(); }
 function mergeCheckpoint(queue,value,extra={}) { if (value!==undefined) plainObject(value,'checkpoint');return { ...(queue.checkpoint ?? {}),...(value ?? {}),...extra }; }
+function withoutPageBinding(checkpoint) { const next={ ...checkpoint };for(const key of ['status','binding_version','binding_generation','binding_fingerprint','binding_heartbeat_at','context_fingerprint','bound_url','bound_at','bound_category','bound_breadcrumbs','bound_sort','bound_goods_count'])delete next[key];return next; }
 function normalizeRpaMetrics(checkpoint) { return { rawObservationCount:nonNegativeMetric(checkpoint.raw_observation_count),
   loadMoreCount:nonNegativeMetric(checkpoint.load_more_count),scrollRounds:nonNegativeMetric(checkpoint.scroll_rounds) }; }
 function nonNegativeMetric(value) { const result=Number(value ?? 0);return Number.isInteger(result) && result>=0 ? result:0; }

@@ -34,12 +34,18 @@ test('Scale Day3 Catalog RPA queue claims, checkpoints, manual-resumes and compl
   call=await post('/api/catalog-extension/checkpoint',{ campaign_id:'wrong',source_id:source.id,queue_id:queue.id,status:'capturing',checkpoint:{ round:2 } });
   assert.equal(call.response.status,409);assert.equal(call.body.error.code,'CATALOG_RPA_CLAIM_MISMATCH');
   call=await post('/api/catalog-extension/manual-required',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,
-    error_code:'CAPTCHA_OR_LOGIN',error_message:'extension fixture',checkpoint:{ runner_state:'MANUAL_REQUIRED',round:1 } });
+    error_code:'CAPTCHA_OR_LOGIN',error_message:'extension fixture',checkpoint:{ runner_state:'MANUAL_REQUIRED',round:1,status:'BOUND',binding_version:'manual-bind-v1',binding_generation:9,binding_fingerprint:'stale-fingerprint',context_fingerprint:'stale-context',bound_url:'https://stale.example/' } });
   assert.equal(call.response.status,200);assert.equal(call.body.result.status,'manual_required');assert.equal(app.catalogService.getCampaign(campaign.id).status,'manual_required');
   response=await fetch(`${address.url}/api/catalog-rpa/current-context`);body=await response.json();assert.equal(response.status,200);
   assert.equal(body.context.queue.status,'manual_required');assert.equal(body.context.queue.claimToken,undefined);assert.equal(body.context.queue.checkpoint.round,1);
-  call=await post('/api/catalog-extension/resume',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,checkpoint:{ resume_verified:true } });
+  const campaignCountBeforeResume=count(app.db,'catalog_campaigns'),queueCountBeforeResume=count(app.db,'catalog_rpa_queue');
+  call=await post('/api/catalog-extension/resume',{ campaign_id:campaign.id,source_id:source.id,queue_id:queue.id,checkpoint:{ runner_state:'UNBOUND',capture_mode:'MANUAL_BIND_PASSIVE_CAPTURE',capture_paused:true,manual_gate_resolved:true,previous_binding_invalidated:true,last_action:'operator_resume_after_page_health_fix' } });
   assert.equal(call.response.status,200);assert.equal(call.body.result.status,'opening');assert.equal(app.catalogService.getCampaign(campaign.id).status,'running');
+  const resumedSource=app.db.prepare('SELECT status,last_error_code FROM catalog_sources WHERE id=?').get(source.id),resumedQueue=app.db.prepare('SELECT status,last_error_code,last_error_message,checkpoint_json FROM catalog_rpa_queue WHERE id=?').get(queue.id),resumedCheckpoint=JSON.parse(resumedQueue.checkpoint_json);
+  assert.equal(resumedSource.status,'opening');assert.equal(resumedSource.last_error_code,null);assert.equal(resumedQueue.last_error_code,null);assert.equal(resumedQueue.last_error_message,null);
+  assert.equal(resumedCheckpoint.runner_state,'UNBOUND');assert.equal(resumedCheckpoint.capture_mode,'MANUAL_BIND_PASSIVE_CAPTURE');assert.equal(resumedCheckpoint.capture_paused,true);assert.equal(resumedCheckpoint.manual_gate_resolved,true);assert.equal(resumedCheckpoint.previous_binding_invalidated,true);assert.equal(resumedCheckpoint.last_action,'operator_resume_after_page_health_fix');
+  for(const key of ['status','binding_version','binding_generation','binding_fingerprint','context_fingerprint','bound_url'])assert.equal(resumedCheckpoint[key],undefined,key);
+  assert.equal(count(app.db,'catalog_campaigns'),campaignCountBeforeResume);assert.equal(count(app.db,'catalog_rpa_queue'),queueCountBeforeResume);
   call=await post('/api/catalog-rpa/checkpoint',{ queue_id:queue.id,claim_token:queue.claimToken,status:'capturing',checkpoint:{ scroll_rounds:1,load_more_count:0,new_goods_per_round:[3],stale_rounds:0,manual_gate_count:0 } });assert.equal(call.body.result.status,'capturing');
 
   const batchPayload=batch(campaign.id,source.id,'rpa-batch-1');call=await post('/api/catalog/batches',batchPayload);assert.equal(call.response.status,200);assert.equal(call.body.result.idempotentReplay,false);
