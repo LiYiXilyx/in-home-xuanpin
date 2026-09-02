@@ -30,7 +30,7 @@ const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
 const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFRESH_EXTENSION_MODE]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk,
-  evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={},claimInspectionService=null }={}) {
+  evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={},claimInspectionService=null,activityRegistry=null }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
   const initialRepository=createInitialPoolRepository(db,{ now });
   const blockerRepository=createCatalogClaimRecoveryRepository(db,{now});
@@ -368,7 +368,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     source,profile,poolVersionId:activePool?.id??null };
   }
 
-  function captureExtensionBatch(input) {
+  function captureExtensionBatch(input){return withActivity(input?.campaign_id,'capture',()=>captureExtensionBatchImpl(input));}
+  function captureExtensionBatchImpl(input) {
     plainObject(input,'Catalog batch');
     const campaignId=requiredString(input.campaign_id,'campaign_id',128);
     const sourceId=requiredString(input.source_id,'source_id',128);
@@ -422,7 +423,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       remaining:policy.remaining,targetReached:policy.targetReached,status:campaign.status };
   }
 
-  function runInitialPoolQa(input) {
+  function runInitialPoolQa(input){return withActivity(input?.campaignId,'qa',()=>runInitialPoolQaImpl(input));}
+  function runInitialPoolQaImpl(input) {
     plainObject(input,'Initial QA request');const campaign=requireCampaign(requiredString(input.campaignId,'campaignId',128));
     const categoryKey=requiredString(input.categoryKey,'categoryKey',128);
     const profileVersion=requiredString(input.categoryProfileVersion,'categoryProfileVersion',128);
@@ -471,7 +473,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       checks:run.checks,failureCodes:run.failureCodes,durationMs:run.durationMs};
   }
 
-  function activateInitialPool(input) {
+  function activateInitialPool(input){return withActivity(input?.campaignId,'activation',()=>activateInitialPoolImpl(input));}
+  function activateInitialPoolImpl(input) {
     plainObject(input,'Initial activation request');const campaignId=requiredString(input.campaignId,'campaignId',128);
     const categoryKey=requiredString(input.categoryKey,'categoryKey',128),profileVersion=requiredString(input.categoryProfileVersion,'categoryProfileVersion',128);
     const requestId=requiredString(input.requestId,'requestId',128),parametersHash=hash({campaignId,categoryKey,profileVersion});
@@ -839,6 +842,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       '当前Catalog RPA上下文不是Operator Manual Bind模式。',{ code:'OPERATOR_MANUAL_CONTEXT_MISMATCH' });
     return context;
   }
+
+  function withActivity(campaignId,kind,fn){if(!activityRegistry||!campaignId)return fn();const queue=repository.listRpaQueues(String(campaignId)).find(row=>['opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(row.status));if(!queue)return fn();const token=activityRegistry.enter({campaignId:String(campaignId),queueId:queue.id},kind);try{return fn();}finally{activityRegistry.leave(token);}}
 
   const api={ createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
