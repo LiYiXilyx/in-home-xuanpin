@@ -11,3 +11,14 @@ test('claim recovery API exposes blockers and requires local origin for mutation
   const headers={'content-type':'application/json',origin:base};response=await fetch(`${base}/api/catalog/operator/rpa-claims/c1/inspections`,{method:'POST',headers,body:JSON.stringify({previous_inspection_id:null})});assert.equal(response.status,201);
   response=await fetch(`${base}/api/catalog/operator/rpa-claims/c1/end-stale`,{method:'POST',headers,body:JSON.stringify({request_id:'r1'})});assert.equal(response.status,200);assert.equal(calls.length,2);
 });
+
+test('claim recovery API maps stale recheck conflicts to HTTP 409',async t=>{
+  const staleError=Object.assign(new Error('Claim在执行瞬间未严格确认stale。'),{code:'STALE_CLAIM_NOT_CONFIRMED'});
+  const controller={endStaleClaim:()=>{throw staleError;}};
+  const router=createRouter({catalogController:controller,serveStatic:()=>{},statusService:{},browserController:{},jobController:{},reviewController:{},reviewQueueController:{},exportController:{},testController:{},environment:{name:'test',testMode:true},logError:()=>{}}),server=http.createServer(router);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const response=await fetch(`${base}/api/catalog/operator/rpa-claims/c1/end-stale`,{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({request_id:'r1'})});
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).error.code,'STALE_CLAIM_NOT_CONFIRMED');
+});
