@@ -1,7 +1,7 @@
 import { createCatalogApi } from './api.js';
 import { createCatalogState,patchCatalogState,snapshotCatalogState } from './state.js';
 import { buildCreatePayload,buildInitialActivationPayload,buildInitialCreatePayload,buildInitialQaPayload,
-  calculateTarget,createRequestIdentity,initialOperatorViewModel,operatorErrorMessage } from './model.js';
+  buildOperatorCategoryDraft,calculateTarget,createRequestIdentity,initialOperatorViewModel,operatorErrorMessage } from './model.js';
 
 const mounts=new WeakMap();
 let currentController=null;
@@ -12,6 +12,25 @@ export function catalogPanelMarkup(){return `
       <div><p class="eyebrow">MANUAL BIND</p><h2 id="catalog-panel-title">新建采集任务</h2></div>
       <span class="catalog-hint">创建后仍需在 Temu 页面人工检测、绑定和采集</span>
     </div>
+    <button id="catalog-add-category" class="catalog-add-category" type="button">添加新类目</button>
+    <section id="catalog-onboarding" class="catalog-onboarding" hidden>
+      <h3>Temu 新类目首次采集向导</h3>
+      <form id="catalog-onboarding-form" class="catalog-onboarding-form">
+        <label class="catalog-field">显示名称<input id="catalog-onboarding-display-name" required></label>
+        <label class="catalog-field">Temu 页面类目名称<input id="catalog-onboarding-page-category" required></label>
+        <label class="catalog-field">英文别名（每行一个）<textarea id="catalog-onboarding-aliases" required></textarea></label>
+        <label class="catalog-field">父类目<input id="catalog-onboarding-parent" required></label>
+        <label class="catalog-field">面包屑（每行一个）<textarea id="catalog-onboarding-breadcrumbs" required></textarea></label>
+        <label class="catalog-field catalog-onboarding-url">Temu 类目 URL<input id="catalog-onboarding-listing-url" type="url" required></label>
+        <button id="catalog-onboarding-validate" type="submit">验证类目配置</button>
+      </form>
+      <div id="catalog-onboarding-validation" class="catalog-onboarding-validation" hidden>
+        <p>Category Key：<strong id="catalog-onboarding-category-key">—</strong></p>
+        <p>Profile Version：<strong id="catalog-onboarding-profile-version">—</strong></p>
+        <p id="catalog-onboarding-capabilities">—</p>
+        <button id="catalog-onboarding-open-listing" type="button">打开 Temu 类目页</button>
+      </div>
+    </section>
     <form id="catalog-create-form" class="catalog-form">
       <label class="catalog-field">Category<select id="catalog-category-select" required></select></label>
       <label class="catalog-field">Category Profile<select id="catalog-profile-select" required></select></label>
@@ -50,7 +69,7 @@ export function catalogPanelMarkup(){return `
   </section>`;}
 
 export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis.fetch,scheduler=globalThis,api=null,
-  randomUUID=defaultRandomUUID}={}){
+  randomUUID=defaultRandomUUID,openWindow=url=>globalThis.open?.(url,'_blank','noopener')}={}){
   if(!root||typeof root!=='object')throw coded('CATALOG_ROOT_REQUIRED','缺少 Catalog mount root。');
   const existing=mounts.get(root);if(existing)return existing;
   root.innerHTML=catalogPanelMarkup();
@@ -98,7 +117,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(currentController===controller)currentController=null;}
   };
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
-    getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},applyRemote,refresh});
+    openWindow,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},applyRemote,refresh});
   mounts.set(root,controller);currentController=controller;
   void refresh();catalogPollingTimer=scheduler.setInterval(()=>{void refresh({silent:true});},Number(pollIntervalMs));
   return controller;
@@ -121,7 +140,13 @@ function collectElements(root){
     currentId:byId('current-campaign-id'),activePoolId:byId('active-pool-id'),baseline:byId('current-baseline'),target:byId('current-target'),
     unique:byId('live-unique-count'),remaining:byId('current-remaining'),status:byId('current-status'),binding:byId('current-binding'),
     initialActions:byId('initial-actions'),quantityMode:byId('quantity-mode'),qaStatus:byId('qa-status'),qa:byId('run-initial-qa'),
-    activate:byId('activate-initial-pool'),activationResult:byId('activation-result')};
+    activate:byId('activate-initial-pool'),activationResult:byId('activation-result'),addCategory:byId('add-category'),
+    onboarding:byId('onboarding'),onboardingForm:byId('onboarding-form'),onboardingDisplayName:byId('onboarding-display-name'),
+    onboardingPageCategory:byId('onboarding-page-category'),onboardingAliases:byId('onboarding-aliases'),onboardingParent:byId('onboarding-parent'),
+    onboardingBreadcrumbs:byId('onboarding-breadcrumbs'),onboardingListingUrl:byId('onboarding-listing-url'),
+    onboardingValidate:byId('onboarding-validate'),onboardingValidation:byId('onboarding-validation'),
+    onboardingCategoryKey:byId('onboarding-category-key'),onboardingProfileVersion:byId('onboarding-profile-version'),
+    onboardingCapabilities:byId('onboarding-capabilities'),onboardingOpenListing:byId('onboarding-open-listing')};
 }
 
 function bindCatalogHandlers(context){const {elements}=context;if(!elements.form)return;
@@ -131,7 +156,25 @@ function bindCatalogHandlers(context){const {elements}=context;if(!elements.form
   elements.campaignName.addEventListener('input',()=>context.setCreateRequestId(null));
   elements.form.addEventListener('submit',event=>createCampaign(event,context));
   elements.qa.addEventListener('click',()=>runQa(context));elements.activate.addEventListener('click',()=>activatePool(context));
+  elements.addCategory.addEventListener('click',()=>{patchCatalogState(context.state,{onboarding:{...context.state.onboarding,
+    open:!context.state.onboarding.open}});context.render();});
+  elements.onboardingForm.addEventListener('submit',event=>validateOnboarding(event,context));
+  elements.onboardingOpenListing.addEventListener('click',()=>openOnboardingListing(context));
 }
+
+async function validateOnboarding(event,context){event.preventDefault();const {state,api,elements}=context;
+  patchCatalogState(state,{loading:{...state.loading,onboardingValidate:true},error:null});context.render();
+  try{const draft=buildOperatorCategoryDraft({displayName:elements.onboardingDisplayName.value,
+      pageCategoryName:elements.onboardingPageCategory.value,aliases:elements.onboardingAliases.value,
+      parentCategory:elements.onboardingParent.value,breadcrumbs:elements.onboardingBreadcrumbs.value,
+      listingUrl:elements.onboardingListingUrl.value});
+    const response=await api.validateOperatorProfile(draft);patchCatalogState(state,{onboarding:{...state.onboarding,draft,
+      validation:response.profile,registered:null,profileSaved:false,campaignCreated:false}});
+  }catch(error){context.setError(error);}
+  finally{patchCatalogState(state,{loading:{...state.loading,onboardingValidate:false}});context.render();}
+}
+function openOnboardingListing(context){const url=context.state.onboarding.validation?.listing_url;
+  if(!url)throw coded('CATEGORY_PROFILE_NOT_VALIDATED','请先验证类目配置。');context.openWindow(url);}
 
 async function createCampaign(event,context){event.preventDefault();const {state,api,elements}=context;
   patchCatalogState(state,{loading:{...state.loading,create:true},error:null});context.render();
@@ -179,7 +222,17 @@ function renderCatalogPanel({root,elements,state}){if(!elements.form)return;
   elements.create.disabled=state.loading.create||!(profile?.available||profile?.initial_pool_available);
   const busy=Object.values(state.loading).some(Boolean);elements.loading.hidden=!busy;
   elements.error.hidden=!state.error;elements.error.textContent=state.error?.message??'';
+  renderOnboarding(elements,state);
   renderCurrent(elements,state);
+}
+
+function renderOnboarding(elements,state){const onboarding=state.onboarding,profile=onboarding.validation;
+  elements.onboarding.hidden=!onboarding.open;elements.onboardingValidation.hidden=!profile;
+  elements.onboardingValidate.disabled=state.loading.onboardingValidate;
+  elements.onboardingCategoryKey.textContent=profile?.category_key??'—';elements.onboardingProfileVersion.textContent=profile?.category_profile_version??'—';
+  elements.onboardingCapabilities.textContent=profile
+    ?'Raw Capture：READY · Initial Pool：READY · Classification：BLOCKED · Opportunity：BLOCKED':'—';
+  elements.onboardingOpenListing.disabled=!profile;
 }
 
 function renderCategoryOptions({root,elements,state}){const values=[...new Set(state.profiles.map(row=>row.category_key))],previous=elements.category.value;

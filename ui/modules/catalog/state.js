@@ -1,9 +1,10 @@
 const STATE_KEYS=new Set(['profiles','selectedProfile','currentCampaign','currentPool','quantityPolicy',
-  'initialQa','activation','loading','error','mounted','lastRefreshedAt']);
+  'initialQa','activation','onboarding','loading','error','mounted','lastRefreshedAt']);
 
 export function createCatalogState(){return{
   profiles:[],selectedProfile:null,currentCampaign:null,currentPool:null,quantityPolicy:null,initialQa:null,
-  activation:null,loading:{profiles:false,current:false,create:false,qa:false,activation:false},error:null,
+  activation:null,onboarding:{open:false,draft:null,validation:null,registered:null,profileSaved:false,campaignCreated:false},
+  loading:{profiles:false,current:false,create:false,qa:false,activation:false,onboardingValidate:false,onboardingSave:false},error:null,
   mounted:false,lastRefreshedAt:null
 };}
 

@@ -12,6 +12,8 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
   };
   return{
     listProfiles:()=>request('/api/catalog/operator/profiles'),
+    validateOperatorProfile:body=>request('/api/catalog/operator/category-profiles/validate',{method:'POST',body}),
+    registerOperatorProfile:body=>request('/api/catalog/operator/category-profiles',{method:'POST',body}),
     currentCampaign:()=>request('/api/catalog/operator-campaign/current'),
     createExpansion:body=>request('/api/catalog/operator-campaigns',{method:'POST',body}),
     createInitial:body=>request('/api/catalog/operator/initial-campaigns',{method:'POST',body}),

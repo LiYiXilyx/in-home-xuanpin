@@ -8,6 +8,14 @@
 .catalog-form input[readonly] { color:#526078;background:#f3f5f8; }
 .catalog-form output { display:flex;align-items:center;background:#faf8f3; }
 .catalog-form button { min-height:40px; }
+.catalog-add-category { margin:0 0 14px; }
+.catalog-onboarding { margin-bottom:16px;padding:14px;border:1px solid #d8dee8;border-radius:10px;background:#f7f9fc; }
+.catalog-onboarding h3 { margin:0 0 12px;font-size:15px; }
+.catalog-onboarding-form { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:end; }
+.catalog-onboarding-form input,.catalog-onboarding-form textarea { min-height:40px;width:100%;border:1px solid #d9d4ca;border-radius:9px;padding:9px 10px;background:#fff;font:inherit; }
+.catalog-onboarding-form textarea { min-height:72px;resize:vertical; }
+.catalog-onboarding-url { grid-column:span 2; }
+.catalog-onboarding-validation { margin-top:12px;padding:11px;border:1px solid #a9d4c3;border-radius:9px;background:#ebf7f1;font-size:12px;overflow-wrap:anywhere; }
 .catalog-loading { margin-top:12px;color:var(--muted);font-size:12px;font-weight:700; }
 .catalog-error { margin-top:12px;padding:10px 12px;border:1px solid #e8b1ae;border-radius:9px;color:#812a2a;background:#fff0ef;font-size:13px; }
 .catalog-current { margin-top:16px;padding-top:15px;border-top:1px solid var(--line); }
@@ -21,4 +29,4 @@
 .catalog-qa-status { flex:1 1 220px;font-size:12px;font-weight:700; }
 .catalog-activation-result { margin-top:10px;padding:12px;border:1px solid #a9d4c3;border-radius:10px;background:#ebf7f1;color:#126246;font-size:12px;font-weight:700;white-space:pre-wrap; }
 @media(max-width:1100px) { .catalog-form { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media(max-width:700px) { .catalog-heading { flex-direction:column; }.catalog-form,.catalog-current-grid { grid-template-columns:1fr; } }
+@media(max-width:700px) { .catalog-heading { flex-direction:column; }.catalog-form,.catalog-current-grid,.catalog-onboarding-form { grid-template-columns:1fr; }.catalog-onboarding-url { grid-column:auto; } }

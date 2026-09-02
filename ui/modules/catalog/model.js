@@ -14,7 +14,9 @@ const ERROR_MESSAGES=Object.freeze({
   INITIAL_POOL_ACTIVATION_IN_PROGRESS:'首个商品池正在建立，请等待完成，不要重复操作。',
   INITIAL_POOL_ALREADY_EXISTS:'该 Category 已存在商品池，请刷新后使用新增采集流程。',
   INITIAL_POOL_HISTORY_EXISTS:'该 Category 存在商品池历史，不能再次建立首池。',
-  INITIAL_CATEGORY_STATE_INCONSISTENT:'该 Category 存在无 Pool 对应的 membership，请停止并检查数据。'
+  INITIAL_CATEGORY_STATE_INCONSISTENT:'该 Category 存在无 Pool 对应的 membership，请停止并检查数据。',
+  CATEGORY_PROFILE_LATIN_ALIAS_REQUIRED:'中文类目必须至少填写一个英文别名，用于生成稳定 Category identity。',
+  CATEGORY_PROFILE_GENERATED_FIELD_FORBIDDEN:'固定市场、采集模式和 Profile identity 由服务器生成，不允许手工覆盖。'
 });
 
 export function calculateTarget(profile,requestedNewCount){
@@ -46,6 +48,12 @@ export function operatorErrorMessage(error={}){const code=String(error.code??'OP
   return`${code}：${ERROR_MESSAGES[code]??error.message??'创建采集任务失败，请停止并检查。'}`;}
 export function createRequestIdentity({randomUUID}={}){if(typeof randomUUID!=='function')throw new Error('无法生成创建请求标识。');
   const value=String(randomUUID()).trim();if(!value)throw new Error('无法生成创建请求标识。');return value;}
+export function buildOperatorCategoryDraft({displayName,pageCategoryName,aliases,parentCategory,breadcrumbs,listingUrl}={}){
+  const lines=value=>String(value??'').split(/\r?\n|,/).map(row=>row.trim()).filter(Boolean);
+  return{display_name:String(displayName??'').trim(),page_category_name:String(pageCategoryName??'').trim(),
+    category_aliases:lines(aliases),parent_category:String(parentCategory??'').trim(),breadcrumbs:lines(breadcrumbs),
+    listing_url:String(listingUrl??'').trim()};
+}
 function positiveInteger(value){return Number.isInteger(Number(value))&&Number(value)>0;}
 function nonNegativeInteger(value){return Number.isInteger(Number(value))&&Number(value)>=0;}
 function buildInitialActionPayload({campaignId,profile,requestId}={}){const campaign=String(campaignId??'').trim(),identity=String(requestId??'').trim();
