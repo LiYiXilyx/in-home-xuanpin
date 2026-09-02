@@ -11,6 +11,8 @@ import { createNavigationResolutionRepository } from '../db/repositories/navigat
 import { createCatalogPoolReadRepository } from '../db/repositories/catalog-pool-read-repository.mjs';
 import { createCatalogCampaignService } from '../modules/catalog-scale/catalog-campaign-service.mjs';
 import { createCategoryProfileRegistry } from '../modules/catalog-scale/category-profile-registry.mjs';
+import { createOperatorCategoryProfileStore } from '../modules/catalog-scale/operator-category-profile-store.mjs';
+import { normalizeOperatorCategoryProfile } from '../modules/catalog-scale/operator-category-profile.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
 import { createReviewQueueService } from '../modules/reviews/review-queue-service.mjs';
 import { createBrowserController } from './controllers/browser-controller.mjs';
@@ -65,8 +67,18 @@ export async function createOperationsServer(options={}) {
   const catalogService=createCatalogCampaignService(db);
   const catalogPoolReadRepository=createCatalogPoolReadRepository(db);
   const categoryProfileDirectory=path.resolve(options.categoryProfileDirectory ?? path.join(projectDir,'config/categories'));
-  const categoryProfileRegistry=options.categoryProfileRegistry ?? createCategoryProfileRegistry({ directory:categoryProfileDirectory });
-  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository });
+  const configRoot=path.dirname(config.configPath??options.configPath??path.join(projectDir,'config.json'));
+  const operatorProfileDirectory=path.resolve(options.operatorProfileDirectory??path.join(configRoot,'data/operator-category-profiles'));
+  const categoryProfileRegistry=options.categoryProfileRegistry ?? createCategoryProfileRegistry({
+    builtInDirectory:categoryProfileDirectory,operatorDirectory:operatorProfileDirectory
+  });
+  const builtInRegistry={async list(){const result=await categoryProfileRegistry.list();return{
+    profiles:result.profiles.filter(profile=>profile.profile_origin==='BUILT_IN')
+  };}};
+  const operatorCategoryProfileStore=options.operatorCategoryProfileStore??createOperatorCategoryProfileStore({
+    root:operatorProfileDirectory,builtInRegistry,validateInput:normalizeOperatorCategoryProfile
+  });
+  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore });
   const sourcingRoot=path.dirname(config.app.databasePath);
   const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');
   migrateSourcingDatabase({databasePath:sourcingDatabasePath});

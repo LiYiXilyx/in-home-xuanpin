@@ -47,16 +47,22 @@ export function createOperatorCategoryProfileStore({root,builtInRegistry,validat
 }
 
 async function ensureSafeRoot(root){
-  const parent=path.dirname(root);
-  const parentReal=await realDirectory(parent);
-  if(await exists(root)){
-    const stat=await fs.lstat(root);
+  const {ancestor,missing}=await nearestExistingAncestor(root);
+  const ancestorReal=await realDirectory(ancestor);
+  for(const directory of missing.reverse()){
+    try{await fs.mkdir(directory,{mode:0o700});}
+    catch(error){if(error?.code!=='EEXIST')throw error;}
+    const stat=await fs.lstat(directory);
     if(stat.isSymbolicLink()||!stat.isDirectory())throw unsafe('Operator Profile目录不安全。');
-  }else await fs.mkdir(root,{mode:0o700});
+  }
   const canonical=await fs.realpath(root);
-  if(!contained(parentReal,canonical))throw unsafe('Operator Profile目录逃逸。');
+  if(!contained(ancestorReal,canonical))throw unsafe('Operator Profile目录逃逸。');
   return canonical;
 }
+
+async function nearestExistingAncestor(root){let current=root;const missing=[];
+  while(!(await exists(current))){missing.push(current);const parent=path.dirname(current);if(parent===current)throw unsafe('Operator Profile目录无安全父级。');current=parent;}
+  return{ancestor:current,missing};}
 
 function registrationPaths(root,requestId,filename){
   const requestName=`${hashText(requestId)}.json`;

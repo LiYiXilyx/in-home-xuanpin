@@ -1,6 +1,6 @@
 import { AppError } from '../../shared/errors.mjs';
 
-export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository }) {
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore }) {
   return {
     poolProducts(poolVersionId,searchParams){return catalogPoolReadRepository.listPoolProducts({poolVersionId,
       categoryKey:searchParams.get('category_key'),categoryProfileVersion:searchParams.get('category_profile_version')});},
@@ -8,6 +8,10 @@ export function createCatalogController({ catalogService,categoryProfileRegistry
       const {profiles,invalid}=await categoryProfileRegistry.list();
       return {profiles:profiles.map(profile=>catalogService.describeOperatorProfile(profile)),invalid};
     },
+    validateOperatorCategoryProfile(body){return operatorCategoryProfileStore.validate(profileDraft(body));},
+    registerOperatorCategoryProfile(body){return operatorCategoryProfileStore.register({
+      requestId:body?.request_id,...profileDraft(body)
+    });},
     async createOperatorCampaign(body) {
       const profile=await categoryProfileRegistry.resolve({ categoryKey:body?.category_key,
         categoryProfileVersion:body?.category_profile_version });
@@ -60,6 +64,8 @@ export function createCatalogController({ catalogService,categoryProfileRegistry
     }
   };
 }
+
+function profileDraft(body={}){const {request_id:ignored,...draft}=body??{};return draft;}
 
 function mapOperatorCurrent(context,qa=null) {
   if (!context) return null;
