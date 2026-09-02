@@ -22,14 +22,16 @@ export function evaluateInitialPoolQa(input) {
   gate('binding_evidence','INITIAL_BINDING_EVIDENCE_INVALID',()=>batchContexts.every(row=>Boolean(row.bindingFingerprint)));
   gate('required_product_fields','INITIAL_DATA_QUALITY_FAILED',()=>qualityPassed(candidateItems,
     profile.business_rules?.initial_pool_quality??QUALITY_FLOORS));
-  gate('taxonomy_binding_structure','INITIAL_TAXONOMY_BINDING_INVALID',()=>
+  const captureOnly=profile.profile_kind==='CAPTURE_ONLY';
+  if(!captureOnly)gate('taxonomy_binding_structure','INITIAL_TAXONOMY_BINDING_INVALID',()=>
     ['classify','fine_classify','opportunity'].every(pipeline=>Boolean(profile.taxonomy_bindings?.[pipeline])));
   gate('membership_unambiguous','INITIAL_MEMBERSHIP_AMBIGUOUS',()=>!membershipEvidence.ambiguous);
   gate('membership_isolation','INITIAL_CROSS_CATEGORY_CONTAMINATION',()=>!membershipEvidence.crossCategoryContamination);
   gate('sqlite_integrity','SQLITE_INTEGRITY_FAILED',()=>input.integrityCheck()==='ok');
   gate('sqlite_foreign_keys','SQLITE_FOREIGN_KEY_FAILED',()=>input.foreignKeyCheck().length===0);
   const failureCodes=[...new Set(checks.filter(check=>!check.passed).map(check=>check.errorCode))];
-  return {passed:failureCodes.length===0,checks,failureCodes,durationMs:checks.reduce((sum,check)=>sum+check.durationMs,0)};
+  return {passed:failureCodes.length===0,checks,failureCodes,durationMs:checks.reduce((sum,check)=>sum+check.durationMs,0),
+    categorySpecificPolicy:{status:captureOnly?'NOT_CONFIGURED':'ENABLED'},rawPoolActivationAllowed:true};
 }
 
 function timedGate(name,errorCode,operation,nowMs) {

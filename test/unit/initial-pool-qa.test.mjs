@@ -36,3 +36,14 @@ test('complete deterministic candidate passes every mandatory Gate',()=>{
   const result=evaluateInitialPoolQa(fixture());assert.equal(result.passed,true);assert.deepEqual(result.failureCodes,[]);
   assert.ok(result.checks.every(check=>check.durationMs>=0));
 });
+
+test('capture-only QA audits category policy as not configured but allows raw activation',()=>{
+  const value=fixture();
+  delete value.profile.taxonomy_bindings;delete value.profile.business_rules;
+  value.profile.profile_kind='CAPTURE_ONLY';value.profile.taxonomy={status:'UNCONFIGURED'};
+  const result=evaluateInitialPoolQa(value);
+  assert.equal(result.passed,true);
+  assert.deepEqual(result.categorySpecificPolicy,{status:'NOT_CONFIGURED'});
+  assert.equal(result.rawPoolActivationAllowed,true);
+  assert.equal(result.checks.some(check=>check.name==='taxonomy_binding_structure'),false);
+});

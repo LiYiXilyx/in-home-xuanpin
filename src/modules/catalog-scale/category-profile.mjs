@@ -26,6 +26,7 @@ export async function loadCategoryProfile(profilePath) {
 
 export function validateCategoryProfile(input) {
   object(input,'category_profile');
+  if(input.profile_schema_version===2||input.profile_kind==='CAPTURE_ONLY')return validateCaptureOnlyProfile(input);
   const profile={
     category_key:slug(input.category_key,'category_key'),
     category_profile_version:required(input.category_profile_version,'category_profile_version'),
@@ -51,6 +52,40 @@ export function validateCategoryProfile(input) {
     if (!profile[field]) fail(field,'Catalog Scale V2 当前阶段必须为 true');
   }
   return Object.freeze(profile);
+}
+
+function validateCaptureOnlyProfile(input){
+  if(input.profile_schema_version!==2||input.profile_origin!=='OPERATOR_MANAGED'||input.profile_kind!=='CAPTURE_ONLY')
+    fail('profile_kind','capture-only metadata 不匹配');
+  if(input.taxonomy?.status!=='UNCONFIGURED')fail('taxonomy.status','必须为 UNCONFIGURED');
+  const capabilities=input.capabilities;
+  object(capabilities,'capabilities');
+  if(capabilities.raw_capture_available!==true||capabilities.initial_pool_available!==true
+    ||capabilities.classification_available!==false||capabilities.opportunity_available!==false)
+    fail('capabilities','capture-only capability contract 不匹配');
+  if(input.site_country!=='DE'||input.language!=='en'||input.currency!=='EUR'||input.sort_order!=='Top Sales'
+    ||input.capture_mode!=='MANUAL_BIND_PASSIVE_CAPTURE'||input.quantity_mode!=='OPEN_ENDED')
+    fail('market','capture-only 固定契约不匹配');
+  const aliases=stringArray(input.category_aliases,'category_aliases',true);
+  const breadcrumbs=stringArray(input.breadcrumbs,'breadcrumbs',true);
+  const result={
+    profile_schema_version:2,profile_origin:'OPERATOR_MANAGED',profile_kind:'CAPTURE_ONLY',
+    category_key:slug(input.category_key,'category_key'),category_profile_version:required(input.category_profile_version,'category_profile_version'),
+    display_name:required(input.display_name,'display_name'),page_category_name:required(input.page_category_name,'page_category_name'),
+    category_aliases:aliases,parent_category:required(input.parent_category,'parent_category'),breadcrumbs,
+    listing_url:required(input.listing_url,'listing_url'),site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales',
+    capture_mode:'MANUAL_BIND_PASSIVE_CAPTURE',quantity_mode:'OPEN_ENDED',taxonomy:Object.freeze({status:'UNCONFIGURED'}),
+    capabilities:Object.freeze({raw_capture_available:true,initial_pool_available:true,classification_available:false,opportunity_available:false}),
+    membership_scope:validateMembershipScope(input.membership_scope??{
+      site_country:'DE',language:'en',currency:'EUR',primary_category:input.parent_category,
+      subcategory:input.page_category_name,sort_order:'Top Sales'
+    },'membership_scope'),
+    legacy_membership_scopes:validateLegacyMembershipScopes(input),page_health:validatePageHealth(input),
+    navigation:validateNavigation(input.navigation??{
+      entry_method:'human_navigation_only',breadcrumbs:input.breadcrumbs,category_confirmation_gate:true
+    })
+  };
+  return Object.freeze(result);
 }
 
 export function resolveTaxonomyBinding(profile,pipeline) {
@@ -152,6 +187,9 @@ function validateInitialPoolQuality(value) {
     if(!Number.isFinite(number)||number<floor||number>1)fail(`business_rules.initial_pool_quality.${field}`,`必须位于 ${floor} 到 1`);result[field]=number;}
   return Object.freeze(result);
 }
+
+function stringArray(value,path,nonempty=false){if(!Array.isArray(value)||nonempty&&!value.length)fail(path,'必须是非空数组');
+  return Object.freeze(value.map((item,index)=>required(item,`${path}[${index}]`)));}
 
 function object(value,path) { if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path,'必须是对象'); }
 function required(value,path) { const result=String(value ?? '').trim();if (!result) fail(path,'不能为空');return result; }

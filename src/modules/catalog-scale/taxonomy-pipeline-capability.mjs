@@ -14,3 +14,15 @@ export function hasTaxonomyPipelineImplementation(profile, pipeline) {
     && expected.taxonomy_version === actual.taxonomy_version
     && expected.rule_version === actual.rule_version);
 }
+
+export function assertTaxonomyPipelineAvailable(profile,pipeline){
+  if(profile?.profile_kind==='CAPTURE_ONLY'||profile?.taxonomy?.status==='UNCONFIGURED'){
+    const error=new Error(`Category taxonomy pipeline 未配置：${pipeline}`);
+    error.code='CATEGORY_TAXONOMY_UNCONFIGURED';error.details={categoryKey:profile?.category_key,pipeline};throw error;
+  }
+  if(!hasTaxonomyPipelineImplementation(profile,pipeline)){
+    const error=new Error(`Category taxonomy pipeline 不可用：${pipeline}`);
+    error.code='CATEGORY_TAXONOMY_UNAVAILABLE';throw error;
+  }
+  return true;
+}
