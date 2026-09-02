@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { transaction } from '../../db/client.mjs';
 import { createCatalogCampaignRepository } from '../../db/repositories/catalog-campaign-repository.mjs';
+import { createCatalogClaimRecoveryRepository } from '../../db/repositories/catalog-claim-recovery-repository.mjs';
 import { createInitialPoolRepository } from '../../db/repositories/initial-pool-repository.mjs';
 import { AppError } from '../../shared/errors.mjs';
 import { canonicalProductUrl,createId } from '../../shared/ids.mjs';
@@ -29,9 +30,11 @@ const FULL_REFRESH_EXTENSION_MODE='FULL_REFRESH_EXTENSION_AUTO';
 const LOCAL_EXTENSION_MODES=new Set([...MANUAL_PASSIVE_CAPTURE_ALIASES,FULL_REFRESH_EXTENSION_MODE]);
 
 export function createCatalogCampaignService(db,{ now=() => new Date().toISOString(),screenElectronicRisk=screenCatalogElectronicRisk,
-  evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={} }={}) {
+  evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={},claimInspectionService=null }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
   const initialRepository=createInitialPoolRepository(db,{ now });
+  const blockerRepository=createCatalogClaimRecoveryRepository(db,{now});
+  const claimBlockers=()=>claimInspectionService?.listBlockers?.() ?? completeBlockerList(blockerRepository.listBlockerRows());
 
   function createCampaignRecord({ id=null,name,campaignType='expansion',profile,baselinePoolCount=0,targetCount=null,browserContext=null,
     configExtras={} }) {
@@ -75,7 +78,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       const replay=repository.findOperatorCampaignByRequestId(requestId);
       if (replay) return exactOperatorReplay(replay,{ profile,requestedNewCount,campaignName,requestId });
       if (repository.listActiveRpaQueues().length) throw new AppError('已有活跃Catalog RPA来源，拒绝创建或猜测恢复。',{
-        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true,details:claimBlockers() });
       if (repository.findCampaignByName(campaignName)) throw new AppError('Campaign名称已存在。',{
         code:'CAMPAIGN_NAME_CONFLICT',details:{ campaignName } });
       const consistency=repository.getBaselineConsistency(profile);
@@ -129,7 +132,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       const replayId=initialRepository.findInitialByRequestId(requestId);
       if (replayId) return exactInitialReplay(requireCampaign(replayId),{ profile,campaignName,requestId });
       if (repository.listActiveRpaQueues().length) throw new AppError('已有活跃Catalog RPA来源，拒绝创建或猜测恢复。',{
-        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true });
+        code:'CATALOG_RPA_CLAIM_CONFLICT',retriable:true,details:claimBlockers() });
       if (repository.findCampaignByName(campaignName)) throw new AppError('Campaign名称已存在。',{
         code:'CAMPAIGN_NAME_CONFLICT',details:{ campaignName } });
       const eligibility=initialRepository.getInitialEligibility(profile);
@@ -907,6 +910,7 @@ function normalizeCard(raw,goodsId,capturedAt) {
     reviewable:raw.reviewable,qualityStatus:raw.quality_status ?? 'pending',capturedAt,raw:evidence };
 }
 function normalizeGoodsId(value) { const result=String(value ?? '').trim();if (!/^\d+$/.test(result)) throw new AppError('Catalog card缺少有效goods_id。',{ code:'INVALID_GOODS_ID' });return result; }
+function completeBlockerList(rows){const allBlockers=rows.map(row=>({...row,staleDetermination:'STALE_NOT_PROVEN'}));return {primaryBlocker:allBlockers[0]??null,allBlockers};}
 function numberOrNull(value) { const result=Number(value);return value===null || value===undefined || value==='' || !Number.isFinite(result) ? null:result; }
 function integerOrNull(value) { const result=numberOrNull(value);return result===null?null:Math.trunc(result); }
 function gateValue(campaign) { return campaign.targetGate==='business_eligible_count' ? campaign.businessEligibleCount:

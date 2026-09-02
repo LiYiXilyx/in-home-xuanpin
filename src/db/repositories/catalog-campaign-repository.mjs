@@ -838,7 +838,7 @@ export function createCatalogCampaignRepository(db,{ now=() => new Date().toISOS
   function claimRpaQueue(id,claimToken) {
     const timestamp=now();
     const result=db.prepare(`UPDATE catalog_rpa_queue SET status='opening',claim_token=?,claimed_at=?,heartbeat_at=?,
-      attempt_count=attempt_count+1,last_error_code=NULL,last_error_message=NULL,updated_at=?
+      claim_generation=claim_generation+1,attempt_count=attempt_count+1,last_error_code=NULL,last_error_message=NULL,updated_at=?
       WHERE id=? AND status='pending'`).run(claimToken,timestamp,timestamp,timestamp,id);
     if (Number(result.changes)!==1) return null;
     const queue=getRpaQueue(id);
