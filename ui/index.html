@@ -22,13 +22,14 @@
     <section id="yingdao-module-root" aria-label="1688 / 影刀寻源"></section>
 
     <section class="controls panel">
-      <div class="control-group">
-        <span class="group-title">准备</span>
+      <details class="control-group legacy-browser-tools">
+        <summary class="group-title">旧版 / 高级浏览器连接</summary>
+        <p>Manual Bind 手工采集不需要连接 CDP。</p>
         <button id="openBrowser" class="primary">打开采集 Chrome</button>
         <button id="newBrowser">新建采集 Chrome</button>
-        <button id="connectExisting">连接已有 Chrome</button>
+        <button id="connectExisting">连接已有 Chrome（Legacy External CDP）</button>
         <button id="validatePage">验证当前页面</button>
-      </div>
+      </details>
       <div class="control-group">
         <span class="group-title">开始采集</span>
         <button data-start="100">开始 100</button>

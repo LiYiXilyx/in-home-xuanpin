@@ -13,6 +13,7 @@ export function catalogPanelMarkup(){return `
       <span class="catalog-hint">创建后仍需在 Temu 页面人工检测、绑定和采集</span>
     </div>
     <button id="catalog-add-category" class="catalog-add-category" type="button">添加新类目</button>
+    <section id="catalog-manual-bind-steps" class="catalog-manual-bind-steps"><h3>新类目手工采集步骤</h3><ol><li>创建首次任务</li><li>打开 Temu 页面</li><li>扩展检测当前页面</li><li>绑定当前页面</li><li>人工滚动 / See more</li><li>采集当前页面</li></ol><p>Manual Bind 手工采集不需要连接 CDP；不会自动滚动、导航或点击 See more。</p></section>
     <section id="catalog-onboarding" class="catalog-onboarding" hidden>
       <h3>Temu 新类目首次采集向导</h3>
       <form id="catalog-onboarding-form" class="catalog-onboarding-form">

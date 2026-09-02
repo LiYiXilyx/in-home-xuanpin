@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';
+const html=fs.readFileSync(new URL('../../ui/index.html',import.meta.url),'utf8'),panel=fs.readFileSync(new URL('../../ui/modules/catalog/panel.js',import.meta.url),'utf8');
+test('legacy CDP is advanced-only while Manual Bind publishes the extension workflow',()=>{assert.match(html,/旧版 \/ 高级浏览器连接/);assert.match(html,/Manual Bind 手工采集不需要连接 CDP/);for(const text of ['创建首次任务','打开 Temu 页面','扩展检测当前页面','绑定当前页面','人工滚动 / See more','采集当前页面'])assert.match(panel,new RegExp(text.replace('/','\\/')));assert.doesNotMatch(panel,/连接已有 Chrome.*(?:必须|需要).*Manual Bind/s);});
