@@ -56,7 +56,7 @@
   function numberOrNull(value){const number=Number(value);return value===null||value===undefined||value===''||!Number.isFinite(number)?null:number;}
   function contextIdentity(context){return[context?.campaign?.id??'',context?.profile?.category_key??context?.campaign?.categoryKey??'',context?.profile?.category_profile_version??context?.campaign?.categoryProfileVersion??''].join('\u001f');}
   function coded(code,message){const error=new Error(message);error.code=code;return error;}
-  async function boot(){try{const dependencies=realDependencies(),context=await dependencies.getContext();if(globalThis.TemuCatalogOverlayMode?.resolveCatalogOverlayMode(context)!=='MANUAL_BIND')return;const runner=new ManualPassiveRunner(dependencies,context);await runner.restore(context);globalThis.TemuCatalogOperatorOverlay?.mount({runner,document,sessionStorage:globalThis.sessionStorage});globalThis.TemuCatalogManualPassiveRunner=runner;}catch{}}
+  async function boot(){try{const dependencies=realDependencies(),context=await dependencies.getContext();if(globalThis.TemuCatalogOverlayMode?.resolveCatalogOverlayMode(context)!=='MANUAL_BIND')return;const runner=new ManualPassiveRunner(dependencies,context);await runner.restore(context);globalThis.TemuCatalogOperatorOverlay?.mount({runner,document});globalThis.TemuCatalogManualPassiveRunner=runner;}catch{}}
   globalThis.TemuCatalogManualPassiveRunnerModule=Object.freeze({ManualPassiveRunner,STATES,MODE,scanDom,passiveCandidates,metrics});
   if(typeof chrome!=='undefined'&&chrome.runtime&&globalThis.TemuCatalogManualBinding)boot();
 })();

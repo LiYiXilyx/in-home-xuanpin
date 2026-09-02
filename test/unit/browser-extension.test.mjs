@@ -17,13 +17,13 @@ test('Day9.5 extension is Manifest V3 with only the intended hosts and active-ta
   assert.deepEqual(manifest.content_scripts[0].js,['catalog-network-endpoints.js','temu-network-interceptor.js']);
   assert.deepEqual(manifest.content_scripts[1].js,['catalog-network-endpoints.js','catalog-network-parser.js','catalog-network-cache.js','catalog-product-merger.js','catalog-network-bridge.js']);
   assert.equal(manifest.content_scripts[1].run_at,'document_start');
-  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
+  assert.deepEqual(manifest.content_scripts[2].js,['review-loader.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js']);
   assert.equal(manifest.background.service_worker,'background.js');
   assert.equal(manifest.action.default_popup,'popup.html');
 });
 
 test('extension does not request or access browser secrets',() => {
-  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
+  const files=['manifest.json','background.js','catalog-parser.js','catalog-capture.js','catalog-overlay-mode.js','catalog-operator-view-model.js','catalog-operator-overlay.js','catalog-popup-view.js','catalog-manual-binding.js','catalog-manual-passive-runner.js','catalog-auto-runner.js','content-script.js','popup.js','temu-network-interceptor.js','catalog-network-bridge.js'].map(name => fs.readFileSync(path.join(root,'browser-extension',name),'utf8')).join('\n');
   assert.doesNotMatch(files,/\b(?:cookies|localStorage|sessionStorage|chrome\.history|chrome\.identity)\b/i);
   assert.doesNotMatch(files,/credentials\s*:\s*['"]include['"]/i);
   assert.match(files,/credentials\s*:\s*['"]omit['"]/i);
@@ -51,10 +51,11 @@ test('Manual Bind Passive Runner exposes dynamic state and has no automatic capt
   assert.doesNotMatch(script,/location\.(?:assign|replace|reload)/);assert.doesNotMatch(script,/\.click\s*\(/);assert.doesNotMatch(script,/scrollTo\s*\(/);assert.doesNotMatch(script,/scrollTop\s*=/);
 });
 
-test('operator popup renders dynamic Manual Bind fields and reserves only a scoped YingDao seam',()=>{
-  const html=fs.readFileSync(path.join(root,'browser-extension/popup.html'),'utf8'),script=fs.readFileSync(path.join(root,'browser-extension/popup.js'),'utf8');
-  for(const label of ['Category','Campaign','Profile','页面健康','Bind 状态','target / unique','新增/重复/失败','CAPTCHA/error','导出影刀任务'])assert.match(html,new RegExp(label));
-  assert.match(script,/context\.poolVersionId/);assert.match(script,/campaign\.categoryKey/);assert.match(script,/YingDao Task Export V1 接口已预留/);
+test('operator popup renders the shared dynamic Manual Bind model and no independent target state',()=>{
+  const html=fs.readFileSync(path.join(root,'browser-extension/popup.html'),'utf8'),script=fs.readFileSync(path.join(root,'browser-extension/popup.js'),'utf8'),view=fs.readFileSync(path.join(root,'browser-extension/catalog-popup-view.js'),'utf8');
+  assert.match(html,/catalog-operator-view-model\.js/);assert.match(html,/catalog-popup-view\.js/);
+  for(const label of ['当前已采集','页面检查','绑定状态','检测当前页面','绑定当前页面','采集当前页面','技术详情'])assert.match(view,new RegExp(label));
+  assert.match(script,/TemuCatalogOperatorViewModel\.build/);assert.match(script,/TemuCatalogPopupView\.renderMarkup/);assert.doesNotMatch(`${html}\n${script}\n${view}`,/target \/ unique|0 \/ 0|2147483647/);
   assert.doesNotMatch(`${html}\n${script}`,/德国站·摩托配件·Top Sales|D:\\工作项目/);
 });
 
