@@ -131,5 +131,5 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
   return true;
 });
 
-if (currentPage().isTemuProductPage) installCaptureButton();
+if (currentPage().isTemuProductPage && !document.getElementById('temu-catalog-operator-overlay')) installCaptureButton();
 setTimeout(reportStrongReviewSafetySignal,1500);

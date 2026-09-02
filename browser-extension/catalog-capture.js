@@ -117,6 +117,5 @@
   }
 
   globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,splitCards,aggregateResults,selectRequestedCards,MAX_CARDS_PER_BATCH });
-  const visibleCards=globalThis.TemuCatalogParser?.parseDocument(document,{ baseUrl:location.href }) ?? [];
-  if (visibleCards.length) installButton();
+  // Listing controls are owned by the context-selected operator overlay.
 })();
