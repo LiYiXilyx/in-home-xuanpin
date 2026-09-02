@@ -47,6 +47,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     },
     jobs: [],
     selectors: {},
+    claimRecovery: { heartbeatTimeoutMs:1800000,doubleInspectionIntervalMs:10000,bindingLeaseMs:30000,legacyNoHeartbeatMs:86400000 },
     selectionRules: {
       minPriceEur: 5,
       minRating: 4.6,

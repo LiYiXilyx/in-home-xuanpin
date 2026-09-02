@@ -21,6 +21,7 @@ export function validateConfig(config) {
     for (const field of ['cdpRequired','extensionPassiveRequired']) if (config.browser.fixedProfile[field]!==undefined && typeof config.browser.fixedProfile[field]!=='boolean') fail(`browser.fixedProfile.${field}`,'必须是布尔值');
   }
   requireObject(config.catalog, 'catalog');
+  if(config.catalog.claimRecovery!==undefined){requireObject(config.catalog.claimRecovery,'catalog.claimRecovery');for(const [field,floor] of Object.entries({heartbeatTimeoutMs:1800000,doubleInspectionIntervalMs:10000,bindingLeaseMs:30000,legacyNoHeartbeatMs:86400000})){positiveInteger(config.catalog.claimRecovery[field],`catalog.claimRecovery.${field}`);if(Number(config.catalog.claimRecovery[field])<floor)fail(`catalog.claimRecovery.${field}`,`不得低于 ${floor}`);}}
   if (config.catalog.manualPassiveCapture?.enabled) {
     if (config.catalog.manualPassiveCapture.cdpRequired!==false) fail('catalog.manualPassiveCapture.cdpRequired','正式被动采集必须为 false');
     if (config.catalog.manualPassiveCapture.extensionPassiveRequired!==true) fail('catalog.manualPassiveCapture.extensionPassiveRequired','正式被动采集必须为 true');
