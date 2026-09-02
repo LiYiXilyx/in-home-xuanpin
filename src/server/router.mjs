@@ -51,6 +51,11 @@ export function createRouter({ statusService,browserController,jobController,rev
       if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog-rpa/')) return catalogCors(response,204);
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/rpa-claim-blockers'){const result=catalogController.claimBlockers();return json(response,200,{ok:true,primary_blocker:result.primaryBlocker,all_blockers:result.allBlockers},CATALOG_HEADERS);}
+      const claimInspection=url.pathname.match(/^\/api\/catalog\/operator\/rpa-claims\/([^/]+)\/inspections$/);
+      if(request.method==='POST'&&claimInspection){assertLocalOrigin(request);const result=catalogController.inspectClaim(decodeURIComponent(claimInspection[1]),await readJson(request,16_384));return json(response,201,{ok:true,result},CATALOG_HEADERS);}
+      const endStale=url.pathname.match(/^\/api\/catalog\/operator\/rpa-claims\/([^/]+)\/end-stale$/);
+      if(request.method==='POST'&&endStale){assertLocalOrigin(request);const result=catalogController.endStaleClaim(decodeURIComponent(endStale[1]),await readJson(request,32_768));return json(response,200,{ok:true,result},CATALOG_HEADERS);}
       const poolProducts=url.pathname.match(/^\/api\/catalog\/pools\/([^/]+)\/products$/);
       if(request.method==='GET'&&poolProducts){const result=catalogController.poolProducts(decodeURIComponent(poolProducts[1]),url.searchParams);
         return json(response,200,{ok:true,...result},CATALOG_HEADERS);}
@@ -208,7 +213,7 @@ export function createRouter({ statusService,browserController,jobController,rev
       logError(error?.stack ?? error);
       const headers=url.pathname.startsWith('/api/catalog/') || url.pathname.startsWith('/api/catalog-rpa/') || url.pathname.startsWith('/api/catalog-extension/') ? CATALOG_HEADERS:
         url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
-      return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message) } },headers);
+      return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message),details:error?.details??{} } },headers);
     }
   };
 }

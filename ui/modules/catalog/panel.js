@@ -45,6 +45,7 @@ export function catalogPanelMarkup(){return `
     </form>
     <p id="catalog-loading" class="catalog-loading" hidden>Catalog 加载中…</p>
     <p id="catalog-error" class="catalog-error" role="alert" hidden></p>
+    <section id="catalog-claim-blockers" class="catalog-claim-blockers" hidden><h3>Catalog RPA 占用阻塞</h3><pre id="catalog-claim-blocker-list"></pre><button id="catalog-inspect-claim" type="button">检查占用状态</button><button id="catalog-end-stale-claim" type="button" disabled>结束陈旧占用</button></section>
     <section id="catalog-current-campaign" class="catalog-current" hidden>
       <h3 class="catalog-current-title">当前采集任务</h3>
       <dl class="catalog-current-grid">
@@ -73,7 +74,7 @@ export function catalogPanelMarkup(){return `
   </section>`;}
 
 export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis.fetch,scheduler=globalThis,api=null,
-  randomUUID=defaultRandomUUID,openWindow=url=>globalThis.open?.(url,'_blank','noopener')}={}){
+  randomUUID=defaultRandomUUID,openWindow=url=>globalThis.open?.(url,'_blank','noopener'),confirmAction=message=>globalThis.confirm?.(message)===true}={}){
   if(!root||typeof root!=='object')throw coded('CATALOG_ROOT_REQUIRED','缺少 Catalog mount root。');
   const existing=mounts.get(root);if(existing)return existing;
   root.innerHTML=catalogPanelMarkup();
@@ -104,9 +105,10 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(silent)patchCatalogState(catalogState,{error:null});
       else{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});render();}
       try{
-        const [profiles,current]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign()]);
+        const [profiles,current,blockers]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign(),catalogApi.listClaimBlockers?.()??{primary_blocker:null,all_blockers:[]}]);
         const campaign=current.current??null;
         applyRemote(profiles.profiles??[],campaign);
+        patchCatalogState(catalogState,{claimRecovery:{...catalogState.claimRecovery,primaryBlocker:blockers.primary_blocker??null,allBlockers:blockers.all_blockers??[]}});
         emitContextIfChanged(root,campaign,context=>{if(context!==lastContextKey){lastContextKey=context;return true;}return false;});
       }catch(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});}
       finally{if(!silent)patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:false,current:false}});render();refreshPromise=null;}
@@ -122,7 +124,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(currentController===controller)currentController=null;}
   };
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
-    openWindow,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},
+    openWindow,confirmAction,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},
     getProfileRequestId:()=>profileRequestId,setProfileRequestId:value=>{profileRequestId=value;},
     getInitialCampaignRequestId:()=>initialCampaignRequestId,setInitialCampaignRequestId:value=>{initialCampaignRequestId=value;},applyRemote,refresh});
   mounts.set(root,controller);currentController=controller;
@@ -155,7 +157,7 @@ function collectElements(root){
     onboardingCategoryKey:byId('onboarding-category-key'),onboardingProfileVersion:byId('onboarding-profile-version'),
     onboardingCapabilities:byId('onboarding-capabilities'),onboardingOpenListing:byId('onboarding-open-listing'),
     onboardingCampaignName:byId('onboarding-campaign-name'),onboardingSaveCreate:byId('onboarding-save-create'),
-    exportPreview:byId('export-preview'),exportFormal:byId('export-formal'),exportResult:byId('export-result')};
+    claimBlockers:byId('claim-blockers'),claimBlockerList:byId('claim-blocker-list'),inspectClaim:byId('inspect-claim'),endStaleClaim:byId('end-stale-claim'),exportPreview:byId('export-preview'),exportFormal:byId('export-formal'),exportResult:byId('export-result')};
 }
 
 function bindCatalogHandlers(context){const {elements}=context;if(!elements.form)return;
@@ -172,6 +174,7 @@ function bindCatalogHandlers(context){const {elements}=context;if(!elements.form
   elements.onboardingSaveCreate.addEventListener('click',()=>saveAndCreateInitial(context));
   elements.exportPreview.addEventListener('click',()=>exportCurrent('preview',context));
   elements.exportFormal.addEventListener('click',()=>exportCurrent('formal',context));
+  elements.inspectClaim.addEventListener('click',()=>inspectClaim(context));elements.endStaleClaim.addEventListener('click',()=>endStaleClaim(context));
 }
 
 async function exportCurrent(kind,context){const {state,api}=context,current=state.currentCampaign;if(!current)return;
@@ -268,9 +271,13 @@ function renderCatalogPanel({root,elements,state}){if(!elements.form)return;
   elements.create.disabled=state.loading.create||!(profile?.available||profile?.initial_pool_available);
   const busy=Object.values(state.loading).some(Boolean);elements.loading.hidden=!busy;
   elements.error.hidden=!state.error;elements.error.textContent=state.error?.message??'';
-  renderOnboarding(elements,state);
+  renderClaimBlockers(elements,state);renderOnboarding(elements,state);
   renderCurrent(elements,state);
 }
+function renderClaimBlockers(elements,state){const recovery=state.claimRecovery,rows=recovery.allBlockers??[];elements.claimBlockers.hidden=!rows.length;elements.claimBlockerList.textContent=rows.map((row,index)=>`${index===0?'Primary blocker':'Blocker'}\nCampaign ID: ${row.campaignId}\nCategory: ${row.categoryKey}\nType: ${row.campaignType??'-'}\nCampaign status: ${row.campaignStatus}\nQueue status: ${row.queueStatus}\nRunner status: ${row.checkpoint?.runner_state??'-'}\nLast activity: ${row.heartbeatAt??row.queueUpdatedAt??'-'}\nLive worker: ${row.liveWorker??'UNKNOWN'}\nLive binding: ${row.liveBinding??'UNKNOWN'}\nStale determination: ${row.staleDetermination}`).join('\n\n');const confirmed=recovery.secondInspection?.determination==='STALE_CONFIRMED'||recovery.primaryBlocker?.staleDetermination==='STALE_CONFIRMED';elements.inspectClaim.disabled=!recovery.primaryBlocker||state.loading.claim;elements.endStaleClaim.disabled=!confirmed||state.loading.claim;}
+
+async function inspectClaim(context){const {state,api}=context,blocker=state.claimRecovery.primaryBlocker;if(!blocker)return;patchCatalogState(state,{loading:{...state.loading,claim:true},error:null});context.render();try{const first=state.claimRecovery.firstInspection,response=await api.inspectClaim(blocker.campaignId,{previous_inspection_id:first?.id??first?.inspectionId??null}),inspection=response.result??response;patchCatalogState(state,{claimRecovery:{...state.claimRecovery,firstInspection:first??inspection,secondInspection:first?inspection:null}});}catch(error){context.setError(error);}finally{patchCatalogState(state,{loading:{...state.loading,claim:false}});context.render();}}
+async function endStaleClaim(context){const {state,api}=context,blocker=state.claimRecovery.primaryBlocker,first=state.claimRecovery.firstInspection,second=state.claimRecovery.secondInspection;if(!blocker)return;if(!context.confirmAction('该操作会把历史 Campaign 标记为 cancelled，不会删除商品、Pool、Snapshot，也不会恢复旧任务。'))return;patchCatalogState(state,{loading:{...state.loading,claim:true},error:null});context.render();try{await api.endStaleClaim(blocker.campaignId,{queue_id:blocker.queueId,source_id:blocker.sourceId,first_inspection_id:first?.id??first?.inspectionId,second_inspection_id:second?.id??second?.inspectionId,expected_claim_token:blocker.claimToken,expected_claim_generation:blocker.claimGeneration,request_id:context.randomUUID(),operator_confirmation:'END_STALE_CLAIM'});patchCatalogState(state,{claimRecovery:{primaryBlocker:null,allBlockers:[],firstInspection:null,secondInspection:null}});await context.refresh({silent:true});}catch(error){context.setError(error);}finally{patchCatalogState(state,{loading:{...state.loading,claim:false}});context.render();}}
 
 function renderOnboarding(elements,state){const onboarding=state.onboarding,profile=onboarding.validation;
   elements.onboarding.hidden=!onboarding.open;elements.onboardingValidation.hidden=!profile;

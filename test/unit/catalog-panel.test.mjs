@@ -79,6 +79,8 @@ test('Catalog API and validation errors render only inside Catalog root',async()
   assert.match(fixture.byId('catalog-error').textContent,/CATALOG_RPA_CLAIM_CONFLICT/);assert.equal(fixture.yingdao.marker,'untouched');panel.destroy();
 });
 
+test('blocker UI renders every owner and requires explicit confirmation before recovery',async()=>{const fixture=catalogDomFixture(),api=fakeApi({current:null}),ended=[];api.listClaimBlockers=async()=>({primary_blocker:{campaignId:'c2',queueId:'q2',sourceId:'s2',claimToken:'t2',claimGeneration:1,staleDetermination:'STALE_CONFIRMED'},all_blockers:[{campaignId:'c2',categoryKey:'motorcycle-accessories',campaignStatus:'paused',queueStatus:'capturing',staleDetermination:'STALE_CONFIRMED'},{campaignId:'c1',categoryKey:'motorcycle-accessories',campaignStatus:'paused',queueStatus:'capturing',staleDetermination:'STALE_NOT_PROVEN'}]});api.inspectClaim=async()=>({});api.endStaleClaim=async(id,body)=>{ended.push({id,body});return{};};const panel=mountCatalogPanel({root:fixture.catalogRoot,api,scheduler:fixture.scheduler,confirmAction:()=>true,randomUUID:()=> 'end-request'});await panel.refresh();assert.match(fixture.byId('catalog-claim-blocker-list').textContent,/c2/);assert.match(fixture.byId('catalog-claim-blocker-list').textContent,/c1/);await fixture.byId('catalog-end-stale-claim').emit('click');assert.equal(ended.length,1);assert.equal(fixture.yingdao.marker,'untouched');panel.destroy();});
+
 test('initial refresh shows loading while background polling refresh stays silent',async()=>{
   const fixture=catalogDomFixture();let gate=deferred(),round=0;
   const api={

@@ -30,3 +30,4 @@
 .catalog-activation-result { margin-top:10px;padding:12px;border:1px solid #a9d4c3;border-radius:10px;background:#ebf7f1;color:#126246;font-size:12px;font-weight:700;white-space:pre-wrap; }
 @media(max-width:1100px) { .catalog-form { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:700px) { .catalog-heading { flex-direction:column; }.catalog-form,.catalog-current-grid,.catalog-onboarding-form { grid-template-columns:1fr; }.catalog-onboarding-url { grid-column:auto; } }
+.catalog-claim-blockers{margin:16px 0;padding:14px;border:1px solid #d97706;border-radius:10px;background:#fff7ed}.catalog-claim-blockers pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace}.catalog-claim-blockers button{margin-right:8px}

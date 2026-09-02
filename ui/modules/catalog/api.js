@@ -7,7 +7,7 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
       body:options.body===undefined?undefined:JSON.stringify(options.body)});
     const payload=await response.json();
     if(!response.ok){const error=new Error(payload?.error?.message??'Catalog 操作失败。');
-      error.code=payload?.error?.code??'OPERATION_FAILED';throw error;}
+      error.code=payload?.error?.code??'OPERATION_FAILED';error.details=payload?.error?.details??{};throw error;}
     return payload;
   };
   return{
@@ -15,6 +15,9 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
     validateOperatorProfile:body=>request('/api/catalog/operator/category-profiles/validate',{method:'POST',body}),
     registerOperatorProfile:body=>request('/api/catalog/operator/category-profiles',{method:'POST',body}),
     currentCampaign:()=>request('/api/catalog/operator-campaign/current'),
+    listClaimBlockers:()=>request('/api/catalog/operator/rpa-claim-blockers'),
+    inspectClaim:(id,body)=>request(`/api/catalog/operator/rpa-claims/${encodeURIComponent(id)}/inspections`,{method:'POST',body}),
+    endStaleClaim:(id,body)=>request(`/api/catalog/operator/rpa-claims/${encodeURIComponent(id)}/end-stale`,{method:'POST',body}),
     createExpansion:body=>request('/api/catalog/operator-campaigns',{method:'POST',body}),
     createInitial:body=>request('/api/catalog/operator/initial-campaigns',{method:'POST',body}),
     runInitialQa:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/qa-runs`,{method:'POST',body}),

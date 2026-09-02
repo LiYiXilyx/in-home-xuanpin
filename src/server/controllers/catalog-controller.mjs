@@ -1,7 +1,10 @@
 import { AppError } from '../../shared/errors.mjs';
 
-export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService }) {
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService }) {
   return {
+    claimBlockers(){return catalogClaimInspectionService.listBlockers();},
+    inspectClaim(campaignId,body){return catalogClaimInspectionService.inspect({campaignId,previousInspectionId:body?.previous_inspection_id??null});},
+    endStaleClaim(campaignId,body){return catalogClaimRecoveryService.endStaleClaim({campaignId,queueId:body?.queue_id,sourceId:body?.source_id,firstInspectionId:body?.first_inspection_id,secondInspectionId:body?.second_inspection_id,expectedClaimToken:body?.expected_claim_token,expectedClaimGeneration:body?.expected_claim_generation,requestId:body?.request_id,operatorConfirmation:body?.operator_confirmation});},
     poolProducts(poolVersionId,searchParams){return catalogPoolReadRepository.listPoolProducts({poolVersionId,
       categoryKey:searchParams.get('category_key'),categoryProfileVersion:searchParams.get('category_profile_version')});},
     async operatorProfiles() {

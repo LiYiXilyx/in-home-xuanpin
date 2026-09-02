@@ -11,6 +11,11 @@ import { createNavigationResolutionRepository } from '../db/repositories/navigat
 import { createCatalogPoolReadRepository } from '../db/repositories/catalog-pool-read-repository.mjs';
 import { createCatalogScopedExportRepository } from '../db/repositories/catalog-scoped-export-repository.mjs';
 import { createCatalogCampaignService } from '../modules/catalog-scale/catalog-campaign-service.mjs';
+import {createCatalogClaimRecoveryRepository} from '../db/repositories/catalog-claim-recovery-repository.mjs';
+import {createCatalogClaimInspectionService} from '../modules/catalog-scale/catalog-claim-inspection.mjs';
+import {createCatalogClaimRecoveryService} from '../modules/catalog-scale/catalog-claim-recovery-service.mjs';
+import {createCatalogActivityRegistry} from '../modules/catalog-scale/catalog-activity-registry.mjs';
+import {resolveClaimRecoveryThresholds} from '../modules/catalog-scale/catalog-claim-stale-policy.mjs';
 import { createCategoryProfileRegistry } from '../modules/catalog-scale/category-profile-registry.mjs';
 import { createOperatorCategoryProfileStore } from '../modules/catalog-scale/operator-category-profile-store.mjs';
 import { normalizeOperatorCategoryProfile } from '../modules/catalog-scale/operator-category-profile.mjs';
@@ -66,7 +71,11 @@ export async function createOperationsServer(options={}) {
   const reviewController=createReviewController({ config,db,repository,reviewRepository,reviewQueueRepository,navigationResolutionRepository,service,projectDir,runProcess:options.runProcess });
   const reviewQueueService=createReviewQueueService({ db,jobRepository:repository,queueRepository:reviewQueueRepository,navigationRepository:navigationResolutionRepository,config });
   const reviewQueueController=createReviewQueueController({ queueService:reviewQueueService });
-  const catalogService=createCatalogCampaignService(db);
+  const catalogActivityRegistry=createCatalogActivityRegistry();
+  const catalogClaimRecoveryRepository=createCatalogClaimRecoveryRepository(db);
+  const catalogClaimInspectionService=createCatalogClaimInspectionService({repository:catalogClaimRecoveryRepository,activityRegistry:catalogActivityRegistry,thresholds:resolveClaimRecoveryThresholds(config.catalog?.claimRecovery??{})});
+  const catalogClaimRecoveryService=createCatalogClaimRecoveryService({repository:catalogClaimRecoveryRepository,inspectionService:catalogClaimInspectionService,activityRegistry:catalogActivityRegistry});
+  const catalogService=createCatalogCampaignService(db,{claimInspectionService:catalogClaimInspectionService});
   const catalogPoolReadRepository=createCatalogPoolReadRepository(db);
   const categoryProfileDirectory=path.resolve(options.categoryProfileDirectory ?? path.join(projectDir,'config/categories'));
   const configRoot=path.dirname(config.configPath??options.configPath??path.join(projectDir,'config.json'));
@@ -84,7 +93,7 @@ export async function createOperationsServer(options={}) {
     repository:createCatalogScopedExportRepository(db),outputDir:path.join(config.export.outputDir,'catalog-scoped')
   });
   const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,
-    operatorCategoryProfileStore,catalogScopedExportService });
+    operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService });
   const sourcingRoot=path.dirname(config.app.databasePath);
   const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');
   migrateSourcingDatabase({databasePath:sourcingDatabasePath});
