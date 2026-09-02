@@ -35,6 +35,11 @@ test('READY enables bind and BOUND enables capture using the same state contract
   const bound={...ready,state:'PAGE_BOUND',binding:{status:'BOUND',context_fingerprint:'fp'}};assert.equal(load().build(bound).steps.capture.enabled,true);
 });
 
+test('manual_required projects RECOVERY_REQUIRED with truthful binding and capture gates',()=>{
+  const value=girls({state:'RECOVERY_REQUIRED',binding:{status:'BOUND',context_fingerprint:'stale'}});value.context.campaign={...value.context.campaign,status:'manual_required'};value.context.queue={status:'manual_required',checkpoint:{}};
+  const model=load().build(value);assert.equal(model.task.status,'任务需要恢复');assert.equal(model.binding.status,'UNBOUND');assert.equal(model.steps.recover.enabled,true);assert.equal(model.steps.bind.enabled,false);assert.equal(model.steps.capture.enabled,false);assert.match(model.steps.bind.disabledReason,/先恢复当前采集任务/);assert.match(model.recovery.reason,/页面检测未通过/);
+});
+
 test('context identity is exact and different Profiles cannot share stale state',()=>{
   const api=load(),first=girls(),second=girls();second.context.campaign={...second.context.campaign,id:'girls-c2'};
   assert.equal(api.contextIdentity(first),'girls-c1\u001fgirls-sets\u001foperator-girls-sets-v1-bf7cb4caf08d');

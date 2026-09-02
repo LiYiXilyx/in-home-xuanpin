@@ -24,8 +24,13 @@ test('READY enables bind, BOUND enables capture, and expected/actual health is r
 });
 
 test('explicit action adapter calls only the matching existing runner method',async()=>{
-  const calls=[],runner={detectCurrentPage:async()=>calls.push('detect'),bindCurrentPage:async()=>calls.push('bind'),captureCurrentPage:async()=>calls.push('capture')},actions=modules().TemuCatalogOperatorOverlay.createActions(runner);
-  await actions.detect();await actions.bind();await actions.capture();assert.deepEqual(calls,['detect','bind','capture']);
+  const calls=[],runner={recoverCurrentTask:async()=>calls.push('recover'),detectCurrentPage:async()=>calls.push('detect'),bindCurrentPage:async()=>calls.push('bind'),captureCurrentPage:async()=>calls.push('capture')},actions=modules().TemuCatalogOperatorOverlay.createActions(runner);
+  await actions.recover();await actions.detect();await actions.bind();await actions.capture();assert.deepEqual(calls,['recover','detect','bind','capture']);
+});
+
+test('recovery-required markup shows one recovery button and disables bind and capture',()=>{
+  const api=modules(),value=snapshot();value.state='RECOVERY_REQUIRED';value.binding={status:'BOUND',context_fingerprint:'stale'};value.context.campaign.status='manual_required';value.context.queue.status='manual_required';const html=api.TemuCatalogOperatorOverlay.renderMarkup(api.TemuCatalogOperatorViewModel.build(value),{collapsed:false});
+  assert.match(html,/任务需要恢复/);assert.match(html,/id="temu-catalog-recover"/);assert.match(html,/恢复当前任务/);assert.match(button(html,'temu-catalog-bind'),/disabled/);assert.match(button(html,'temu-catalog-capture'),/disabled/);assert.doesNotMatch(html,/页面已绑定，可人工采集/);
 });
 
 test('health markup shows listing path, breadcrumb source, DOM/network and every failed check',()=>{
