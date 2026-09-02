@@ -81,6 +81,18 @@ test('Catalog API and validation errors render only inside Catalog root',async()
 
 test('blocker UI renders every owner and requires explicit confirmation before recovery',async()=>{const fixture=catalogDomFixture(),api=fakeApi({current:null}),ended=[];api.listClaimBlockers=async()=>({primary_blocker:{campaignId:'c2',queueId:'q2',sourceId:'s2',claimToken:'t2',claimGeneration:1,staleDetermination:'STALE_CONFIRMED'},all_blockers:[{campaignId:'c2',categoryKey:'motorcycle-accessories',campaignStatus:'paused',queueStatus:'capturing',staleDetermination:'STALE_CONFIRMED'},{campaignId:'c1',categoryKey:'motorcycle-accessories',campaignStatus:'paused',queueStatus:'capturing',staleDetermination:'STALE_NOT_PROVEN'}]});api.inspectClaim=async()=>({});api.endStaleClaim=async(id,body)=>{ended.push({id,body});return{};};const panel=mountCatalogPanel({root:fixture.catalogRoot,api,scheduler:fixture.scheduler,confirmAction:()=>true,randomUUID:()=> 'end-request'});await panel.refresh();assert.match(fixture.byId('catalog-claim-blocker-list').textContent,/c2/);assert.match(fixture.byId('catalog-claim-blocker-list').textContent,/c1/);await fixture.byId('catalog-end-stale-claim').emit('click');assert.equal(ended.length,1);assert.equal(fixture.yingdao.marker,'untouched');panel.destroy();});
 
+test('current Catalog campaign is not rendered as its own historical claim conflict',async()=>{
+  const fixture=catalogDomFixture(),current=initialCurrent(),api=fakeApi({current});
+  api.listClaimBlockers=async()=>({primary_blocker:{campaignId:current.campaign_id,staleDetermination:'NOT_ELIGIBLE'},all_blockers:[
+    {campaignId:current.campaign_id,categoryKey:current.category_key,campaignStatus:'running',queueStatus:'capturing',staleDetermination:'NOT_ELIGIBLE'}
+  ]});
+  const panel=mountCatalogPanel({root:fixture.catalogRoot,api,scheduler:fixture.scheduler});
+  await panel.refresh();
+  assert.equal(fixture.byId('catalog-claim-blockers').hidden,true);
+  assert.equal(panel.getState().claimRecovery.allBlockers.length,0);
+  panel.destroy();
+});
+
 test('initial refresh shows loading while background polling refresh stays silent',async()=>{
   const fixture=catalogDomFixture();let gate=deferred(),round=0;
   const api={

@@ -109,7 +109,8 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
         const [profiles,current,blockers]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign(),catalogApi.listClaimBlockers?.()??{primary_blocker:null,all_blockers:[]}]);
         const campaign=current.current??null;
         applyRemote(profiles.profiles??[],campaign);
-        patchCatalogState(catalogState,{claimRecovery:{...catalogState.claimRecovery,primaryBlocker:blockers.primary_blocker??null,allBlockers:blockers.all_blockers??[]}});
+        const historicalBlockers=(blockers.all_blockers??[]).filter(row=>row.campaignId!==campaign?.campaign_id);
+        patchCatalogState(catalogState,{claimRecovery:{...catalogState.claimRecovery,primaryBlocker:historicalBlockers[0]??null,allBlockers:historicalBlockers}});
         emitContextIfChanged(root,campaign,context=>{if(context!==lastContextKey){lastContextKey=context;return true;}return false;});
       }catch(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});}
       finally{if(!silent)patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:false,current:false}});render();refreshPromise=null;}
