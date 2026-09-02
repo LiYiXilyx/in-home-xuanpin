@@ -29,6 +29,11 @@ test('Page Health exposes expected and actual values row by row with actionable 
   assert.equal(model.health.statusLabel,'页面尚未就绪');assert.match(model.error.action,/Top Sales/);assert.equal(model.steps.detect.status,'失败');
 });
 
+test('missing strict Network intersection tells the operator to refresh before redetection',()=>{
+  const value=girls({detection:{health:{status:'BLOCKED',code:'STRICT_CAPTURE_EVIDENCE_REQUIRED',checks:{country:true,language:true,currency:true,listingPath:true,category:true,breadcrumbs:true,sort:true,products:true,notCaptchaBlocking:true,notSearchNoResults:true,evidenceReady:false},failed:['evidenceReady']},observed:{url:'https://www.temu.com/de-en/girls-sets-o3-1088.html',siteCountry:'DE',language:'en',currency:'EUR',category:"Girls' Sets",categorySource:'BREADCRUMB_TERMINAL',breadcrumbs:['Home',"Kids' Fashion","Girls' Sets"],sortOrder:'Top Sales',cardCount:40,domReady:true,networkReady:false}}});
+  const model=load().build(value);assert.equal(model.steps.bind.enabled,false);assert.match(model.error.reason,/Network/);assert.match(model.error.action,/刷新.*重新检测/);
+});
+
 test('READY enables bind and BOUND enables capture using the same state contract',()=>{
   const ready=girls({state:'PAGE_READY',detection:{health:{status:'READY',checks:{country:true,language:true,currency:true,category:true,products:true,sort:true}},observed:{siteCountry:'DE',language:'en',currency:'EUR',category:"Girls' Sets",sortOrder:'Top Sales',cardCount:40,domReady:true}}});
   assert.equal(load().build(ready).steps.bind.enabled,true);

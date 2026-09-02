@@ -9,7 +9,7 @@ const source=fs.readFileSync(path.resolve(import.meta.dirname,'../../browser-ext
 function module(){const sandbox=vm.createContext({URL});vm.runInContext(breadcrumbSource,sandbox);vm.runInContext(source,sandbox);return sandbox.TemuCatalogManualBinding;}
 const profile={category_key:'category-b',category_profile_version:'category-b-v1',display_name:'Category B',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales'};
 const campaign={id:'campaign-b',categoryKey:'category-b',categoryProfileVersion:'category-b-v1'};
-function evidence(overrides={}){return {profile,domEvidence:{url:'https://www.temu.com/de-en/category-b.html?sort=top',siteCountry:'DE',language:'en',currency:'EUR',category:'Category B',sortOrder:'Top Sales',cardCount:10,ready:true,...overrides},networkEvidence:{ready:false}};}
+function evidence(overrides={}){return {profile,domEvidence:{url:'https://www.temu.com/de-en/category-b.html?sort=top',siteCountry:'DE',language:'en',currency:'EUR',category:'Category B',sortOrder:'Top Sales',cardCount:10,ready:true,...overrides},networkEvidence:{ready:true}};}
 
 test('detection is separate from binding and all Page Health checks must pass',()=>{
   const api=module(),detection=api.detectCurrentPage(evidence());assert.equal(detection.health.status,'READY');
@@ -30,10 +30,17 @@ test('manual batch id is deterministic for repeated capture content',()=>{
 });
 
 const captureOnly={...profile,category_key:'girls-sets',category_profile_version:'girls-v1',profile_kind:'CAPTURE_ONLY',category_aliases:['girls'],page_health:{category_names:['girls']},breadcrumbs:["Kids' Fashion","Girls' Sets"],listing_url:'https://www.temu.com/de-en/girls-sets-o3-1088.html'};
-function girls(overrides={}){return{profile:captureOnly,domEvidence:{url:'https://www.temu.com/de-en/girls-sets-o3-1088.html?tracking=1',siteCountry:'DE',language:'en',currency:'EUR',category:'',categoryCandidates:[{value:"Girls' Sets",source:'BREADCRUMB_TERMINAL'}],categorySource:'BREADCRUMB_TERMINAL',breadcrumbs:['Home',"Kids' Fashion","Girls' Sets"],sortOrder:'Top sales',cardCount:20,domReady:true,searchNoResults:false,captchaBlocking:false,...overrides},networkEvidence:{ready:false}};}
+function girls(overrides={},networkOverrides={}){return{profile:captureOnly,domEvidence:{url:'https://www.temu.com/de-en/girls-sets-o3-1088.html?tracking=1',siteCountry:'DE',language:'en',currency:'EUR',category:'',categoryCandidates:[{value:"Girls' Sets",source:'BREADCRUMB_TERMINAL'}],categorySource:'BREADCRUMB_TERMINAL',breadcrumbs:['Home',"Kids' Fashion","Girls' Sets"],sortOrder:'Top sales',cardCount:20,domReady:true,searchNoResults:false,captchaBlocking:false,...overrides},networkEvidence:{ready:true,...networkOverrides}};}
 
 test('Capture-only Girls Sets can be READY without h1 using exact listing path and breadcrumb suffix',()=>{
   const detected=module().detectCurrentPage(girls());assert.equal(detected.health.status,'READY');assert.equal(detected.observed.category,"Girls' Sets");assert.equal(detected.observed.categorySource,'BREADCRUMB_TERMINAL');assert.deepEqual(Array.from(detected.health.warnings),['PROFILE_CATEGORY_ALIAS_WEAK']);
+});
+
+test('DOM-only listing is blocked because manual capture requires a strict DOM and Network intersection',()=>{
+  const detected=module().detectCurrentPage(girls({}, {ready:false}));
+  assert.equal(detected.health.status,'BLOCKED');
+  assert.equal(detected.health.code,'STRICT_CAPTURE_EVIDENCE_REQUIRED');
+  assert.equal(detected.health.checks.evidenceReady,false);
 });
 
 test('Capture-only category and breadcrumb signals fail closed on conflicts and mismatches',()=>{

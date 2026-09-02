@@ -26,11 +26,11 @@
       listingPath:listingMatches,
       sort:observed.sortOrder.toLowerCase()===String(profile.sort_order).toLowerCase(),products:observed.cardCount>0,
       notSearchNoResults:!observed.searchNoResults,notCaptchaBlocking:!observed.captchaBlocking,
-      evidenceReady:observed.domReady||observed.networkReady
+      evidenceReady:observed.domReady&&observed.networkReady
     };
     const failed=Object.entries(checks).filter(([,ok])=>!ok).map(([name])=>name),warnings=[];
     if(captureOnly&&listingMatches&&breadcrumbSuffix&&terminalMatches&&!includesText(profile.page_health?.category_names??[],terminal))warnings.push('PROFILE_CATEGORY_ALIAS_WEAK');
-    const code=signalsConflict?'CATEGORY_SIGNALS_CONFLICT':!listingMatches?'LISTING_PATH_MISMATCH':captureOnly&&(!breadcrumbSuffix||!terminalMatches)?'PROFILE_CORRECTION_REQUIRED':failed[0]??READY;
+    const code=signalsConflict?'CATEGORY_SIGNALS_CONFLICT':!listingMatches?'LISTING_PATH_MISMATCH':captureOnly&&(!breadcrumbSuffix||!terminalMatches)?'PROFILE_CORRECTION_REQUIRED':!checks.evidenceReady?'STRICT_CAPTURE_EVIDENCE_REQUIRED':failed[0]??READY;
     const health={status:failed.length? 'BLOCKED':READY,code,checks,failed,warnings};
     const fingerprintParts=[observed.url,observed.siteCountry,observed.language,observed.currency,profile.category_key,observed.category,observed.sortOrder];
     if(captureOnly)fingerprintParts.push(observed.breadcrumbs);
