@@ -1,6 +1,6 @@
 import { AppError } from '../../shared/errors.mjs';
 
-export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore }) {
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService }) {
   return {
     poolProducts(poolVersionId,searchParams){return catalogPoolReadRepository.listPoolProducts({poolVersionId,
       categoryKey:searchParams.get('category_key'),categoryProfileVersion:searchParams.get('category_profile_version')});},
@@ -12,6 +12,12 @@ export function createCatalogController({ catalogService,categoryProfileRegistry
     registerOperatorCategoryProfile(body){return operatorCategoryProfileStore.register({
       requestId:body?.request_id,...profileDraft(body)
     });},
+    exportInitialPreview(campaignId,body){assertCampaignBodyIdentity(campaignId,body);return catalogScopedExportService.exportPreview({
+      campaignId,categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version,
+      candidateRevision:body?.candidate_revision
+    });},
+    exportFormalPool(poolVersionId,body){return catalogScopedExportService.exportFormalPool({poolVersionId,
+      categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});},
     async createOperatorCampaign(body) {
       const profile=await categoryProfileRegistry.resolve({ categoryKey:body?.category_key,
         categoryProfileVersion:body?.category_profile_version });
@@ -75,6 +81,7 @@ function mapOperatorCurrent(context,qa=null) {
     quantity_mode:'OPEN_ENDED',capture_limit:null,current_unique:context.campaign.nonElectronicUniqueCount,
     status:context.campaign.status,capture_mode:context.campaign.browserControlMode,
     binding_status:context.queue.checkpoint?.runner_state??'UNBOUND',queue_id:context.queue.id,source_id:context.source.id,
+    candidate_revision:qa?.currentCandidateRevision??0,
     qa:qa?{status:qa.status,qa_run_id:qa.qaRunId??null,qa_candidate_count:qa.qaCandidateCount,
       live_unique_count:qa.liveUniqueCount,unreviewed_delta:qa.unreviewedDelta,checks:qa.checks??[],
       failure_codes:qa.failureCodes??[],duration_ms:qa.durationMs??null}:null };

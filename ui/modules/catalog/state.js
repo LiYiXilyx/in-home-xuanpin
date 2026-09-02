@@ -4,7 +4,7 @@ const STATE_KEYS=new Set(['profiles','selectedProfile','currentCampaign','curren
 export function createCatalogState(){return{
   profiles:[],selectedProfile:null,currentCampaign:null,currentPool:null,quantityPolicy:null,initialQa:null,
   activation:null,onboarding:{open:false,draft:null,validation:null,registered:null,profileSaved:false,campaignCreated:false},
-  loading:{profiles:false,current:false,create:false,qa:false,activation:false,onboardingValidate:false,onboardingSave:false},error:null,
+  loading:{profiles:false,current:false,create:false,qa:false,activation:false,onboardingValidate:false,onboardingSave:false,export:false},error:null,
   mounted:false,lastRefreshedAt:null
 };}
 

@@ -9,7 +9,7 @@ test('Catalog state exposes only the approved namespace and rejects foreign keys
     'activation','currentCampaign','currentPool','error','initialQa','lastRefreshedAt',
     'loading','mounted','onboarding','profiles','quantityPolicy','selectedProfile'
   ]);
-  assert.deepEqual(state.loading,{profiles:false,current:false,create:false,qa:false,activation:false,onboardingValidate:false,onboardingSave:false});
+  assert.deepEqual(state.loading,{profiles:false,current:false,create:false,qa:false,activation:false,onboardingValidate:false,onboardingSave:false,export:false});
   assert.equal('yingdaoState' in state,false);
   assert.equal('currentRun' in state,false);
   assert.throws(()=>patchCatalogState(state,{yingdaoState:{}}),error=>error.code==='CATALOG_STATE_KEY_INVALID');

@@ -9,10 +9,12 @@ import { createReviewRepository } from '../db/repositories/review-repository.mjs
 import { createReviewQueueRepository } from '../db/repositories/review-queue-repository.mjs';
 import { createNavigationResolutionRepository } from '../db/repositories/navigation-resolution-repository.mjs';
 import { createCatalogPoolReadRepository } from '../db/repositories/catalog-pool-read-repository.mjs';
+import { createCatalogScopedExportRepository } from '../db/repositories/catalog-scoped-export-repository.mjs';
 import { createCatalogCampaignService } from '../modules/catalog-scale/catalog-campaign-service.mjs';
 import { createCategoryProfileRegistry } from '../modules/catalog-scale/category-profile-registry.mjs';
 import { createOperatorCategoryProfileStore } from '../modules/catalog-scale/operator-category-profile-store.mjs';
 import { normalizeOperatorCategoryProfile } from '../modules/catalog-scale/operator-category-profile.mjs';
+import { createCatalogScopedExportService } from '../modules/catalog-scale/catalog-scoped-export-service.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
 import { createReviewQueueService } from '../modules/reviews/review-queue-service.mjs';
 import { createBrowserController } from './controllers/browser-controller.mjs';
@@ -78,7 +80,11 @@ export async function createOperationsServer(options={}) {
   const operatorCategoryProfileStore=options.operatorCategoryProfileStore??createOperatorCategoryProfileStore({
     root:operatorProfileDirectory,builtInRegistry,validateInput:normalizeOperatorCategoryProfile
   });
-  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore });
+  const catalogScopedExportService=options.catalogScopedExportService??createCatalogScopedExportService({
+    repository:createCatalogScopedExportRepository(db),outputDir:path.join(config.export.outputDir,'catalog-scoped')
+  });
+  const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,
+    operatorCategoryProfileStore,catalogScopedExportService });
   const sourcingRoot=path.dirname(config.app.databasePath);
   const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');
   migrateSourcingDatabase({databasePath:sourcingDatabasePath});

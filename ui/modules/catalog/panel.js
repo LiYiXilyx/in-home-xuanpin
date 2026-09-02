@@ -67,6 +67,8 @@ export function catalogPanelMarkup(){return `
         <button id="catalog-activate-initial-pool" class="catalog-activate-button primary" type="button" disabled>建立首个商品池</button>
       </div>
       <div id="catalog-activation-result" class="catalog-activation-result" hidden></div>
+      <div class="catalog-export-actions"><button id="catalog-export-preview" type="button">导出当前采集预览</button>
+        <button id="catalog-export-formal" type="button">导出正式商品池</button><span id="catalog-export-result"></span></div>
     </section>
   </section>`;}
 
@@ -87,12 +89,12 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
     patchCatalogState(catalogState,{selectedProfile:profile});createRequestId=null;render();
   }
   function applyRemote(profiles,current){
-    const rows=profiles??[],preferred=current?rows.find(row=>row.category_key===current.category_key
-      && row.category_profile_version===current.category_profile_version):catalogState.selectedProfile;
-    patchCatalogState(catalogState,{profiles:rows,selectedProfile:preferred??rows[0]??null,currentCampaign:current??null,
-      currentPool:current?.pool_version_id??null,quantityPolicy:current?{
-        quantityMode:current.quantity_mode??'TARGETED',targetCount:current.target_count??null,
-        remaining:current.remaining??null,targetReached:current.target_reached??null
+    const rows=profiles??[],effectiveCurrent=current??(catalogState.activation?catalogState.currentCampaign:null),preferred=effectiveCurrent?rows.find(row=>row.category_key===effectiveCurrent.category_key
+      && row.category_profile_version===effectiveCurrent.category_profile_version):catalogState.selectedProfile;
+    patchCatalogState(catalogState,{profiles:rows,selectedProfile:preferred??rows[0]??null,currentCampaign:effectiveCurrent??null,
+      currentPool:effectiveCurrent?.pool_version_id??catalogState.activation?.pool_version_id??preferred?.active_pool_version_id??null,quantityPolicy:effectiveCurrent?{
+        quantityMode:effectiveCurrent.quantity_mode??'TARGETED',targetCount:effectiveCurrent.target_count??null,
+        remaining:effectiveCurrent.remaining??null,targetReached:effectiveCurrent.target_reached??null
       }:null,initialQa:current?.qa??null,lastRefreshedAt:new Date().toISOString()});
   }
   async function refresh({silent=false}={}){
@@ -152,7 +154,8 @@ function collectElements(root){
     onboardingValidate:byId('onboarding-validate'),onboardingValidation:byId('onboarding-validation'),
     onboardingCategoryKey:byId('onboarding-category-key'),onboardingProfileVersion:byId('onboarding-profile-version'),
     onboardingCapabilities:byId('onboarding-capabilities'),onboardingOpenListing:byId('onboarding-open-listing'),
-    onboardingCampaignName:byId('onboarding-campaign-name'),onboardingSaveCreate:byId('onboarding-save-create')};
+    onboardingCampaignName:byId('onboarding-campaign-name'),onboardingSaveCreate:byId('onboarding-save-create'),
+    exportPreview:byId('export-preview'),exportFormal:byId('export-formal'),exportResult:byId('export-result')};
 }
 
 function bindCatalogHandlers(context){const {elements}=context;if(!elements.form)return;
@@ -167,6 +170,18 @@ function bindCatalogHandlers(context){const {elements}=context;if(!elements.form
   elements.onboardingForm.addEventListener('submit',event=>validateOnboarding(event,context));
   elements.onboardingOpenListing.addEventListener('click',()=>openOnboardingListing(context));
   elements.onboardingSaveCreate.addEventListener('click',()=>saveAndCreateInitial(context));
+  elements.exportPreview.addEventListener('click',()=>exportCurrent('preview',context));
+  elements.exportFormal.addEventListener('click',()=>exportCurrent('formal',context));
+}
+
+async function exportCurrent(kind,context){const {state,api}=context,current=state.currentCampaign;if(!current)return;
+  patchCatalogState(state,{loading:{...state.loading,export:true},error:null});context.render();
+  try{const body={category_key:current.category_key,category_profile_version:current.category_profile_version};
+    const response=kind==='preview'?await api.exportInitialPreview(current.campaign_id,{...body,campaign_id:current.campaign_id,
+      candidate_revision:current.candidate_revision}):await api.exportFormalPool(current.pool_version_id??state.currentPool,body);
+    context.elements.exportResult.textContent=`已导出：${response.result?.file_name??''}`;
+  }catch(error){context.setError(error);}
+  finally{patchCatalogState(state,{loading:{...state.loading,export:false}});context.render();}
 }
 
 async function validateOnboarding(event,context){event.preventDefault();const {state,api,elements}=context;
@@ -286,6 +301,8 @@ function renderCurrent(elements,state){const current=state.currentCampaign;eleme
   const initial=current.campaign_type==='initial';elements.target.textContent=initial?'不限数量':formatNumber(current.target_count);
   elements.unique.textContent=formatNumber(current.current_unique);elements.remaining.textContent=initial?'—':formatNumber(current.remaining);
   elements.status.textContent=current.status??'—';elements.binding.textContent=current.binding_status==='UNBOUND'?'等待页面绑定 · UNBOUND':current.binding_status??'—';
+  elements.exportPreview.disabled=!(initial&&Number(current.current_unique)>0)||state.loading.export;
+  elements.exportFormal.disabled=!(current.pool_version_id??state.currentPool)||state.loading.export;
   elements.initialActions.hidden=!initial;if(initial){const view=initialOperatorViewModel(current);elements.quantityMode.textContent=`采集模式：${view.modeLabel}`;
     elements.qaStatus.textContent=`QA：${view.qaStatus} · 覆盖 ${view.qaCandidateCount} · 当前 ${view.currentCount} · 未QA ${view.unreviewedDelta}`;
     elements.qa.disabled=!view.qaEnabled||state.loading.qa||state.loading.activation;elements.activate.disabled=!view.activationEnabled||state.loading.activation;}

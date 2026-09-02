@@ -19,6 +19,8 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
     createInitial:body=>request('/api/catalog/operator/initial-campaigns',{method:'POST',body}),
     runInitialQa:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/qa-runs`,{method:'POST',body}),
     activateInitial:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/activate`,{method:'POST',body}),
+    exportInitialPreview:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/preview-export`,{method:'POST',body}),
+    exportFormalPool:(id,body)=>request(`/api/catalog/pools/${encodeURIComponent(id)}/export`,{method:'POST',body}),
     listPoolProducts:({poolVersionId,categoryKey,categoryProfileVersion})=>{const query=new URLSearchParams({
       category_key:String(categoryKey??''),category_profile_version:String(categoryProfileVersion??'')});
       return request(`/api/catalog/pools/${encodeURIComponent(String(poolVersionId??''))}/products?${query}`);}

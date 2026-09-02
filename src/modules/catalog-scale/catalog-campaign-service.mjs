@@ -457,7 +457,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   function getInitialQaState(campaignId) {
     const campaign=requireCampaign(campaignId);if(campaign.campaignType!=='initial')throw new AppError('要求Initial Campaign。',{code:'INITIAL_CAMPAIGN_REQUIRED'});
     const current=initialRepository.getCandidateState(campaign.id),run=initialRepository.getLatestQaRun(campaign.id);
-    if(!run)return {status:'NOT_RUN',liveUniqueCount:current.candidateCount,qaCandidateCount:0,unreviewedDelta:current.candidateCount};
+    if(!run)return {status:'NOT_RUN',liveUniqueCount:current.candidateCount,qaCandidateCount:0,
+      currentCandidateRevision:current.currentRevision,currentCandidateHash:current.currentHash,unreviewedDelta:current.candidateCount};
     let status=run.status==='RUNNING'?'RUNNING':run.status==='FAILED'?'FAILED':'PASSED_CURRENT';
     if(run.status==='PASSED'&&(run.candidateRevision!==current.currentRevision||run.candidateHash!==current.currentHash
       ||run.candidateCount!==current.candidateCount))status='STALE';
