@@ -16,9 +16,9 @@ test('all migrations apply once and a repeated run has no side effects', t => {
   const first = migrateDatabase({ databasePath });
   const sizeAfterFirst = fs.statSync(databasePath).size;
   const second = migrateDatabase({ databasePath });
-  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql', '014_review_queue.sql', '015_product_lifecycle.sql', '016_navigation_resolutions.sql', '017_catalog_scale_v2.sql', '018_catalog_refresh_baseline.sql', '019_catalog_expansion_1500.sql', '020_catalog_baseline_authority.sql', '021_catalog_expansion_checkpoints.sql', '022_opportunity_analysis.sql', '023_active_pool_reanalysis.sql', '024_sourcing_1688.sql', '025_opportunity_confirmation.sql', '026_initial_category_pool.sql']);
+  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql', '014_review_queue.sql', '015_product_lifecycle.sql', '016_navigation_resolutions.sql', '017_catalog_scale_v2.sql', '018_catalog_refresh_baseline.sql', '019_catalog_expansion_1500.sql', '020_catalog_baseline_authority.sql', '021_catalog_expansion_checkpoints.sql', '022_opportunity_analysis.sql', '023_active_pool_reanalysis.sql', '024_sourcing_1688.sql', '025_opportunity_confirmation.sql', '026_initial_category_pool.sql', '027_catalog_rpa_claim_recovery.sql']);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 26);
+  assert.equal(second.skipped.length, 27);
   assert.equal(fs.statSync(databasePath).size, sizeAfterFirst);
 
   const db = openDatabase(databasePath);
