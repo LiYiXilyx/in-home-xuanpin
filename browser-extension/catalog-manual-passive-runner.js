@@ -40,7 +40,7 @@
       }catch(error){this.state=STATES.FAILED;this.lastError=error;throw error;}}
     async pause(){this.state=STATES.PAUSED;await this.saveCheckpoint({runner_state:STATES.PAUSED,last_action:'paused',capture_paused:true});return this.emit({lastAction:'paused'});}
     requireValidBinding(){if(!this.binding||this.state!==STATES.PAGE_BOUND)throw coded('PAGE_BINDING_REQUIRED','必须先检测并绑定当前页面。');}
-    saveCheckpoint(checkpoint){return this.dependencies.checkpoint({campaign_id:this.context.campaign.id,source_id:this.context.source.id,queue_id:this.context.queue.id,status:'capturing',checkpoint});}
+    saveCheckpoint(checkpoint){const lease=this.binding?{binding_heartbeat_at:this.dependencies.now(),binding_generation:this.binding.binding_generation,binding_fingerprint:this.binding.context_fingerprint}:{};return this.dependencies.checkpoint({campaign_id:this.context.campaign.id,source_id:this.context.source.id,queue_id:this.context.queue.id,status:'capturing',checkpoint:{...checkpoint,...lease}});}
     assertStageAllowed(stageTarget,checkpoint){const stage=Number(stageTarget),target=Number(this.context.campaign.targetCount);if(![50,300,target].includes(stage))throw coded('INVALID_STAGE_TARGET','阶段目标只能是50、300或Campaign最终目标。');if(stage===300&&checkpoint.qa_50_status!=='PASS')throw coded('STAGE_50_QA_REQUIRED','50 Goods QA未通过。');if(stage===target&&target>300&&checkpoint.qa_300_status!=='PASS')throw coded('STAGE_300_QA_REQUIRED','300 Goods QA未通过。');}
   }
 
