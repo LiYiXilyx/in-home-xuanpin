@@ -21,7 +21,14 @@ export function createCatalogClaimInspectionService({repository,activityRegistry
       evidenceSchemaVersion:'catalog-rpa-claim-evidence-v1',evidence,inspectedAt:now()});
     return {inspectionId:stored.id,...stored};
   }
-  return {listBlockers,inspect};
+  function recheckConfirmed({campaignId,firstInspectionId,secondInspectionId}){
+    const first=repository.getInspection(firstInspectionId),second=repository.getInspection(secondInspectionId),row=repository.listBlockerRows().find(item=>item.campaignId===campaignId);
+    if(!first||!second||!row||second.previousInspectionId!==first.id||second.determination!=='STALE_CONFIRMED')return {determination:'STALE_NOT_PROVEN',reasons:['CONFIRMED_INSPECTION_CHAIN_INVALID']};
+    if([first,second].some(item=>item.campaignId!==row.campaignId||item.queueId!==row.queueId||item.sourceId!==row.sourceId))return {determination:'STALE_NOT_PROVEN',reasons:['INSPECTION_SCOPE_CHANGED']};
+    const current=evidenceFor(row),activity=activityRegistry.snapshot({campaignId:row.campaignId,queueId:row.queueId});
+    return {...evaluateClaimStale({current,previous:second.evidence,activity,thresholds,now:now()}),current,activity,first,second,row};
+  }
+  return {listBlockers,inspect,recheckConfirmed};
 }
 
 function evidenceFor(row){const checkpoint=row.checkpoint??{};return {...row,

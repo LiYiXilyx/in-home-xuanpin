@@ -34,7 +34,23 @@ export function createCatalogClaimRecoveryRepository(db,{now=()=>new Date().toIS
       claimGeneration:Number(row.claim_generation),determination:row.determination,
       evidenceSchemaVersion:row.evidence_schema_version,evidence:JSON.parse(row.evidence_json),inspectedAt:row.inspected_at}:null;
   }
-  return {db,listBlockerRows,insertInspection,getInspection};
+  function getTerminationAuditByRequestId(requestId){const row=db.prepare('SELECT * FROM catalog_rpa_claim_termination_audits WHERE request_id=?').get(requestId);return row?mapAudit(row):null;}
+  function terminalizeClaim({campaignId,queueId,sourceId,firstInspectionId,secondInspectionId,claimToken,claimGeneration,requestId,evidence,hooks={}}){
+    const campaign=db.prepare('SELECT * FROM catalog_campaigns WHERE id=?').get(campaignId),queue=db.prepare('SELECT * FROM catalog_rpa_queue WHERE id=?').get(queueId),source=db.prepare('SELECT * FROM catalog_sources WHERE id=?').get(sourceId),timestamp=now();
+    const previous={campaign:campaign.status,queue:queue.status,source:source.status};
+    db.prepare("UPDATE catalog_campaigns SET status='cancelled',finished_at=?,updated_at=? WHERE id=?").run(timestamp,timestamp,campaignId);hooks.afterCampaign?.();
+    db.prepare("UPDATE catalog_rpa_queue SET status='cancelled',last_error_code='STALE_CLAIM_ENDED_BY_OPERATOR',updated_at=? WHERE id=?").run(timestamp,queueId);hooks.afterQueue?.();
+    db.prepare("UPDATE catalog_sources SET status='cancelled',last_error_code='STALE_CLAIM_ENDED_BY_OPERATOR',updated_at=? WHERE id=?").run(timestamp,sourceId);hooks.afterSource?.();
+    db.prepare("UPDATE catalog_source_runs SET stop_reason='STALE_CLAIM_ENDED_BY_OPERATOR',finished_at=? WHERE source_id=? AND finished_at IS NULL").run(timestamp,sourceId);hooks.afterSourceRuns?.();
+    const id=createId('catalog_claim_termination');
+    db.prepare(`INSERT INTO catalog_rpa_claim_termination_audits(id,request_id,campaign_id,category_key,category_profile_version,
+      queue_id,source_id,first_inspection_id,second_inspection_id,claim_token,claim_generation,termination_reason,
+      previous_statuses_json,new_statuses_json,stale_evidence_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id,requestId,campaignId,campaign.category_key,campaign.category_profile_version,queueId,sourceId,firstInspectionId,secondInspectionId,
+      claimToken,claimGeneration,'STALE_CLAIM_ENDED_BY_OPERATOR',JSON.stringify(previous),JSON.stringify({campaign:'cancelled',queue:'cancelled',source:'cancelled'}),JSON.stringify(evidence),timestamp);
+    return getTerminationAuditByRequestId(requestId);
+  }
+  return {db,listBlockerRows,insertInspection,getInspection,getTerminationAuditByRequestId,terminalizeClaim};
 }
 
 function mapBlocker(row) {
@@ -46,3 +62,4 @@ function mapBlocker(row) {
     campaignUpdatedAt:row.campaign_updated_at,sourceUpdatedAt:row.source_updated_at,hasOpenSourceRun:Boolean(row.has_open_source_run)};
 }
 function safeJson(value){try{return JSON.parse(value ?? '{}');}catch{return {};}}
+function mapAudit(row){return{id:row.id,requestId:row.request_id,campaignId:row.campaign_id,categoryKey:row.category_key,categoryProfileVersion:row.category_profile_version,queueId:row.queue_id,sourceId:row.source_id,firstInspectionId:row.first_inspection_id,secondInspectionId:row.second_inspection_id,claimToken:row.claim_token,claimGeneration:Number(row.claim_generation),terminationReason:row.termination_reason,previousStatuses:safeJson(row.previous_statuses_json),newStatuses:safeJson(row.new_statuses_json),staleEvidence:safeJson(row.stale_evidence_json),createdAt:row.created_at};}
