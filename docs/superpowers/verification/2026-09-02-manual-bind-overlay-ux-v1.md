@@ -31,4 +31,14 @@ The seven failures match the approved baseline by file, test name, assertion cla
 
 ## Runtime acceptance
 
-Pending ff-only stable integration, controlled Dashboard restart, unpacked-extension reload, and non-mutating visual inspection on the real Girls' Sets page. The acceptance screenshot must remain outside the repository.
+- Stable branch was fast-forwarded to `035d8a1c842f2c7793fa7273eb83685bb77455a4`.
+- Dashboard was stopped only through its owning execution session and restarted from the stable runtime. New PID: `42315`; `/api/health` returned `service=temu-operator-dashboard`.
+- The operator manually reloaded the unpacked extension because Chrome security policy prevents automation of `chrome://extensions/`.
+- The real Girls' Sets page was refreshed after login and inspected without invoking detect, bind, or capture.
+- DOM evidence: one Overlay root, one primary panel, one toast container, zero legacy Auto Runner/manual/capture/review controls.
+- Dynamic copy: `小女孩童装 / girls`, `OPEN_ENDED`, `手工采集 · 不限数量`, current unique `0`.
+- Action gates: detect enabled; bind and capture disabled with visible reasons; technical details collapsed.
+- Viewport evidence: panel `390 × 562.8`, bottom `786` within an `1904 × 804` viewport.
+- Acceptance screenshot: `/private/tmp/temu-manual-bind-overlay-ux-v1-acceptance.png` (outside the repository).
+
+Before the new extension was reloaded, the old installed Auto Runner had already moved the existing Girls' Sets Campaign to `manual_required` with a Motorcycle context-mismatch checkpoint. The replacement did not repair or overwrite that history. Post-acceptance read-only verification remained `current_unique=0`, `candidate_revision=0`, QA `NOT_RUN`, and the checkpoint heartbeat remained `2026-09-02T05:39:11.780Z`; therefore the new extension performed no detect, bind, capture, or Catalog write during acceptance.
