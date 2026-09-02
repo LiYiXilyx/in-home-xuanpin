@@ -277,6 +277,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     if (!Array.isArray(cards)) throw new AppError('Catalog batch cards必须是数组。',{ code:'CATALOG_BATCH_INVALID' });
     const payloadHash=hash({ campaignId,sourceId,batchId,pageUrl,pageTitle,cards,categoryKey,categoryProfileVersion,
       pageContext,pageBinding,captureMode });
+    const captureProfile=validateCategoryProfile(campaign.config?.categoryProfile);
     return transaction(db,() => {
       const registered=repository.registerBatch({ campaignId,sourceId,batchId:String(batchId),pageUrl,pageTitle,
         capturedAt,payloadHash,receivedCount:cards.length });
@@ -294,7 +295,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         serviceObserved+=1;
         const goodsId=normalizeGoodsId(raw.goods_id ?? raw.goodsId);
         const platform='temu';
-        const screening=screenElectronicRisk(raw);
+        const screening=captureProfile.profile_kind==='CAPTURE_ONLY'?captureOnlyScreening():screenElectronicRisk(raw);
         const previouslyExcluded=repository.hasCampaignExclusion(campaignId,goodsId);
         const screeningDecision=screening.decision==='exclude' || previouslyExcluded ? 'exclude':screening.decision;
         repository.recordSourceObservation({ campaignId,sourceId,batchId:String(batchId),goodsId,
@@ -960,13 +961,22 @@ function validateManualPassiveBatch(captureMode,cards,pageBinding,{pageUrl,pageC
     site_country:requiredString(pageBinding.site_country,'page_binding.site_country',32),language:requiredString(pageBinding.language,'page_binding.language',32),currency:requiredString(pageBinding.currency,'page_binding.currency',32),
     sort_order:requiredString(pageBinding.sort_order,'page_binding.sort_order',128),bound_url:validatePageUrl(pageBinding.bound_url),bound_at:isoTimestamp(pageBinding.bound_at,'page_binding.bound_at'),
     bound_category:requiredString(pageBinding.bound_category,'page_binding.bound_category',256),bound_sort:requiredString(pageBinding.bound_sort,'page_binding.bound_sort',128),
-    bound_goods_count:optionalPositiveInteger(pageBinding.bound_goods_count,'page_binding.bound_goods_count'),context_fingerprint:requiredString(pageBinding.context_fingerprint,'page_binding.context_fingerprint',128) };
-  const expectedFingerprint=fingerprint([binding.bound_url,binding.site_country,binding.language,binding.currency,binding.category_key,binding.bound_category,binding.bound_sort]);
+    bound_goods_count:optionalPositiveInteger(pageBinding.bound_goods_count,'page_binding.bound_goods_count'),
+    bound_breadcrumbs:Array.isArray(pageBinding.bound_breadcrumbs)?pageBinding.bound_breadcrumbs.map((value,index)=>requiredString(value,`page_binding.bound_breadcrumbs[${index}]`,256)):[],
+    context_fingerprint:requiredString(pageBinding.context_fingerprint,'page_binding.context_fingerprint',128) };
+  const fingerprintParts=[binding.bound_url,binding.site_country,binding.language,binding.currency,binding.category_key,binding.bound_category,binding.bound_sort];
+  if(profile.profile_kind==='CAPTURE_ONLY')fingerprintParts.push(binding.bound_breadcrumbs);
+  const expectedFingerprint=fingerprint(fingerprintParts),expectedUrl=new URL(profile.listing_url??binding.bound_url),boundUrl=new URL(binding.bound_url);
+  const captureOnlyContextValid=profile.profile_kind!=='CAPTURE_ONLY'||(
+    profile.category_aliases.some(value=>value.toLowerCase()===binding.bound_category.toLowerCase())
+    &&sameStringList(profile.breadcrumbs,binding.bound_breadcrumbs)
+    &&expectedUrl.hostname===boundUrl.hostname&&normalizedPath(expectedUrl.pathname)===normalizedPath(boundUrl.pathname));
   if(binding.status!=='BOUND'||binding.binding_version!=='manual-bind-v1'||binding.campaign_id!==context.campaign.id||binding.source_id!==context.source.id
     ||binding.category_key!==profile.category_key||binding.category_profile_version!==profile.category_profile_version
     ||binding.site_country!==profile.site_country||binding.language!==profile.language||binding.currency!==profile.currency
     ||binding.sort_order.toLowerCase()!==profile.sort_order.toLowerCase()||binding.bound_sort.toLowerCase()!==profile.sort_order.toLowerCase()
-    ||!profile.page_health.category_names.includes(binding.bound_category)||binding.bound_url!==pageUrl||binding.context_fingerprint!==expectedFingerprint
+    ||!profile.page_health.category_names.some(value=>value.toLowerCase()===binding.bound_category.toLowerCase())||!captureOnlyContextValid
+    ||binding.bound_url!==pageUrl||binding.context_fingerprint!==expectedFingerprint
     ||pageContext.categoryKey!==binding.category_key||pageContext.categoryProfileVersion!==binding.category_profile_version||!binding.bound_goods_count)throw new AppError(
     'Manual Passive页面绑定上下文无效或已经丢失。',{code:'PAGE_CONTEXT_LOST'});
   for (const card of cards) {
@@ -976,6 +986,9 @@ function validateManualPassiveBatch(captureMode,cards,pageBinding,{pageUrl,pageC
       `goods_id ${card.goods_id} 缺少合格的被动Network证据。`,{ code:'MANUAL_PASSIVE_EVIDENCE_REQUIRED' });
   }
 }
+function captureOnlyScreening(){return{decision:'passed',codes:[],reasons:[],classifierVersion:'capture-only-raw-v1',confidence:1};}
+function sameStringList(left=[],right=[]){return left.length===right.length&&left.every((value,index)=>value.toLowerCase()===right[index]?.toLowerCase());}
+function normalizedPath(value){const result=String(value).replace(/\/+$/,'');return result||'/';}
 function fingerprint(value){let hash=2166136261;for(const char of JSON.stringify(value)){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return (hash>>>0).toString(16).padStart(8,'0');}
 function plainObject(value,label) { if (!value || typeof value!=='object' || Array.isArray(value)) throw new AppError(`${label}必须是对象。`,{ code:'CATALOG_BATCH_INVALID' }); }
 function requiredString(value,field,maxLength) { const result=String(value ?? '').trim();if (!result || result.length>maxLength) throw new AppError(`${field}无效。`,{ code:'CATALOG_BATCH_INVALID' });return result; }

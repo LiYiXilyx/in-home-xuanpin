@@ -8,22 +8,28 @@
     const observed={
       url:normalizeUrl(domEvidence.url),siteCountry:String(domEvidence.siteCountry??''),language:String(domEvidence.language??''),
       currency:String(domEvidence.currency??''),category:String(domEvidence.category??''),categoryKey:String(domEvidence.categoryKey??''),
+      breadcrumbs:Array.isArray(domEvidence.breadcrumbs)?domEvidence.breadcrumbs.map(value=>String(value).trim()).filter(Boolean):[],
       sortOrder:String(domEvidence.sortOrder??domEvidence.sort??''),cardCount:Number(domEvidence.cardCount??0),
       searchNoResults:Boolean(domEvidence.searchNoResults??domEvidence.unhealthy),captchaBlocking:Boolean(domEvidence.captchaBlocking??domEvidence.verification),
       domReady:Boolean(domEvidence.ready??domEvidence.domReady??domEvidence.cardCount>0),networkReady:Boolean(networkEvidence.ready)
     };
-    const expectedCategories=profile.page_health?.category_names??[String(profile.display_name??profile.navigation?.breadcrumbs?.at?.(-1)??'')];
+    const expectedCategories=profile.category_aliases??profile.page_health?.category_names??[String(profile.display_name??profile.navigation?.breadcrumbs?.at?.(-1)??'')];
+    const captureOnly=profile.profile_kind==='CAPTURE_ONLY',expectedBreadcrumbs=profile.breadcrumbs??profile.navigation?.breadcrumbs??[];
     const checks={
       country:observed.siteCountry===profile.site_country,language:observed.language===profile.language,currency:observed.currency===profile.currency,
-      category:observed.categoryKey ? observed.categoryKey===profile.category_key:expectedCategories.includes(observed.category),
+      category:observed.categoryKey ? observed.categoryKey===profile.category_key:includesText(expectedCategories,observed.category),
+      breadcrumbs:!captureOnly||sameTextList(observed.breadcrumbs,expectedBreadcrumbs),
+      listingPath:!captureOnly||sameListingPath(observed.url,profile.listing_url),
       sort:observed.sortOrder.toLowerCase()===String(profile.sort_order).toLowerCase(),products:observed.cardCount>0,
       notSearchNoResults:!observed.searchNoResults,notCaptchaBlocking:!observed.captchaBlocking,
       evidenceReady:observed.domReady||observed.networkReady
     };
     const failed=Object.entries(checks).filter(([,ok])=>!ok).map(([name])=>name);
     const health={status:failed.length? 'BLOCKED':READY,code:failed[0]??READY,checks,failed};
+    const fingerprintParts=[observed.url,observed.siteCountry,observed.language,observed.currency,profile.category_key,observed.category,observed.sortOrder];
+    if(captureOnly)fingerprintParts.push(observed.breadcrumbs);
     return {profileKey:profile.category_key,profileVersion:profile.category_profile_version,observed,health,
-      contextFingerprint:fingerprint([observed.url,observed.siteCountry,observed.language,observed.currency,profile.category_key,observed.category,observed.sortOrder])};
+      contextFingerprint:fingerprint(fingerprintParts)};
   }
 
   function bindDetectedPage({detection,campaign,profile,sourceId,now=()=>new Date().toISOString(),generation=1}) {
@@ -34,6 +40,7 @@
       source_id:sourceId,category_key:profile.category_key,category_profile_version:profile.category_profile_version,
       site_country:profile.site_country,language:profile.language,currency:profile.currency,sort_order:profile.sort_order,
       bound_url:detection.observed.url,bound_category:detection.observed.category,bound_sort:detection.observed.sortOrder,
+      bound_breadcrumbs:Object.freeze([...(detection.observed.breadcrumbs??[])]),
       bound_goods_count:detection.observed.cardCount,bound_at:typeof now==='function'?now():String(now),context_fingerprint:detection.contextFingerprint});
   }
 
@@ -53,6 +60,10 @@
   function fingerprint(value){return fnv1a(JSON.stringify(value));}
   function fnv1a(value){let hash=2166136261;for(const char of String(value)){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return (hash>>>0).toString(16).padStart(8,'0');}
   function normalizeUrl(value){try{const url=new URL(String(value));url.hash='';return url.href;}catch{return String(value??'');}}
+  function includesText(values,value){const expected=String(value??'').trim().toLocaleLowerCase();return values.some(row=>String(row).trim().toLocaleLowerCase()===expected);}
+  function sameTextList(left,right){return left.length===right.length&&left.every((value,index)=>String(value).trim().toLocaleLowerCase()===String(right[index]).trim().toLocaleLowerCase());}
+  function sameListingPath(left,right){try{const a=new URL(left),b=new URL(right);return a.hostname.toLowerCase()===b.hostname.toLowerCase()&&normalizedPath(a.pathname)===normalizedPath(b.pathname);}catch{return false;}}
+  function normalizedPath(value){const result=String(value).replace(/\/+$/,'');return result||'/';}
   function assertCampaign(campaign,profile){if(!campaign?.id||campaign.categoryKey!==profile.category_key||campaign.categoryProfileVersion!==profile.category_profile_version)
     throw coded('CAMPAIGN_PROFILE_MISMATCH','Campaign 与 Category Profile 不匹配。');}
   function coded(code,message){const error=new Error(message);error.code=code;return error;}
