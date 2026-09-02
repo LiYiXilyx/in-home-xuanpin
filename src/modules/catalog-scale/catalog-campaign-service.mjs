@@ -50,7 +50,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       }
     }
     let campaign=repository.createCampaign({ id:id || undefined,name,campaignType,categoryKey:validated.category_key,
-      categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules.default_gate,
+      categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules?.default_gate??'non_electronic_unique_count',
       targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated,...configExtras } });
     if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
     if (campaignType==='refresh' || campaignType==='expansion') {
@@ -171,7 +171,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     const opportunity=hasTaxonomyPipelineImplementation(profile,'opportunity');
     return { category_key:profile.category_key,category_profile_version:profile.category_profile_version,
       display_name:profile.display_name,site_country:profile.site_country,language:profile.language,currency:profile.currency,
-      sort_order:profile.sort_order,profile_target_count:profile.target_count,
+      sort_order:profile.sort_order,profile_target_count:profile.profile_kind==='CAPTURE_ONLY'?null:profile.target_count,
       active_pool_count:baseline.activePoolVersionCount,active_pool_version_id:baseline.activePoolVersionId,
       capture_mode:MANUAL_PASSIVE_CAPTURE_MODE,available:Boolean(baseline.activePoolVersionExists
         && baseline.activePoolVersionCount>0 && baseline.consistent),baseline_consistency:baseline,

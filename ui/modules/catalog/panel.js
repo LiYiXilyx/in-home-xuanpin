@@ -29,6 +29,8 @@ export function catalogPanelMarkup(){return `
         <p>Profile Version：<strong id="catalog-onboarding-profile-version">—</strong></p>
         <p id="catalog-onboarding-capabilities">—</p>
         <button id="catalog-onboarding-open-listing" type="button">打开 Temu 类目页</button>
+        <label class="catalog-field">Initial Campaign 名称<input id="catalog-onboarding-campaign-name" maxlength="200" required></label>
+        <button id="catalog-onboarding-save-create" class="primary" type="button">保存并创建首次采集任务</button>
       </div>
     </section>
     <form id="catalog-create-form" class="catalog-form">
@@ -75,7 +77,8 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   root.innerHTML=catalogPanelMarkup();
   const catalogState=createCatalogState(),catalogApi=api??createCatalogApi({fetchImpl});
   patchCatalogState(catalogState,{mounted:true});
-  const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,createRequestId=null,lastContextKey=null;
+  const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,createRequestId=null,
+    profileRequestId=null,initialCampaignRequestId=null,lastContextKey=null;
   function render(){renderCatalogPanel({root,elements,state:catalogState});}
   function setError(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});render();}
   function updateSelection(){
@@ -117,7 +120,9 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(currentController===controller)currentController=null;}
   };
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
-    openWindow,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},applyRemote,refresh});
+    openWindow,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},
+    getProfileRequestId:()=>profileRequestId,setProfileRequestId:value=>{profileRequestId=value;},
+    getInitialCampaignRequestId:()=>initialCampaignRequestId,setInitialCampaignRequestId:value=>{initialCampaignRequestId=value;},applyRemote,refresh});
   mounts.set(root,controller);currentController=controller;
   void refresh();catalogPollingTimer=scheduler.setInterval(()=>{void refresh({silent:true});},Number(pollIntervalMs));
   return controller;
@@ -146,7 +151,8 @@ function collectElements(root){
     onboardingBreadcrumbs:byId('onboarding-breadcrumbs'),onboardingListingUrl:byId('onboarding-listing-url'),
     onboardingValidate:byId('onboarding-validate'),onboardingValidation:byId('onboarding-validation'),
     onboardingCategoryKey:byId('onboarding-category-key'),onboardingProfileVersion:byId('onboarding-profile-version'),
-    onboardingCapabilities:byId('onboarding-capabilities'),onboardingOpenListing:byId('onboarding-open-listing')};
+    onboardingCapabilities:byId('onboarding-capabilities'),onboardingOpenListing:byId('onboarding-open-listing'),
+    onboardingCampaignName:byId('onboarding-campaign-name'),onboardingSaveCreate:byId('onboarding-save-create')};
 }
 
 function bindCatalogHandlers(context){const {elements}=context;if(!elements.form)return;
@@ -160,6 +166,7 @@ function bindCatalogHandlers(context){const {elements}=context;if(!elements.form
     open:!context.state.onboarding.open}});context.render();});
   elements.onboardingForm.addEventListener('submit',event=>validateOnboarding(event,context));
   elements.onboardingOpenListing.addEventListener('click',()=>openOnboardingListing(context));
+  elements.onboardingSaveCreate.addEventListener('click',()=>saveAndCreateInitial(context));
 }
 
 async function validateOnboarding(event,context){event.preventDefault();const {state,api,elements}=context;
@@ -175,6 +182,30 @@ async function validateOnboarding(event,context){event.preventDefault();const {s
 }
 function openOnboardingListing(context){const url=context.state.onboarding.validation?.listing_url;
   if(!url)throw coded('CATEGORY_PROFILE_NOT_VALIDATED','请先验证类目配置。');context.openWindow(url);}
+
+async function saveAndCreateInitial(context){const {state,api,elements}=context;let registered=state.onboarding.registered;
+  if(!state.onboarding.validation||!state.onboarding.draft)return context.setError(coded('CATEGORY_PROFILE_NOT_VALIDATED','请先验证类目配置。'));
+  patchCatalogState(state,{loading:{...state.loading,onboardingSave:true},error:null});context.render();
+  try{
+    if(!state.onboarding.profileSaved){let requestId=context.getProfileRequestId();if(!requestId){requestId=createRequestIdentity({randomUUID:context.randomUUID});context.setProfileRequestId(requestId);}
+      const response=await api.registerOperatorProfile({request_id:requestId,...state.onboarding.draft});registered=response.profile;
+      patchCatalogState(state,{onboarding:{...state.onboarding,registered,profileSaved:true,campaignCreated:false,campaignErrorCode:null}});
+    }
+    const profilesResponse=await api.listProfiles(),profiles=profilesResponse.profiles??[];
+    const selected=profiles.find(row=>row.category_key===registered.category_key&&row.category_profile_version===registered.category_profile_version);
+    if(!selected)throw coded('CATEGORY_PROFILE_NOT_FOUND','保存后的 Category Profile 未出现在 Registry。');
+    patchCatalogState(state,{profiles,selectedProfile:selected});
+    let campaignRequestId=context.getInitialCampaignRequestId();if(!campaignRequestId){campaignRequestId=createRequestIdentity({randomUUID:context.randomUUID});context.setInitialCampaignRequestId(campaignRequestId);}
+    const body=buildInitialCreatePayload({profile:selected,campaignName:elements.onboardingCampaignName.value,requestId:campaignRequestId});
+    const response=await api.createInitial(body),current=response.result;
+    patchCatalogState(state,{currentCampaign:current,currentPool:null,initialQa:current?.qa??null,
+      onboarding:{...state.onboarding,registered,profileSaved:true,campaignCreated:true,campaignErrorCode:null}});
+  }catch(error){if(state.onboarding.profileSaved){patchCatalogState(state,{onboarding:{...state.onboarding,campaignCreated:false,
+      campaignErrorCode:error.code??'OPERATION_FAILED'},error:{code:'PROFILE_SAVED_CAMPAIGN_NOT_CREATED',
+      message:`${operatorErrorMessage({code:'PROFILE_SAVED_CAMPAIGN_NOT_CREATED'})}\n${operatorErrorMessage(error)}`}});context.render();}
+    else context.setError(error);
+  }finally{patchCatalogState(state,{loading:{...state.loading,onboardingSave:false}});context.render();}
+}
 
 async function createCampaign(event,context){event.preventDefault();const {state,api,elements}=context;
   patchCatalogState(state,{loading:{...state.loading,create:true},error:null});context.render();
@@ -233,6 +264,8 @@ function renderOnboarding(elements,state){const onboarding=state.onboarding,prof
   elements.onboardingCapabilities.textContent=profile
     ?'Raw Capture：READY · Initial Pool：READY · Classification：BLOCKED · Opportunity：BLOCKED':'—';
   elements.onboardingOpenListing.disabled=!profile;
+  elements.onboardingSaveCreate.disabled=!profile||state.loading.onboardingSave;
+  elements.onboardingSaveCreate.textContent=onboarding.profileSaved&&!onboarding.campaignCreated?'重试创建首次采集任务':'保存并创建首次采集任务';
 }
 
 function renderCategoryOptions({root,elements,state}){const values=[...new Set(state.profiles.map(row=>row.category_key))],previous=elements.category.value;

@@ -17,6 +17,7 @@ const ERROR_MESSAGES=Object.freeze({
   INITIAL_CATEGORY_STATE_INCONSISTENT:'该 Category 存在无 Pool 对应的 membership，请停止并检查数据。',
   CATEGORY_PROFILE_LATIN_ALIAS_REQUIRED:'中文类目必须至少填写一个英文别名，用于生成稳定 Category identity。',
   CATEGORY_PROFILE_GENERATED_FIELD_FORBIDDEN:'固定市场、采集模式和 Profile identity 由服务器生成，不允许手工覆盖。'
+  ,PROFILE_SAVED_CAMPAIGN_NOT_CREATED:'Profile 已保存，但首次采集任务未创建。请处理下方错误后重试；系统不会删除 Profile 或恢复旧 Campaign。'
 });
 
 export function calculateTarget(profile,requestedNewCount){
