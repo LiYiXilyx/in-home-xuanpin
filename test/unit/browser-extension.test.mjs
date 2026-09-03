@@ -44,7 +44,7 @@ test('Manual Bind Passive Runner exposes dynamic state and has no automatic capt
   for (const state of ['UNBOUND','PAGE_READY','PAGE_BOUND','PAGE_CONTEXT_LOST','CAPTURING','PAUSED','TARGET_REACHED','COMPLETED','FAILED']) assert.match(script,new RegExp(state));
   for (const metric of ['Category:','Campaign:','Profile:','页面健康:','Bind:','target:','unique progress:','本次新增/重复/失败:','CAPTCHA/error:']) assert.match(script,new RegExp(metric));
   assert.match(script,/MANUAL_BIND_PASSIVE_CAPTURE/);assert.match(script,/qa_50_status/);assert.match(script,/qa_300_status/);
-  assert.match(script,/capturePassive/);assert.match(script,/records\.has\(String\(card\.goods_id\)\)/);assert.match(script,/检测当前页面/);assert.match(script,/绑定当前页面/);assert.match(script,/采集当前页面/);assert.match(script,/导出影刀任务/);
+  assert.match(script,/capturePassive/);assert.match(script,/buildPassiveCandidates/);assert.doesNotMatch(script,/records\.has\(String\(card\.goods_id\)\)/);assert.match(script,/检测当前页面/);assert.match(script,/绑定当前页面/);assert.match(script,/采集当前页面/);assert.match(script,/导出影刀任务/);
   assert.doesNotMatch(script,/setInterval|clearInterval/);
   const binding=fs.readFileSync(path.join(root,'browser-extension/catalog-manual-binding.js'),'utf8');
   assert.match(binding,/bound_url/);assert.match(binding,/bound_at/);assert.match(binding,/bound_category/);assert.match(binding,/bound_sort/);assert.match(binding,/context_fingerprint/);
