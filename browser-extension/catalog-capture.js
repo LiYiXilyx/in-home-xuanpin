@@ -66,23 +66,28 @@
     return result;
   }
 
-  async function capturePassive({ campaignId,sourceId,maxCards=300,goodsIds=null,pageBinding=null,batchId=globalThis.crypto?.randomUUID?.() ?? `passive-${Date.now()}` }={}) {
+  async function capturePassive({ campaignId,sourceId,maxCards=300,goodsIds=null,pageBinding=null,transportPolicy=null,batchId=globalThis.crypto?.randomUUID?.() ?? `passive-${Date.now()}` }={}) {
     const parser=globalThis.TemuCatalogParser,cache=globalThis.TemuCatalogNetworkCache,merger=globalThis.TemuCatalogProductMerger;
     if (!parser || !cache || !merger) throw error('PASSIVE_CAPTURE_NOT_READY','Passive Network parser/cache/merger尚未就绪。');
     const rawCards=parser.parseDocument(document,{ baseUrl:location.href,enrich:false });const records=new Map(cache.snapshot().map(record=>[String(record.goods_id),record]));
-    const cards=[];const limit=resolvePassiveBatchLimit(maxCards);const requested=Array.isArray(goodsIds)?new Set(goodsIds.map(String)):null;
-    for (const dom of rawCards) {
-      if(requested&&!requested.has(String(dom.goods_id)))continue;
-      const record=records.get(String(dom.goods_id));if (!record || String(record.goods_id)!==String(dom.goods_id)) continue;
-      const merged=merger.mergeDomNetwork(dom,record);if (!merged) continue;
-      cards.push({ ...merged,network_observed:true,network_endpoint:record.endpoint??null,network_observed_at:record.lastSeenAt??null,
-        bound_url:pageBinding?.bound_url??null,bound_at:pageBinding?.bound_at??null,bound_category:pageBinding?.bound_category??null,bound_sort:pageBinding?.bound_sort??null });
-      if (cards.length>=limit) break;
-    }
+    const policy=transportPolicy?.policy??transportPolicy??'NETWORK_ENRICHED_REQUIRED',built=buildPassiveCandidates({domCards:rawCards,networkRecords:records,requested:goodsIds,policy,limit:resolvePassiveBatchLimit(maxCards),pageBinding});const cards=built.cards;
     if (!cards.length) throw error('NO_PASSIVE_NETWORK_DOM_MATCH','当前尚无 Network cache 与真实 DOM goods_id 的严格交集，请继续人工导航。');
     const result=await capture({ campaignId,sourceId,batchId,cards,captureMode:'MANUAL_BIND_PASSIVE_CAPTURE',pageBinding });
-    return { ...result,passiveGoodsIds:cards.map(card=>String(card.goods_id)),passiveCandidateCount:cards.length };
+    return { ...result,passiveGoodsIds:cards.map(card=>String(card.goods_id)),passiveCandidateCount:cards.length,candidateDiagnostics:built.diagnostics,captureTransportPolicy:policy };
   }
+
+  function buildPassiveCandidates({domCards=[],networkRecords=new Map(),requested=null,policy='NETWORK_ENRICHED_REQUIRED',limit=MAX_CARDS_PER_BATCH,pageBinding=null}={}){
+    const requestedIds=Array.isArray(requested)?new Set(requested.map(String)):null,domIds=new Set(domCards.map(card=>String(card?.goods_id??''))),cards=[];let networkEnriched=0,domOnlyEligible=0,domRejectedMinimumContract=0;
+    for(const dom of domCards){const id=String(dom?.goods_id??'');if(requestedIds&&!requestedIds.has(id))continue;const record=networkRecords.get(id),matched=record&&String(record.goods_id)===id;
+      let candidate=null;if(matched){candidate=globalThis.TemuCatalogProductMerger.mergeDomNetwork(dom,record);if(candidate)networkEnriched+=1;}
+      else if(policy==='DOM_REQUIRED_NETWORK_OPTIONAL'&&validDomMinimum(dom)){candidate={...dom,image_url:dom.image_url??null,price_amount:dom.price_amount??null,sales_count:dom.sales_count??null,rating:dom.rating??null,review_count:dom.review_count??null,capture_transport:'DOM',network_observed:false,field_provenance:dom.field_provenance??{}};domOnlyEligible+=1;}
+      else if(policy==='DOM_REQUIRED_NETWORK_OPTIONAL')domRejectedMinimumContract+=1;
+      if(!candidate)continue;cards.push({...candidate,network_observed:matched,network_endpoint:matched?record.endpoint??null:null,network_observed_at:matched?record.lastSeenAt??null:null,bound_url:pageBinding?.bound_url??null,bound_at:pageBinding?.bound_at??null,bound_category:pageBinding?.bound_category??null,bound_sort:pageBinding?.bound_sort??null});if(cards.length>=limit)break;
+    }
+    const networkOnlyRejected=[...networkRecords.keys()].filter(id=>!domIds.has(String(id))).length;
+    return{cards,diagnostics:{domVisibleGoods:domIds.size,networkCachedGoods:networkRecords.size,domNetworkIntersection:[...domIds].filter(id=>networkRecords.has(id)).length,networkEnriched,domOnlyEligible,domRejectedMinimumContract,networkOnlyRejected,totalEligibleForCurrentPolicy:cards.length}};
+  }
+  function validDomMinimum(card){if(!/^\d+$/.test(String(card?.goods_id??''))||!String(card?.title??'').trim())return false;try{const url=new URL(String(card?.source_url??card?.canonical_url??card?.href??''));return url.protocol==='https:'&&(url.hostname==='temu.com'||url.hostname.endsWith('.temu.com'));}catch{return false;}}
 
   function selectRequestedCards(domCards,requested) {
     if (requested===null || requested===undefined) return domCards;
@@ -117,6 +122,6 @@
     document.documentElement.append(button);
   }
 
-  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,splitCards,aggregateResults,selectRequestedCards,resolvePassiveBatchLimit,MAX_CARDS_PER_BATCH });
+  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,buildPassiveCandidates,splitCards,aggregateResults,selectRequestedCards,resolvePassiveBatchLimit,MAX_CARDS_PER_BATCH });
   // Listing controls are owned by the context-selected operator overlay.
 })();
