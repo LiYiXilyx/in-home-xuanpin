@@ -3,6 +3,7 @@ export function createTemuMarketEvidenceController({service}={}){if(!service)thr
   list:({goodsId,runId})=>service.listSessions(runId,goodsId),
   get:({goodsId,sessionId,runId})=>service.getEvidence(runId,goodsId,sessionId),
   close:({goodsId,sessionId,body})=>service.closeSession({...ids(goodsId,{...body,session_id:sessionId})}),
+  reissueBindToken:({goodsId,sessionId,body})=>service.reissueBindToken({...ids(goodsId,{...body,session_id:sessionId})}),
   bind:({body})=>service.consumeBindToken({bindToken:body?.bind_token,tabIdentityHash:body?.tab_identity_hash,contextHash:body?.context_hash,pageUrl:body?.page_url,query:body?.query,requestId:body?.request_id}),
   phase:({goodsId,sessionId,phase,body})=>service.savePhase({...ids(goodsId,{...body,session_id:sessionId}),phase,tabIdentityHash:body?.tab_identity_hash,contextHash:body?.context_hash,pageUrl:body?.page_url,query:body?.query,safeRegion:body?.safe_region,pngBase64:body?.png_base64,screenshotWidth:body?.screenshot_width,screenshotHeight:body?.screenshot_height,cards:body?.cards}),
   screenshot:({goodsId,sessionId,phase,runId})=>service.readScreenshot(runId,goodsId,sessionId,phase),

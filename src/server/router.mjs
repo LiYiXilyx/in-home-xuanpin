@@ -15,6 +15,8 @@ export function createRouter({ statusService,browserController,jobController,rev
         if(assessment&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.assessment({goodsId:decodeURIComponent(assessment[1]),sessionId:decodeURIComponent(assessment[2]),body:await readJson(request,64_000)}));}
         const close=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/close$/);
         if(close&&request.method==='POST'){assertLocalOrigin(request);return json(response,200,await temuMarketEvidenceController.close({goodsId:decodeURIComponent(close[1]),sessionId:decodeURIComponent(close[2]),body:await readJson(request,16_384)}));}
+        const reissue=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/reissue-bind-token$/);
+        if(reissue&&request.method==='POST'){assertLocalOrigin(request);return json(response,200,await temuMarketEvidenceController.reissueBindToken({goodsId:decodeURIComponent(reissue[1]),sessionId:decodeURIComponent(reissue[2]),body:await readJson(request,16_384)}));}
         const screenshot=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/phases\/(BEFORE|AFTER)\/screenshot$/);
         if(screenshot&&request.method==='GET')return evidenceScreenshot(response,await temuMarketEvidenceController.screenshot({goodsId:decodeURIComponent(screenshot[1]),sessionId:decodeURIComponent(screenshot[2]),phase:screenshot[3],runId:url.searchParams.get('run_id')}));
         const detail=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)$/);
