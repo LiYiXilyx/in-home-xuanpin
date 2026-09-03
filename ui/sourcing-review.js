@@ -1,4 +1,5 @@
 import {createReviewConsoleState} from './sourcing-review-state.js';
+import {createTemuMarketEvidenceState} from './temu-market-evidence-state.js';
 
 const RUN_ID=new URLSearchParams(location.search).get('run_id');
 const INITIAL_GOODS_ID=new URLSearchParams(location.search).get('goods_id');
@@ -16,6 +17,8 @@ const api={
   },
 };
 const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,initialGoodsId:INITIAL_GOODS_ID,openWindow:window.open.bind(window),onChange:()=>render()}):null;
+const evidenceApi={list:(run,goods)=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(goods)}/evidence-sessions?run_id=${encodeURIComponent(run)}`),get:(run,goods,session)=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(goods)}/evidence-sessions/${encodeURIComponent(session)}?run_id=${encodeURIComponent(run)}`),create:body=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(body.anchor_temu_goods_id)}/evidence-sessions`,{method:'POST',body}),saveAssessment:body=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(body.anchor_temu_goods_id)}/evidence-sessions/${encodeURIComponent(body.session_id)}/assessments`,{method:'POST',body})};
+const evidence=RUN_ID?createTemuMarketEvidenceState({api:evidenceApi,runId:RUN_ID,onChange:()=>render()}):null;let evidenceGoods=null;
 
 function text(tag,value,className) {
   const node=document.createElement(tag);
@@ -52,9 +55,14 @@ function render() {
   $('reviewNotice').textContent=state.notice??'';
   document.querySelectorAll('[data-filter]').forEach(button=>button.classList.toggle('active',button.dataset.filter===state.filter));
   renderGoods(state); renderTemu(detail); renderOpportunity(state); renderCandidates(state); renderDetail(candidate,detail);
+  renderMarketEvidence(state);if(state.currentGoodsId&&state.currentGoodsId!==evidenceGoods){evidenceGoods=state.currentGoodsId;queueMicrotask(()=>evidence.selectGoods(state.currentGoodsId,{suggestedQuery:detail?.temu_context?.temu_title??''}));}
   const ids=summary?.goods.map(row=>String(row.temu_goods_id))??[],index=ids.indexOf(state.currentGoodsId);
   $('reviewPrev').disabled=index<=0; $('reviewNext').disabled=index<0||index>=ids.length-1;
 }
+
+function renderMarketEvidence(reviewState){if(!evidence)return;const state=evidence.snapshot(),session=state.session,phases=state.evidence?.phases??[];$('market-evidence-query').value=state.query??'';$('market-evidence-session').textContent=session?`Session ${session.session_id} · ${session.status} · revision ${session.revision}`:'尚未创建 Session';$('market-evidence-before').textContent=`BEFORE：${phases.some(x=>x.phase==='BEFORE')?'已保存':'未保存'}`;$('market-evidence-after').textContent=`AFTER：${phases.some(x=>x.phase==='AFTER')?'已保存':'未保存'}`;$('market-evidence-create').disabled=!reviewState.currentGoodsId||Boolean(session&&session.status!=='CLOSED');$('market-evidence-copy-token').disabled=!state.bindToken;const root=$('market-evidence-results');root.replaceChildren();for(const phase of phases){const cards=JSON.parse(phase.cards_json??'[]');root.append(text('strong',`${phase.phase} · ${cards.length} 个商品`));for(const card of cards.slice(0,30)){const button=text('button',`${card.goods_id} · ${card.title??''} · ${money(card.price_eur,'EUR')}`);button.type='button';button.addEventListener('click',()=>{$('market-evidence-temu-price').value=card.price_eur??'';updateEvidenceRatio();});root.append(button);}}const writable=Boolean(session&&session.anchor_temu_goods_id===reviewState.currentGoodsId&&['AFTER_CAPTURED','ASSESSED'].includes(session.status));$('market-evidence-save').disabled=!writable;$('market-evidence-save-next').disabled=!writable;}
+function assessmentInput(){return{temu_price_eur:Number($('market-evidence-temu-price').value),temu_pack_quantity:Number($('market-evidence-temu-pack').value),supplier_price_cny:Number($('market-evidence-supplier-price').value),supplier_pack_quantity:Number($('market-evidence-supplier-pack').value),moq:$('market-evidence-moq').value===''?null:Number($('market-evidence-moq').value),supplier_product_id:review.snapshot().currentProductId,evidence_phase:'AFTER'};}
+function updateEvidenceRatio(){const fx=review.snapshot().detail?.fx_context,cny=Number($('market-evidence-supplier-price').value),sp=Number($('market-evidence-supplier-pack').value),eur=Number($('market-evidence-temu-price').value),tp=Number($('market-evidence-temu-pack').value),ratio=fx?.cny_per_eur>0&&cny>0&&sp>0&&eur>0&&tp>0?(eur/tp)/(cny/sp/fx.cny_per_eur):null;$('market-evidence-ratio').textContent=`价格倍率：${ratio?ratio.toFixed(2)+'x':'—'}`;}
 
 function renderGoods(state) {
   const root=$('goodsList'); root.replaceChildren();
@@ -158,4 +166,10 @@ $('operatorNote').addEventListener('input',()=>review.setNoteDirty(true));
 $('reviewOpportunityToggle').addEventListener('click',()=>act(()=>review.toggleVisual()));
 $('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
 $('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeVisualPreview();render();});
+$('market-evidence-create').addEventListener('click',()=>act(()=>evidence.createSession($('market-evidence-query').value)));
+$('market-evidence-copy-token').addEventListener('click',()=>act(async()=>{await navigator.clipboard.writeText(evidence.snapshot().bindToken);$('reviewNotice').textContent='绑定码已复制，请在人工打开的 Temu 搜索页扩展面板中粘贴。';}));
+$('market-evidence-import-random5').addEventListener('click',()=>{const row=review.snapshot().currentCandidate;if(row){$('market-evidence-supplier-price').value=row.price_rmb??row.supplier_price_rmb??'';$('market-evidence-moq').value=row.moq??'';$('market-evidence-supplier-pack').value=row.supplier_pack_quantity??1;updateEvidenceRatio();}});
+for(const id of ['market-evidence-temu-price','market-evidence-temu-pack','market-evidence-supplier-price','market-evidence-supplier-pack'])$(id).addEventListener('input',updateEvidenceRatio);
+$('market-evidence-save').addEventListener('click',()=>act(()=>evidence.saveAssessment({assessment:assessmentInput()})));
+$('market-evidence-save-next').addEventListener('click',()=>act(()=>evidence.saveAndNext({sessionId:evidence.snapshot().session?.session_id,expectedRevision:evidence.snapshot().session?.revision,assessment:assessmentInput(),next:()=>review.next({confirmDiscard:confirmDiscardNote})})));
 if(review)act(()=>review.load());else render();
