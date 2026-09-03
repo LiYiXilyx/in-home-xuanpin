@@ -1,10 +1,26 @@
 import { operatorMessage } from './status-service.mjs';
 
-export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,serveStatic,
+export function createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
+      if(temuMarketEvidenceController&&url.pathname.startsWith('/api/sourcing/review/')) {
+        const sessions=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions$/);
+        if(sessions&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.create({goodsId:decodeURIComponent(sessions[1]),body:await readJson(request,32_768)}));}
+        if(sessions&&request.method==='GET')return json(response,200,await temuMarketEvidenceController.list({goodsId:decodeURIComponent(sessions[1]),runId:url.searchParams.get('run_id')}));
+        const phase=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/phases\/(BEFORE|AFTER)$/);
+        if(phase&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.phase({goodsId:decodeURIComponent(phase[1]),sessionId:decodeURIComponent(phase[2]),phase:phase[3],body:await readJson(request,8_000_000)}));}
+        const assessment=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/assessments$/);
+        if(assessment&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.assessment({goodsId:decodeURIComponent(assessment[1]),sessionId:decodeURIComponent(assessment[2]),body:await readJson(request,64_000)}));}
+        const close=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/close$/);
+        if(close&&request.method==='POST'){assertLocalOrigin(request);return json(response,200,await temuMarketEvidenceController.close({goodsId:decodeURIComponent(close[1]),sessionId:decodeURIComponent(close[2]),body:await readJson(request,16_384)}));}
+        const screenshot=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/phases\/(BEFORE|AFTER)\/screenshot$/);
+        if(screenshot&&request.method==='GET')return evidenceScreenshot(response,await temuMarketEvidenceController.screenshot({goodsId:decodeURIComponent(screenshot[1]),sessionId:decodeURIComponent(screenshot[2]),phase:screenshot[3],runId:url.searchParams.get('run_id')}));
+        const detail=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)$/);
+        if(detail&&request.method==='GET')return json(response,200,await temuMarketEvidenceController.get({goodsId:decodeURIComponent(detail[1]),sessionId:decodeURIComponent(detail[2]),runId:url.searchParams.get('run_id')}));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/review/evidence-extension/bind-token/consume')return json(response,200,await temuMarketEvidenceController.bind({body:await readJson(request,32_768)}),EXTENSION_CORS_HEADERS);
+      }
       if(sourcingReviewController&&url.pathname.startsWith('/api/sourcing/review/')) {
         const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
         if(mutation) assertLocalOrigin(request);
@@ -227,7 +243,7 @@ async function readJson(request,maxBytes=16_384) {
 function statusFor(code) {
   if(code==='LOCAL_ORIGIN_REQUIRED')return 403;
   if(['JOB_NOT_FOUND','IMPORT_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATALOG_RPA_CLAIM_NOT_FOUND','CATALOG_RPA_INSPECTION_NOT_FOUND','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND','REVIEW_RUN_NOT_FOUND','REVIEW_GOODS_NOT_FOUND','REVIEW_CANDIDATE_NOT_FOUND','REVIEW_IMAGE_NOT_FOUND'].includes(code))return 404;
-  if(['RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CATALOG_RPA_INSPECTION_SCOPE_MISMATCH','CATALOG_RPA_INSPECTION_TOO_SOON','STALE_CLAIM_NOT_CONFIRMED','STALE_CLAIM_REQUEST_CONFLICT','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','CATEGORY_PROFILE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_ALREADY_EXISTS','CATEGORY_PROFILE_BUILT_IN_CONFLICT','CATEGORY_PROFILE_REGISTRATION_IN_PROGRESS','CATALOG_PREVIEW_REVISION_STALE','CATALOG_PREVIEW_SCOPE_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH','REVIEW_CONFLICT'].includes(code))return 409;
+  if(['EVIDENCE_SESSION_CONTEXT_MISMATCH','EVIDENCE_SESSION_ALREADY_WRITABLE','EVIDENCE_SESSION_REVISION_CONFLICT','EVIDENCE_SESSION_PHASE_ORDER_INVALID','EVIDENCE_SESSION_PHASE_ALREADY_SEALED','EVIDENCE_BIND_TOKEN_EXPIRED','EVIDENCE_REQUEST_ID_CONFLICT','RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CATALOG_RPA_INSPECTION_SCOPE_MISMATCH','CATALOG_RPA_INSPECTION_TOO_SOON','STALE_CLAIM_NOT_CONFIRMED','STALE_CLAIM_REQUEST_CONFLICT','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','CATEGORY_PROFILE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_ALREADY_EXISTS','CATEGORY_PROFILE_BUILT_IN_CONFLICT','CATEGORY_PROFILE_REGISTRATION_IN_PROGRESS','CATALOG_PREVIEW_REVISION_STALE','CATALOG_PREVIEW_SCOPE_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH','REVIEW_CONFLICT'].includes(code))return 409;
   return 400;
 }
 function mapOperatorCampaignResult(result) {
@@ -280,3 +296,4 @@ function reviewImage(response,result) {
   }
   throw Object.assign(new Error('review image 不可用'),{code:'REVIEW_IMAGE_NOT_FOUND'});
 }
+function evidenceScreenshot(response,bytes){response.writeHead(200,{'Content-Type':'image/png','Content-Length':bytes.length,'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'});response.end(bytes);}

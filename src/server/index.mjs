@@ -43,6 +43,9 @@ import { createYingdaoImportService } from '../modules/sourcing/yingdao-import-s
 import { createSourcingReviewService } from '../modules/sourcing/sourcing-review-service.mjs';
 import { createSourcingReviewImageResolver } from '../modules/sourcing/sourcing-review-images.mjs';
 import { createSourcingReviewController } from './controllers/sourcing-review-controller.mjs';
+import { createTemuMarketEvidenceRepository } from '../db/repositories/temu-market-evidence-repository.mjs';
+import { createTemuMarketEvidenceService } from '../modules/sourcing/temu-market-evidence-service.mjs';
+import { createTemuMarketEvidenceController } from './controllers/temu-market-evidence-controller.mjs';
 import { loadRunOpportunityWorkbook } from '../modules/sourcing/review-opportunity-workbook.mjs';
 import { resolveReviewFx } from '../modules/sourcing/review-opportunity-calculator.mjs';
 import { loadSourcingConfig } from '../modules/sourcing/sourcing-1688.mjs';
@@ -98,6 +101,11 @@ export async function createOperationsServer(options={}) {
   const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');
   migrateSourcingDatabase({databasePath:sourcingDatabasePath});
   const sourcingDb=openDatabase(sourcingDatabasePath,{allowRunnerWrite:true});
+  const evidenceRepository=createTemuMarketEvidenceRepository(sourcingDb);
+  const evidenceFx=resolveReviewFx(loadSourcingConfig(options.sourcingConfigPath??path.join(projectDir,'config/1688-sourcing-v1.json')));
+  const evidenceService=createTemuMarketEvidenceService({repository:evidenceRepository,fx:evidenceFx,
+    screenshotRoot:options.marketEvidenceScreenshotRoot??path.join(sourcingRoot,'market-evidence')});
+  const temuMarketEvidenceController=options.temuMarketEvidenceController??createTemuMarketEvidenceController({service:evidenceService});
   const sourcingRepository=createSourcingRepository(sourcingDb);
   const sourcingService=options.sourcingService??createYingdaoImportService({repository:sourcingRepository});
   const sourcingSettings=options.sourcingSettings??createSourcingSettings({settingsPath:options.sourcingSettingsPath??path.join(sourcingRoot,'sourcing-console-settings.json')});
@@ -135,7 +143,7 @@ export async function createOperationsServer(options={}) {
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
-  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,serveStatic,
+  const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
     environment:{ name:config.app.environment,testMode:testController.isTestMode },logError:options.logError });
   const server=http.createServer(router);
   let closed=false;
