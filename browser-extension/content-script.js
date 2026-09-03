@@ -116,6 +116,8 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
     runner[method]().then(result=>sendResponse({ok:true,result})).catch(error=>sendResponse({ok:false,error:{code:error.code,message:error.message}}));return true;
   }
   if(message?.type==='YINGDAO_EXPORT_SEAM'){const context=globalThis.TemuCatalogManualPassiveRunner?.context;sendResponse({ok:true,result:{integrationSeam:'YingDao Task Export V1',categoryKey:context?.campaign?.categoryKey??null,poolVersionId:context?.poolVersionId??null}});return undefined;}
+  const evidenceActions={EVIDENCE_BIND_PAGE:()=>globalThis.TemuMarketEvidence?.bind(message.bindToken),EVIDENCE_CAPTURE_BEFORE:()=>globalThis.TemuMarketEvidence?.capture('BEFORE'),EVIDENCE_CAPTURE_AFTER:()=>globalThis.TemuMarketEvidence?.capture('AFTER')};
+  if(evidenceActions[message?.type]){evidenceActions[message.type]().then(result=>sendResponse({ok:true,result})).catch(error=>sendResponse({ok:false,error:{code:error.code,message:error.message}}));return true;}
   if (message?.type === 'GET_CURRENT_PAGE') {
     sendResponse(currentPage());
     return undefined;
@@ -133,4 +135,3 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
 
 if (currentPage().isTemuProductPage && !document.getElementById('temu-catalog-operator-overlay')) installCaptureButton();
 setTimeout(reportStrongReviewSafetySignal,1500);
-if(location.hostname==='www.temu.com')globalThis.TemuMarketEvidence?.mount();

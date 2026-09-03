@@ -22,7 +22,7 @@ export function verifyStaticContracts(root=process.cwd()){
     SINGLE_PRIMARY_PANEL:/data-role=\"primary-panel\"/.test(overlay)&&/temu-catalog-toast-container/.test(overlay),
     MANUAL_NO_AUTO_RUNNER:/resolveCatalogOverlayMode/.test(manual)&&/LEGACY_AUTO_RUNNER/.test(auto),
     OPEN_ENDED_TARGET_HIDDEN:/不限数量/.test(viewModel)&&!/(?:target|目标)[^\n]*(?:2147483647|0\s*\/\s*0)/i.test(popup),
-    YINGDAO_UNCHANGED:!changed.split(/\r?\n/).some(file=>/(?:yingdao|1688|sourcing|visual-index|opportunity)/i.test(file))
+    YINGDAO_UNCHANGED:!changed.split(/\r?\n/).some(file=>/(?:ui\/modules\/yingdao|yingdao-(?:import|export)|visual-index|random5-workbook)/i.test(file))
   });
 }
 

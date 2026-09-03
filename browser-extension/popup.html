@@ -17,6 +17,10 @@
     <div class="row"><span class="label">cutoff_date</span><span class="value" id="cutoff-date">—</span></div>
     <button id="start" type="button" disabled>开始采集</button>
   </section>
+  <section id="evidence-panel">
+    <h2>Temu 人工搜索证据</h2><input id="evidence-bind-token" placeholder="粘贴 Review 页面绑定码">
+    <button id="evidence-bind" type="button">绑定当前搜索页</button><button id="evidence-before" type="button">保存 BEFORE</button><button id="evidence-after" type="button">保存 AFTER</button>
+  </section>
   <div id="status" role="status" aria-live="polite">正在检查当前页面和本地运营台…</div>
   <script src="catalog-operator-view-model.js"></script>
   <script src="catalog-popup-view.js"></script>

@@ -1,7 +1,7 @@
 'use strict';
 
 const elements={ goodsId:document.querySelector('#goods-id'),matched:document.querySelector('#matched'),cutoffDate:document.querySelector('#cutoff-date'),start:document.querySelector('#start'),status:document.querySelector('#status'),
-  reviewPanel:document.querySelector('#review-panel'),catalogPanel:document.querySelector('#catalog-panel') };
+  reviewPanel:document.querySelector('#review-panel'),catalogPanel:document.querySelector('#catalog-panel'),evidenceToken:document.querySelector('#evidence-bind-token'),evidenceBind:document.querySelector('#evidence-bind'),evidenceBefore:document.querySelector('#evidence-before'),evidenceAfter:document.querySelector('#evidence-after') };
 let activeTabId=null;
 const MANUAL_MODES=new Set(['MANUAL_BIND_PASSIVE_CAPTURE','MANUAL_NAVIGATION_PASSIVE_CAPTURE']);
 
@@ -55,5 +55,9 @@ elements.start.addEventListener('click',async () => {
   } catch (error) { elements.status.textContent=`未采集：${error.message}`; }
   finally { elements.start.disabled=false; }
 });
+async function evidenceAction(type,extra={}){elements.status.textContent='正在处理人工搜索证据…';const response=await tabMessage(activeTabId,{type,...extra});if(!response?.ok)throw Object.assign(new Error(response?.error?.message??'证据操作失败'),{code:response?.error?.code});elements.status.textContent=`证据操作完成：${response.result?.status??response.result?.phase?.phase??''}`;return response.result;}
+elements.evidenceBind.addEventListener('click',()=>evidenceAction('EVIDENCE_BIND_PAGE',{bindToken:elements.evidenceToken.value}).catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
+elements.evidenceBefore.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_BEFORE').catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
+elements.evidenceAfter.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_AFTER').catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
 
 load();

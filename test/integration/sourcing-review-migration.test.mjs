@@ -105,7 +105,7 @@ test('004 additively preserves evidence and enforces one selected candidate per 
   const repeated=migrateSourcingDatabase({databasePath,migrationsDir});
   db=openDatabase(databasePath,{allowRunnerWrite:true});
   try {
-    assert.deepEqual(upgraded.applied,['004_sourcing_review_console_v1.sql']);
+    assert.deepEqual(upgraded.applied,['004_sourcing_review_console_v1.sql','005_temu_market_evidence_mvp_v1.sql']);
     assert.deepEqual(repeated.applied,[]);
     const columns=new Map(db.prepare("PRAGMA table_info('supplier_match_candidates')").all().map(row=>[row.name,row]));
     assert.equal(columns.get('review_excluded').notnull,1);
