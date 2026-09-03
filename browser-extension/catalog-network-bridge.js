@@ -20,7 +20,8 @@
     if(bytes>MAX_PAYLOAD_BYTES){cache?.noteBridgeReject?.('payload','payload_bytes');return false;}
     const payload=message.payload,products=payload.products;
     const endpointDiagnostic=diagnosePayloadEndpoint(payload.endpoint);
-    if(endpointDiagnostic.normalized_endpoint!=='/api/poppy/v1/opt'){cache?.noteEndpointReject?.(endpointDiagnostic);cache?.noteBridgeReject?.('schema','endpoint');return false;}
+    const endpointAllowed=globalThis.TemuCatalogNetworkEndpoints?.isCatalogProductEndpoint?.(payload.endpoint,location.href)??endpointDiagnostic.normalized_endpoint==='/api/poppy/v1/opt';
+    if(!endpointAllowed){cache?.noteEndpointReject?.(endpointDiagnostic);cache?.noteBridgeReject?.('schema','endpoint');return false;}
     if(typeof payload.observed_at!=='string'){cache?.noteBridgeReject?.('schema','observed_at');return false;}
     if(!Array.isArray(products)||products.length<1||products.length>MAX_PRODUCTS_PER_MESSAGE){cache?.noteBridgeReject?.('schema','products_shape');return false;}
     const parser=globalThis.TemuCatalogNetworkParser;if(typeof parser?.analyzeProductRecords!=='function'){cache?.noteParseError?.({reason:'parser_unavailable',input_count:products.length});cache?.noteBridgeReject?.('schema','parser_unavailable');return false;}
@@ -30,7 +31,7 @@
     if(analysis.invalid.length){cache?.noteParseError?.({reason:'invalid_goods_id',stage:'identity_normalization',input_count:products.length,normalized_count:normalized.length,invalid:analysis.invalid});}
     if(normalized.length<1){const reason=analysis.status==='collection_empty'?'parser_collection_empty':analysis.status==='identity_rejected'?'invalid_goods_id':'parser_no_records';if(!analysis.invalid.length)cache?.noteParseError?.({reason,stage:analysis.stage,input_count:products.length,normalized_count:0});cache?.noteBridgeReject?.('schema',reason);return false;}
     cache?.noteParseSuccess?.();
-    cache.observe({endpoint:'/api/poppy/v1/opt',observedAt:payload.observed_at,products:normalized});return true;
+    cache.observe({endpoint:endpointDiagnostic.normalized_endpoint,observedAt:payload.observed_at,products:normalized});return true;
   }catch{globalThis.TemuCatalogNetworkCache?.noteBridgeReject?.('schema','exception');return false;}}
 
   function normalizePayloadEndpoint(value){

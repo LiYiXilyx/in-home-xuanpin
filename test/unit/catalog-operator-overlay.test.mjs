@@ -38,4 +38,6 @@ test('health markup shows listing path, breadcrumb source, DOM/network and every
   const html=api.TemuCatalogOperatorOverlay.renderMarkup(api.TemuCatalogOperatorViewModel.build(value),{collapsed:false});for(const text of ['页面路径','面包屑','Breadcrumb','CAPTCHA','SEARCH_NO_RESULTS','DOM / Network'])assert.match(html,new RegExp(text));
 });
 
+test('operator markup exposes coverage counts and capture completion reports actual batch counts',()=>{const api=modules(),value=snapshot({health:'READY',bound:true});value.networkDiagnostics={dom_unique_goods:40,network_unique_goods:42,network_enriched_goods:40,total_fetch_seen:7,total_xhr_seen:5};const html=api.TemuCatalogOperatorOverlay.renderMarkup(api.TemuCatalogOperatorViewModel.build(value),{collapsed:false});assert.match(html,/DOM商品 40/);assert.match(html,/网络商品 42/);assert.match(html,/严格交集 40/);assert.equal(api.TemuCatalogOperatorOverlay.captureSuccessMessage({lastResult:{audit:{acceptedGoods:37,campaignStagingDeduped:3}},campaign:{nonElectronicUniqueCount:101},networkDiagnostics:{dom_unique_goods:40,network_enriched_goods:40}}),'采集完成：页面40，严格交集40，收到40，新增37，重复3，当前共101。');});
+
 function button(html,id){return html.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`))?.[0]??'';}

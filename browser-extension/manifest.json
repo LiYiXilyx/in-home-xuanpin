@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["catalog-network-endpoints.js","temu-network-interceptor.js"],
+      "js": ["catalog-network-endpoints.js","catalog-network-parser.js","temu-network-interceptor.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },

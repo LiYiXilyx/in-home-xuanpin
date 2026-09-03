@@ -40,6 +40,8 @@ test('READY enables bind and BOUND enables capture using the same state contract
   const bound={...ready,state:'PAGE_BOUND',binding:{status:'BOUND',context_fingerprint:'fp'}};assert.equal(load().build(bound).steps.capture.enabled,true);
 });
 
+test('technical model exposes visible, network and strict-intersection coverage counts',()=>{const value=girls({networkDiagnostics:{dom_unique_goods:40,network_unique_goods:42,network_enriched_goods:40,total_fetch_seen:7,total_xhr_seen:5,network_endpoint_counts:{'/api/poppy/v1/search':2}},detection:{health:{status:'READY',checks:{evidenceReady:true}},observed:{cardCount:40,domReady:true,networkReady:true}}});const technical=load().build(value).technical;assert.equal(technical.domGoods,40);assert.equal(technical.networkGoods,42);assert.equal(technical.strictIntersection,40);assert.equal(technical.coverageComplete,true);assert.equal(technical.fetchCount,7);assert.equal(technical.xhrCount,5);});
+
 test('manual_required projects RECOVERY_REQUIRED with truthful binding and capture gates',()=>{
   const value=girls({state:'RECOVERY_REQUIRED',binding:{status:'BOUND',context_fingerprint:'stale'}});value.context.campaign={...value.context.campaign,status:'manual_required'};value.context.queue={status:'manual_required',checkpoint:{}};
   const model=load().build(value);assert.equal(model.task.status,'任务需要恢复');assert.equal(model.binding.status,'UNBOUND');assert.equal(model.steps.recover.enabled,true);assert.equal(model.steps.bind.enabled,false);assert.equal(model.steps.capture.enabled,false);assert.match(model.steps.bind.disabledReason,/先恢复当前采集任务/);assert.match(model.recovery.reason,/页面检测未通过/);

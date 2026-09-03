@@ -53,6 +53,11 @@ test('DOM-only detection blocks binding and capture with zero writes',async()=>{
   await assert.rejects(()=>runner.bindCurrentPage(),error=>error.code==='PAGE_HEALTH_BLOCKED');await assert.rejects(()=>runner.captureCurrentPage(),error=>error.code==='PAGE_BINDING_REQUIRED');assert.equal(h.writes.length,0);assert.equal(h.submits,0);
 });
 
+test('partial strict intersection blocks binding and capture without writes',async()=>{
+  const {ManualPassiveRunner,STATES}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);await runner.restore(initial);h.setNetwork({network_cache_size:40,network_unique_goods:40,dom_unique_goods:2,network_enriched_goods:1,total_fetch_seen:3,total_xhr_seen:2});
+  const result=await runner.detectCurrentPage();assert.equal(result.state,STATES.UNBOUND);assert.equal(result.detection.health.code,'STRICT_CAPTURE_EVIDENCE_REQUIRED');assert.equal(result.networkDiagnostics.network_enriched_goods,1);assert.equal(result.networkDiagnostics.dom_unique_goods,2);await assert.rejects(()=>runner.bindCurrentPage(),error=>error.code==='PAGE_HEALTH_BLOCKED');assert.equal(h.writes.length,0);assert.equal(h.submits,0);
+});
+
 test('page context change invalidates binding before submit',async()=>{
   const {ManualPassiveRunner,STATES}=loadModule(),initial=context(),h=harness(initial),runner=new ManualPassiveRunner(h.dependencies,initial);await runner.restore(initial);await runner.detectCurrentPage();await runner.bindCurrentPage();
   h.setPage(healthy({currency:'USD'}));await assert.rejects(()=>runner.captureCurrentPage(),error=>error.code==='PAGE_CONTEXT_LOST');assert.equal(runner.state,STATES.PAGE_CONTEXT_LOST);assert.equal(runner.binding,null);assert.equal(h.submits,0);
