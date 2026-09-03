@@ -78,7 +78,7 @@
 
   function buildPassiveCandidates({domCards=[],networkRecords=new Map(),requested=null,policy='NETWORK_ENRICHED_REQUIRED',limit=MAX_CARDS_PER_BATCH,pageBinding=null}={}){
     const requestedIds=Array.isArray(requested)?new Set(requested.map(String)):null,domIds=new Set(domCards.map(card=>String(card?.goods_id??''))),cards=[];let networkEnriched=0,domOnlyEligible=0,domRejectedMinimumContract=0;
-    for(const dom of domCards){const id=String(dom?.goods_id??'');if(requestedIds&&!requestedIds.has(id))continue;const record=networkRecords.get(id),matched=record&&String(record.goods_id)===id;
+    for(const dom of domCards){const id=String(dom?.goods_id??'');if(requestedIds&&!requestedIds.has(id))continue;const record=networkRecords.get(id),matched=Boolean(record&&String(record.goods_id)===id);
       let candidate=null;if(matched){candidate=globalThis.TemuCatalogProductMerger.mergeDomNetwork(dom,record);if(candidate)networkEnriched+=1;}
       else if(policy==='DOM_REQUIRED_NETWORK_OPTIONAL'&&validDomMinimum(dom)){candidate={...dom,image_url:dom.image_url??null,price_amount:dom.price_amount??null,sales_count:dom.sales_count??null,rating:dom.rating??null,review_count:dom.review_count??null,capture_transport:'DOM',network_observed:false,field_provenance:dom.field_provenance??{}};domOnlyEligible+=1;}
       else if(policy==='DOM_REQUIRED_NETWORK_OPTIONAL')domRejectedMinimumContract+=1;
