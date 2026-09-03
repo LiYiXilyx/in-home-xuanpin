@@ -12,6 +12,7 @@ import { buildInitialActivationPayload } from './initial-candidate-hash.mjs';
 import { evaluateInitialPoolQa } from './initial-pool-qa.mjs';
 import { createInitialActivationCoordinator } from './initial-activation-coordinator.mjs';
 import { screenCatalogElectronicRisk } from './electronic-screening.mjs';
+import { DOM_REQUIRED_NETWORK_OPTIONAL,resolveCaptureTransportPolicy } from './capture-transport-policy.mjs';
 
 const CAMPAIGN_TRANSITIONS=Object.freeze({
   pending:['running','cancelled'],running:['paused','manual_required','qa_pending','failed','cancelled'],paused:['running','failed','cancelled'],
@@ -54,7 +55,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     }
     let campaign=repository.createCampaign({ id:id || undefined,name,campaignType,categoryKey:validated.category_key,
       categoryProfileVersion:validated.category_profile_version,targetGate:validated.business_rules?.default_gate??'non_electronic_unique_count',
-      targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated,...configExtras } });
+      targetCount:targetCount ?? validated.target_count,baselinePoolCount,config:{ categoryProfile:validated,
+        captureTransportPolicy:configExtras.captureTransportPolicy??resolveCaptureTransportPolicy({campaign:{campaignType,browserControlMode:browserContext?.controlMode},profile:validated}).policy,...configExtras } });
     if (browserContext) campaign=repository.setCampaignBrowserContext(campaign.id,browserContext);
     if (campaignType==='refresh' || campaignType==='expansion') {
       repository.captureCampaignBaseline(campaign.id);
@@ -291,7 +293,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         return { idempotentReplay:true,batch:registered.batch,campaign:repository.getCampaign(campaignId) };
       }
       let stagingCount=0,excludedCount=0,duplicateCount=0;
-      let serviceObserved=0,electronicExcluded=0,otherBusinessExcluded=0,eligibleGoods=0,acceptedGoods=0;
+      let serviceObserved=0,electronicExcluded=0,otherBusinessExcluded=0,eligibleGoods=0,acceptedGoods=0,networkEnrichedSaved=0,domOnlySaved=0;
       let stoppedDueToTarget=0,targetGateStopped=false;const initialCandidates=[];
       let acceptedNonElectronic=campaign.nonElectronicUniqueCount;
       for (const raw of cards) {
@@ -320,7 +322,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
           && acceptedNonElectronic>=campaign.targetCount && (campaign.campaignType==='refresh' || (!baselineItem && !existingStaging))) {
           stoppedDueToTarget+=1;targetGateStopped=true;break;
         }
-        const normalized=normalizeCard(raw,goodsId,capturedAt);
+        const normalized=normalizeCard(raw,goodsId,capturedAt);if(raw.capture_transport==='NETWORK_ENRICHED')networkEnrichedSaved+=1;else if(raw.capture_transport==='DOM')domOnlySaved+=1;
         const result=repository.upsertStaging(campaign,source,String(batchId),normalized,screening.decision);
         if (campaign.campaignType==='initial' && screening.decision==='passed') initialCandidates.push(
           buildInitialActivationPayload({ campaign,source,batchId:String(batchId),product:normalized }));
@@ -341,7 +343,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
       const audit={ campaignTarget:refreshedPolicy.businessTarget,targetReached:refreshedPolicy.targetReached,
         serviceObserved,electronicExcluded,otherBusinessExcluded,eligibleGoods,acceptedGoods,stoppedDueToTarget,
         unprocessedAfterTarget:targetGateStopped ? Math.max(0,cards.length-serviceObserved):0,failed:0,
-        campaignStagingDeduped:duplicateCount };
+        campaignStagingDeduped:duplicateCount,networkEnrichedSaved,domOnlySaved,networkOnlyRejected:0 };
       return { idempotentReplay:false,batch,campaign:refreshedCampaign,audit };
     });
   }
@@ -354,8 +356,10 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
     const profile=validateCategoryProfile(campaign.config?.categoryProfile);
     const activePool=db.prepare("SELECT id FROM catalog_pool_versions WHERE category_key=? AND status='active' ORDER BY activated_at DESC,id DESC LIMIT 1").get(campaign.categoryKey);
     const quantityPolicy=getCampaignQuantityPolicy(campaign);
-    return { campaign:{ id:campaign.id,status:campaign.status,categoryKey:campaign.categoryKey,
+    const captureTransport=resolveCaptureTransportPolicy({campaign,profile});
+    return { campaign:{ id:campaign.id,status:campaign.status,campaignType:campaign.campaignType,categoryKey:campaign.categoryKey,
       categoryProfileVersion:campaign.categoryProfileVersion,targetGate:campaign.targetGate,targetCount:campaign.targetCount,
+      captureTransportPolicy:captureTransport.policy,captureTransportPolicySource:captureTransport.source,
       quantityMode:quantityPolicy.quantityMode,captureLimit:quantityPolicy.captureLimit,
       remaining:quantityPolicy.remaining,targetReached:quantityPolicy.targetReached,
       browserProfileName:campaign.browserProfileName,browserProfileDirectory:campaign.browserProfileDirectory,
@@ -991,13 +995,18 @@ function validateManualPassiveBatch(captureMode,cards,pageBinding,{pageUrl,pageC
     ||binding.bound_url!==pageUrl||binding.context_fingerprint!==expectedFingerprint
     ||pageContext.categoryKey!==binding.category_key||pageContext.categoryProfileVersion!==binding.category_profile_version||!binding.bound_goods_count)throw new AppError(
     'Manual Passive页面绑定上下文无效或已经丢失。',{code:'PAGE_CONTEXT_LOST'});
+  const transport=resolveCaptureTransportPolicy({campaign:context.campaign,profile});
   for (const card of cards) {
-    if (card.network_observed!==true || card.network_endpoint!=='/api/poppy/v1/opt' || !card.network_observed_at
+    const enhanced=card.capture_transport==='NETWORK_ENRICHED'&&card.network_observed===true&&allowedNetworkEndpoint(card.network_endpoint)&&card.network_observed_at;
+    const domOnly=transport.policy===DOM_REQUIRED_NETWORK_OPTIONAL&&card.capture_transport==='DOM'&&card.network_observed===false
+      &&Boolean(card.title)&&Boolean(card.href);
+    if ((!enhanced&&!domOnly)
       || !['DOM','NETWORK_ENRICHED'].includes(card.capture_transport)||card.bound_url!==binding.bound_url||card.bound_at!==binding.bound_at
       || card.bound_category!==binding.bound_category||card.bound_sort?.toLowerCase()!==binding.bound_sort.toLowerCase()) throw new AppError(
-      `goods_id ${card.goods_id} 缺少合格的被动Network证据。`,{ code:'MANUAL_PASSIVE_EVIDENCE_REQUIRED' });
+      `goods_id ${card.goods_id} 缺少合格的被动采集证据。`,{ code:'MANUAL_PASSIVE_EVIDENCE_REQUIRED',details:{policy:transport.policy,captureTransport:card.capture_transport,networkObserved:card.network_observed,hasTitle:Boolean(card.title),hasHref:Boolean(card.href),boundUrlMatches:card.bound_url===binding.bound_url,boundAtMatches:card.bound_at===binding.bound_at,boundCategoryMatches:card.bound_category===binding.bound_category,boundSortMatches:card.bound_sort?.toLowerCase()===binding.bound_sort.toLowerCase()} });
   }
 }
+function allowedNetworkEndpoint(value){return ['/api/poppy/v1/opt','/api/poppy/v1/search','/api/alexa/homepage/goods_list','/api/poppy/v1/goods_detail','/api/market/domino/batch/query_goods'].some(path=>String(value??'').replace(/\/+$/,'').startsWith(path));}
 function captureOnlyScreening(){return{decision:'passed',codes:[],reasons:[],classifierVersion:'capture-only-raw-v1',confidence:1};}
 function sameStringList(left=[],right=[]){return left.length===right.length&&left.every((value,index)=>value.toLowerCase()===right[index]?.toLowerCase());}
 function normalizedPath(value){const result=String(value).replace(/\/+$/,'');return result||'/';}

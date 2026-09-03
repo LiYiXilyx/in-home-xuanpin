@@ -10,6 +10,8 @@ test('capture-only Manual Bind retains electronics in raw candidate ledger',asyn
   assert.equal(f.service.getInitialOperatorStatus(created.campaignId).liveUniqueCount,1);
 });
 
+test('capture-only Initial freezes DOM optional policy and reports actual saved transports',async t=>{const f=await createInitialPoolFixture(t);f.profile=operatorProfile();const created=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'Pet DOM Optional',requestId:'pet-dom-optional'}),source=f.service.currentOperatorManualContext().source,input=payload(f,created.campaignId,source.id,'batch-dom',[card('8101','Network Pet'),card('8102','DOM Pet')]);input.cards[1]={...input.cards[1],capture_transport:'DOM',network_observed:false,network_endpoint:null,network_observed_at:null};const stored=JSON.parse(f.db.prepare('SELECT config_json FROM catalog_campaigns WHERE id=?').get(created.campaignId).config_json);assert.equal(stored.captureTransportPolicy,'DOM_REQUIRED_NETWORK_OPTIONAL');const result=f.service.captureExtensionBatch(input);assert.equal(result.batch.receivedCount,2);assert.equal(result.audit.acceptedGoods,2);assert.equal(result.audit.networkEnrichedSaved,1);assert.equal(result.audit.domOnlySaved,1);assert.equal(result.audit.networkOnlyRejected,0);});
+
 test('capture-only wrong path or breadcrumbs hard fails with zero writes',async t=>{
   const f=await createInitialPoolFixture(t);f.profile=operatorProfile();
   const created=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'Pet Guard',requestId:'pet-guard'}),source=f.service.currentOperatorManualContext().source;
