@@ -1,6 +1,7 @@
 import {createReviewConsoleState} from './sourcing-review-state.js';
 import {createTemuMarketEvidenceState} from './temu-market-evidence-state.js';
 import {calculateMarketEvidenceRatio,marketEvidenceFxDisplay,normalizeFxContext} from './market-evidence-fx.js';
+import {flashActionCheck} from './action-button-feedback.js';
 
 const RUN_ID=new URLSearchParams(location.search).get('run_id');
 const INITIAL_GOODS_ID=new URLSearchParams(location.search).get('goods_id');
@@ -78,6 +79,8 @@ function evidenceScreenshotUrl(state,phase){return`/api/sourcing/review/goods/${
 function assessmentInput(){return{temu_price_eur:Number($('market-evidence-temu-price').value),temu_pack_quantity:Number($('market-evidence-temu-pack').value),supplier_price_cny:Number($('market-evidence-supplier-price').value),supplier_pack_quantity:Number($('market-evidence-supplier-pack').value),moq:$('market-evidence-moq').value===''?null:Number($('market-evidence-moq').value),supplier_product_id:review.snapshot().currentProductId,evidence_phase:'AFTER'};}
 function updateEvidenceRatio(){const result=calculateMarketEvidenceRatio({fx:evidenceFx,temuPriceEur:Number($('market-evidence-temu-price').value),temuPackQuantity:Number($('market-evidence-temu-pack').value),supplierPriceCny:Number($('market-evidence-supplier-price').value),supplierPackQuantity:Number($('market-evidence-supplier-pack').value)});$('market-evidence-ratio').textContent=`价格倍率：${result.priceRatio===null?'—':`约${result.priceRatio.toFixed(2)}x`}`;}
 function clipboardFallback(value){const node=document.createElement('textarea');node.value=value;node.style.position='fixed';node.style.opacity='0';document.body.append(node);node.select();const ok=document.execCommand('copy');node.remove();return ok;}
+async function copyEvidenceQuery(){const button=$('market-evidence-copy-query');await evidence.copySelectedQuery({writeText:value=>navigator.clipboard.writeText(value),fallback:clipboardFallback});flashActionCheck(button);}
+async function copyEvidenceToken(){const button=$('market-evidence-copy-token'),value=evidence.snapshot().bindToken;if(!value)throw new Error('当前没有可复制的绑定码');let copied=false;try{await navigator.clipboard.writeText(value);copied=true;}catch{copied=clipboardFallback(value);}if(!copied)throw new Error('复制失败，请选中绑定码后按 Command+C');flashActionCheck(button);}
 
 function renderGoods(state) {
   const root=$('goodsList'); root.replaceChildren();
@@ -182,8 +185,8 @@ $('reviewOpportunityToggle').addEventListener('click',()=>act(()=>review.toggleV
 $('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
 $('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeVisualPreview();render();});
 $('market-evidence-create').addEventListener('click',()=>evidence.createSession().catch(()=>{}));
-$('market-evidence-copy-query').addEventListener('click',()=>evidence.copySelectedQuery({writeText:value=>navigator.clipboard.writeText(value),fallback:clipboardFallback}).catch(()=>{}));
-$('market-evidence-copy-token').addEventListener('click',()=>act(async()=>{await navigator.clipboard.writeText(evidence.snapshot().bindToken);$('reviewNotice').textContent='绑定码已复制，请在人工打开的 Temu 搜索页扩展面板中粘贴。';}));
+$('market-evidence-copy-query').addEventListener('click',()=>copyEvidenceQuery().catch(()=>{}));
+$('market-evidence-copy-token').addEventListener('click',()=>copyEvidenceToken().catch(error=>{$('reviewNotice').textContent=error.message;}));
 $('market-evidence-refresh').addEventListener('click',()=>evidence.refreshEvidence({reason:'MANUAL'}).catch(()=>{}));
 $('market-evidence-continue').addEventListener('click',()=>evidence.refreshEvidence({reason:'CONTINUE'}).catch(()=>{}));
 $('market-evidence-notice-close').addEventListener('click',()=>evidence.dismissNotice());

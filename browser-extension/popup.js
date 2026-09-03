@@ -55,9 +55,11 @@ elements.start.addEventListener('click',async () => {
   } catch (error) { elements.status.textContent=`未采集：${error.message}`; }
   finally { elements.start.disabled=false; }
 });
-async function evidenceAction(type,extra={}){elements.status.textContent='正在处理人工搜索证据…';const response=await tabMessage(activeTabId,{type,...extra});if(!response?.ok)throw Object.assign(new Error(response?.error?.message??'证据操作失败'),{code:response?.error?.code});elements.status.textContent=`证据操作完成：${response.result?.status??response.result?.phase?.phase??''}`;return response.result;}
-elements.evidenceBind.addEventListener('click',()=>evidenceAction('EVIDENCE_BIND_PAGE',{bindToken:elements.evidenceToken.value}).catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
-elements.evidenceBefore.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_BEFORE').catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
-elements.evidenceAfter.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_AFTER').catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
+const evidenceFeedback=new WeakMap();
+function flashEvidenceCheck(button){const previous=evidenceFeedback.get(button);if(previous?.timer)clearTimeout(previous.timer);const label=previous?.label??button.textContent,token={};button.textContent='✓';button.dataset.feedback='success';const timer=setTimeout(()=>{if(evidenceFeedback.get(button)?.token!==token)return;button.textContent=label;delete button.dataset.feedback;evidenceFeedback.delete(button);},1200);evidenceFeedback.set(button,{label,timer,token});}
+async function evidenceAction(type,extra={},button){button.disabled=true;try{elements.status.textContent='正在处理人工搜索证据…';const response=await tabMessage(activeTabId,{type,...extra});if(!response?.ok)throw Object.assign(new Error(response?.error?.message??'证据操作失败'),{code:response?.error?.code});elements.status.textContent=`证据操作完成：${response.result?.status??response.result?.phase?.phase??''}`;flashEvidenceCheck(button);return response.result;}finally{button.disabled=false;}}
+elements.evidenceBind.addEventListener('click',()=>evidenceAction('EVIDENCE_BIND_PAGE',{bindToken:elements.evidenceToken.value},elements.evidenceBind).catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
+elements.evidenceBefore.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_BEFORE',{},elements.evidenceBefore).catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
+elements.evidenceAfter.addEventListener('click',()=>evidenceAction('EVIDENCE_CAPTURE_AFTER',{},elements.evidenceAfter).catch(error=>elements.status.textContent=`${error.code??'ERROR'}：${error.message}`));
 
 load();
