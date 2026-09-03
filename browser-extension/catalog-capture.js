@@ -70,7 +70,7 @@
     const parser=globalThis.TemuCatalogParser,cache=globalThis.TemuCatalogNetworkCache,merger=globalThis.TemuCatalogProductMerger;
     if (!parser || !cache || !merger) throw error('PASSIVE_CAPTURE_NOT_READY','Passive Network parser/cache/merger尚未就绪。');
     const rawCards=parser.parseDocument(document,{ baseUrl:location.href,enrich:false });const records=new Map(cache.snapshot().map(record=>[String(record.goods_id),record]));
-    const cards=[];const limit=Math.max(0,Math.min(MAX_CARDS_PER_BATCH,Number(maxCards)||0));const requested=Array.isArray(goodsIds)?new Set(goodsIds.map(String)):null;
+    const cards=[];const limit=resolvePassiveBatchLimit(maxCards);const requested=Array.isArray(goodsIds)?new Set(goodsIds.map(String)):null;
     for (const dom of rawCards) {
       if(requested&&!requested.has(String(dom.goods_id)))continue;
       const record=records.get(String(dom.goods_id));if (!record || String(record.goods_id)!==String(dom.goods_id)) continue;
@@ -94,6 +94,7 @@
   }
 
   function splitCards(cards,max=MAX_CARDS_PER_BATCH) { const chunks=[];for(let index=0;index<cards.length;index+=max)chunks.push(cards.slice(index,index+max));return chunks; }
+  function resolvePassiveBatchLimit(value){if(value===null||value===undefined)return MAX_CARDS_PER_BATCH;const parsed=Number(value);if(!Number.isInteger(parsed)||parsed<=0)throw error('INVALID_PASSIVE_BATCH_LIMIT','Passive batch limit必须是正整数。');return Math.min(parsed,MAX_CARDS_PER_BATCH);}
   function aggregateResults(batchId,results) { const last=results.at(-1);const sum=field => results.reduce((total,item)=>total+Number(item.batch?.[field] ?? 0),0);
     return { ...last,idempotentReplay:results.every(item=>item.idempotentReplay),batch:{ ...last.batch,batchId,chunkCount:results.length,
       chunkBatchIds:results.map(item=>item.batch?.batchId).filter(Boolean),receivedCount:sum('receivedCount'),stagingCount:sum('stagingCount'),
@@ -116,6 +117,6 @@
     document.documentElement.append(button);
   }
 
-  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,splitCards,aggregateResults,selectRequestedCards,MAX_CARDS_PER_BATCH });
+  globalThis.TemuCatalogCapture=Object.freeze({ inspectContext,capture,capturePassive,splitCards,aggregateResults,selectRequestedCards,resolvePassiveBatchLimit,MAX_CARDS_PER_BATCH });
   // Listing controls are owned by the context-selected operator overlay.
 })();

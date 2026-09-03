@@ -95,6 +95,14 @@ test('Catalog capture splits large DOM card sets below the localhost 500-card sa
   assert.deepEqual(Array.from(chunks,chunk=>chunk.length),[300,300,220]);assert.equal(capture.MAX_CARDS_PER_BATCH,300);
 });
 
+test('OPEN_ENDED null batch limit means one bounded 300-card batch, never zero',() => {
+  const source=fs.readFileSync(path.join(root,'browser-extension/catalog-capture.js'),'utf8');
+  const sandbox=vm.createContext({console,URL,location:{href:'https://www.temu.com/de-en/girls-sets.html'},document:{getElementById:()=>({})}});vm.runInContext(source,sandbox);
+  const resolve=sandbox.TemuCatalogCapture.resolvePassiveBatchLimit;
+  assert.equal(resolve(null),300);assert.equal(resolve(undefined),300);assert.equal(resolve(40),40);assert.equal(resolve(350),300);assert.equal(resolve(10),10);
+  for(const invalid of [0,-1,Number.NaN,1.5])assert.throws(()=>resolve(invalid),error=>error.code==='INVALID_PASSIVE_BATCH_LIMIT');
+});
+
 test('extension prompts the operator instead of submitting an empty review page',() => {
   const script=fs.readFileSync(path.join(root,'browser-extension/content-script.js'),'utf8');
   assert.match(script,/TemuReviewLoader/);
