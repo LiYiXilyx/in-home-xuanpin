@@ -76,7 +76,7 @@ test('target-bound capture conserves every accepted goods_id without requiring t
   ] });
   assert.deepEqual(captured.audit,{ campaignTarget:2,targetReached:true,serviceObserved:4,electronicExcluded:1,
     otherBusinessExcluded:0,eligibleGoods:3,acceptedGoods:2,stoppedDueToTarget:1,unprocessedAfterTarget:1,
-    failed:0,campaignStagingDeduped:0 });
+    failed:0,campaignStagingDeduped:0,networkEnrichedSaved:0,domOnlySaved:0,networkOnlyRejected:0 });
   assert.equal(captured.batch.receivedCount,5);assert.equal(captured.batch.stagingCount,2);
   assert.equal(Number(db.prepare('SELECT COUNT(DISTINCT goods_id) count FROM catalog_product_source_observations WHERE campaign_id=?').get(campaign.id).count),4);
 
