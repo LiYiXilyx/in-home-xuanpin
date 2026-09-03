@@ -20,6 +20,8 @@ export function createRouter({ statusService,browserController,jobController,rev
         const detail=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)$/);
         if(detail&&request.method==='GET')return json(response,200,await temuMarketEvidenceController.get({goodsId:decodeURIComponent(detail[1]),sessionId:decodeURIComponent(detail[2]),runId:url.searchParams.get('run_id')}));
         if(request.method==='POST'&&url.pathname==='/api/sourcing/review/evidence-extension/bind-token/consume')return json(response,200,await temuMarketEvidenceController.bind({body:await readJson(request,32_768)}),EXTENSION_CORS_HEADERS);
+        const extensionPhase=url.pathname.match(/^\/api\/sourcing\/review\/evidence-extension\/goods\/([^/]+)\/sessions\/([^/]+)\/phases\/(BEFORE|AFTER)$/);
+        if(extensionPhase&&request.method==='POST')return json(response,201,await temuMarketEvidenceController.phase({goodsId:decodeURIComponent(extensionPhase[1]),sessionId:decodeURIComponent(extensionPhase[2]),phase:extensionPhase[3],body:await readJson(request,8_000_000)}),EXTENSION_CORS_HEADERS);
       }
       if(sourcingReviewController&&url.pathname.startsWith('/api/sourcing/review/')) {
         const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);

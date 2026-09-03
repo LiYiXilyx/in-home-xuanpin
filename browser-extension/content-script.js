@@ -133,3 +133,4 @@ chrome.runtime.onMessage.addListener((message,_sender,sendResponse) => {
 
 if (currentPage().isTemuProductPage && !document.getElementById('temu-catalog-operator-overlay')) installCaptureButton();
 setTimeout(reportStrongReviewSafetySignal,1500);
+if(location.hostname==='www.temu.com')globalThis.TemuMarketEvidence?.mount();

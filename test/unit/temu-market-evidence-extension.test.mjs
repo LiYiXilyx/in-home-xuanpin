@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const source=fs.readFileSync('browser-extension/temu-market-evidence.js','utf8');
+function api(){const context={globalThis:{},URL};vm.runInNewContext(source,context);return context.globalThis.TemuMarketEvidence;}
+test('safe region uses product cards below forbidden header and never falls back',()=>{const evidence=api(),cards=[rect(10,150,200,250),rect(220,150,200,250)],doc={querySelectorAll(selector){if(selector.includes('header'))return[rect(0,0,1200,100)];if(selector.includes('goods_id'))return cards;return[];}};assert.deepEqual(JSON.parse(JSON.stringify(evidence.detectSafeEvidenceRegion(doc,{innerWidth:1200,innerHeight:800}))),{x:10,y:150,width:410,height:250,viewportWidth:1200,viewportHeight:800});assert.throws(()=>evidence.detectSafeEvidenceRegion({querySelectorAll:()=>[]},{innerWidth:1200,innerHeight:800}),e=>e.code==='SAFE_SCREENSHOT_REGION_NOT_FOUND');});
+test('source contains no automated Temu request navigation scroll or See more action',()=>{assert.doesNotMatch(source,/XMLHttpRequest|window\.open|location\.assign|scrollTo|scrollBy|\.click\(\)|See more/i);});
+function rect(x,y,width,height){return{getBoundingClientRect:()=>({x,y,left:x,top:y,width,height,right:x+width,bottom:y+height}),closest:()=>null};}
