@@ -2,7 +2,13 @@
 
 ## Status and scope
 
-Business contract approved by the operator on 2026-09-04. This document specifies the implementation boundary; implementation has not started.
+Business contract approved by the operator on 2026-09-04. Status: **PARTIAL_IMPLEMENTATION_EXISTS / ACCEPTANCE_PENDING**.
+
+Retained implementation commits: `9e0ceb7` (read-only entry resolver), `c18efce` (exact Initial continuation), and `4d8f01a` (API and independent-connection race coverage). They require conformance review and gap-based acceptance, not replacement.
+
+This is a **thin entry layer** over the Initial Category Pool / Multi-Category infrastructure already in stable. Do not migrate or reimplement the old Multi-Category branch. Initial Candidate Snapshot + Image Cache V1 remains completely frozen, including candidate_snapshot_id, snapshot schema/repository, CREATING→SEALED, SEALED-only reads, RECONSTRUCTED_COMPAT, LIVE_FREEZE, snapshot image caching/Preview and future QA/Activation handoffs.
+
+Protected implementation: initial-pool-repository, catalog-repository, campaign-quantity-policy, initial-candidate-hash, initial-pool-qa, initial-activation-coordinator, existing extension Manual Bind/Capture, migration 026 and all historical migrations. Entry changes must remain in the Entry service, thin service/controller/router wiring, Catalog UI and dedicated tests. No production mutations, migrations, restart, capture, merge, cherry-pick or push are authorized by this implementation stage.
 
 Existing Germany / English / EUR Manual Bind Passive Capture only. Preserve Initial OPEN_ENDED, existing targeted Expansion, candidate ledger, QA, activation, and all sealed evidence. No taxonomy, YingDao, image-cache, or browser automation changes.
 
@@ -116,4 +122,4 @@ All write tests use temporary/fixture/copied SQLite, never production.
 
 ## Delivery boundary
 
-Design review precedes Implementation Plan and TDD. No production Campaign action, migration application, restart, or push is part of this design stage. Preserve existing dirty files and migration checksums; commit only this specification.
+The design amendment is committed separately, followed first by a read-only conformance audit of the three retained commits. Only bounded Entry-layer gaps may proceed through an updated plan and TDD. Already-passing work must not be redone. If compliance requires changing protected infrastructure or frozen contracts, stop. No production Campaign action, migration application, restart, or push is authorized. Preserve existing dirty files and migration checksums.
