@@ -7,7 +7,10 @@
     if(u.protocol!=='https:'||!['www.temu.com','temu.com'].includes(u.hostname)||u.username||u.password||u.port)fail('UNSUPPORTED_CATEGORY_CAPTURE_PAGE');
     const match=u.pathname.match(/^\/de-en\/([a-z0-9]+(?:-[a-z0-9]+)*)-o([1-9]\d*)-(\d+)\.html$/);
     if(!match)fail('UNSUPPORTED_CATEGORY_CAPTURE_PAGE');
-    for(const key of u.searchParams.keys())if(!/^(refer_|_x_|utm_|affiliate|aff_|session|exposure)/i.test(key))fail('CATEGORY_IDENTITY_UNRESOLVED');
+    // Existing category navigation carries presentation/sort context, while the
+    // oN-ID pathname and independently checked breadcrumbs establish identity.
+    const presentation=new Set(['opt_level','title','leaf_type','show_search_type','opt1_id','filter_items']);
+    for(const key of u.searchParams.keys())if(!presentation.has(key)&&!/^(refer_|_x_|utm_|affiliate|aff_|session|exposure)/i.test(key))fail('CATEGORY_IDENTITY_UNRESOLVED');
     return {url:`https://www.temu.com${u.pathname}`,pathname:u.pathname,slug:match[1],numeric:match[3]};
   }
   function canonicalizeTemuCategoryListingUrl(url){return categoryUrl(url).url;}
@@ -35,11 +38,11 @@
     const breadcrumbs=crumbs.length?crumbs:globalThis.TemuCatalogBreadcrumbs?.extractTemuBreadcrumbs(doc).breadcrumbs??[];
     const cards=nodes('a[href*="-g-"],a[href*="goods_id="]');
     const goods=new Set(cards.map(n=>{try{const u=new URL(n.href,url);return u.pathname.match(/-g-(\d+)\.html/)?.[1]??u.searchParams.get('goods_id');}catch{return null;}}).filter(Boolean));
-    const alerts=nodes('[role="alert"],h1,h2').map(text).join(' ');
+    const alerts=[...nodes('[role="alert"],h1,h2'),...nodes('body *').filter(n=>!n.children?.length)].map(text).join(' ');
     const sort=nodes('button,[role="button"],[aria-selected="true"]').some(n=>/^Sort by:\s*Top sales$/i.test(text(n))||n.getAttribute?.('aria-selected')==='true'&&/^Top sales$/i.test(text(n)));
     return validateDescriptor({descriptor_schema_version:1,page_url:url,page_type:'CATEGORY_LISTING',site_country:new URL(url).pathname.startsWith('/de-en/')?'DE':'',
       language:/^en(?:-|$)/i.test(doc.documentElement.lang)?'en':'',currency:cards.some(n=>/€|\bEUR\b/.test(text(n)))?'EUR':'',sort_order:sort?'Top Sales':'',breadcrumbs,
-      dom_goods_count:goods.size,captcha_blocking:/captcha|verify you are human/i.test(alerts),security_verification:/security verification|security check/i.test(alerts),search_no_results:/no (?:search )?results|nothing found/i.test(alerts),detected_at:now().toISOString()});
+      dom_goods_count:goods.size,captcha_blocking:/captcha|verify you are human|slide to verify/i.test(alerts),security_verification:/security verification|security check/i.test(alerts),search_no_results:/no (?:search )?results|nothing found|the items are gone/i.test(alerts),detected_at:now().toISOString()});
   }
   globalThis.TemuCategoryPageDescriptor=Object.freeze({canonicalizeTemuCategoryListingUrl,validateDescriptor,parseCategoryPage});
 })();

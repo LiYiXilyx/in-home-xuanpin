@@ -87,7 +87,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,
     profileRequestId=null,initialCampaignRequestId=null,lastContextKey=null;
   function render(){renderCatalogPanel({root,elements,state:catalogState});
-    const p=catalogState.categoryProbe,d=p?.descriptor,summary=root.querySelector('#catalog-probe-summary'),button=root.querySelector('#catalog-probe-select');
+    const p=catalogState.categoryProbe,d=p?.descriptor,summary=root.querySelector?.('#catalog-probe-summary'),button=root.querySelector?.('#catalog-probe-select');
     if(summary)summary.textContent=d?`${d.page_category_name}\n父类目：${d.breadcrumb_parent??''}\n路径：${(d.breadcrumbs??[]).join(' > ')}\n${d.canonical_listing_url??''}\nGermany / English / EUR · ${d.sort_order??''}\n商品卡：${d.dom_goods_count??0}\n识别时间：${d.detected_at??''}\nProfile：${p.resolution}${p.code?' · '+p.code:''}`:'尚未识别';
     if(button){button.disabled=probeBusy||!p||p.resolution==='BLOCKED'||Date.parse(p.expires_at)<=Date.now();button.textContent=probeBusy?'处理中…':p?.resolution==='NEW'?'注册并选择当前类目':'选择当前类目';}}
   function setError(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});render();}
@@ -135,7 +135,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       catalogPollingTimer=null;patchCatalogState(catalogState,{mounted:false});root.replaceChildren();mounts.delete(root);
       if(currentController===controller)currentController=null;}
   };
-  root.querySelector('#catalog-probe-select')?.addEventListener('click',async()=>{
+  root.querySelector?.('#catalog-probe-select')?.addEventListener('click',async()=>{
     const p=catalogState.categoryProbe;if(probeBusy||!p||p.resolution==='BLOCKED'||Date.parse(p.expires_at)<=Date.now())return;
     probeBusy=true;render();try{
       let profile=p.profile;

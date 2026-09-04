@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Category fixture empty</title><body>
+<nav aria-label="breadcrumb"><ol><li>Home</li><li>Home</li><li>Empty</li></ol></nav>
+<button>Sort by: Top sales</button>
+
+
+<script src="/browser-extension/category-page-descriptor.js"></script>
+<script>try { const d=TemuCategoryPageDescriptor.parseCategoryPage(document,"https://www.temu.com/de-en/empty-o3-1105.html"); document.body.insertAdjacentHTML('beforeend','<pre id="result">'+"FAIL unexpected acceptance"+' '+d.page_category_name+'</pre>'); } catch(e){document.body.insertAdjacentHTML('beforeend','<pre id="result">'+"PASS"+' '+e.code+'</pre>');}</script></body></html>

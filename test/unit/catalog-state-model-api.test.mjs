@@ -6,7 +6,7 @@ import { createCatalogApi } from '../../ui/modules/catalog/api.js';
 test('Catalog state exposes only the approved namespace and rejects foreign keys',()=>{
   const state=createCatalogState();
   assert.deepEqual(Object.keys(state).sort(),[
-    'activation','claimRecovery','currentCampaign','currentPool','error','initialQa','lastRefreshedAt',
+    'activation','categoryProbe','claimRecovery','currentCampaign','currentPool','error','initialQa','lastRefreshedAt',
     'loading','mounted','onboarding','profiles','quantityPolicy','selectedProfile'
   ]);
   assert.deepEqual(state.loading,{profiles:false,current:false,create:false,qa:false,activation:false,claim:false,onboardingValidate:false,onboardingSave:false,export:false});

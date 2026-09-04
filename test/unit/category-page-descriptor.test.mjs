@@ -12,7 +12,7 @@ for(const fixture of JSON.parse(fs.readFileSync(new URL('../fixtures/category-pa
 
 test('tracking URL variants retain one category identity without leaking session data',async()=>{
  const api=await load();
- for(const query of ['', '?refer_page=abc&_x_sessn_id=secret#fragment','?refer_page_name=x&refer_page_id=2'])assert.equal(api.canonicalizeTemuCategoryListingUrl(base+query),base);
+ for(const query of ['', '?refer_page=abc&_x_sessn_id=secret#fragment','?refer_page_name=x&refer_page_id=2',"?opt_level=2&title=Girls%27%20Sets&leaf_type=bro&show_search_type=0&opt1_id=-13&filter_items=1%3A1"])assert.equal(api.canonicalizeTemuCategoryListingUrl(base+query),base);
  for(const url of ['https://evil.test/de-en/girls-sets-o3-1088.html',base+'?unknown_category=3','https://user:secret@www.temu.com/de-en/girls-sets-o3-1088.html'])assert.throws(()=>api.canonicalizeTemuCategoryListingUrl(url));
 });
 test('descriptor derives authoritative scope fields and strips arbitrary account fields',async()=>{
@@ -37,4 +37,9 @@ test('passive DOM parser requires listing cards, breadcrumbs, selected sort and 
  const d=api.parseCategoryPage(doc,'https://www.temu.com/de-en/pet-beds-o3-100.html',()=>new Date('2026-09-04T00:00:00Z'));
  assert.equal(d.breadcrumb_terminal,'Pet Beds');assert.equal(d.dom_goods_count,1);
  doc.documentElement.lang='de';assert.throws(()=>api.parseCategoryPage(doc,'https://www.temu.com/de-en/pet-beds-o3-100.html'));
+});
+test('security text outside headings blocks a populated category',async()=>{
+ const api=await load();const n=text=>({textContent:text,innerText:text,getAttribute:()=>null,getClientRects:()=>[{}],closest:()=>null,children:[]});
+ const doc={documentElement:{lang:'en'},querySelectorAll(s){if(s==='body *')return[n('Slide to verify')];if(s==='[aria-label*="breadcrumb" i] li')return[n('Pets'),n('Beds')];if(s==='button,[role="button"],[aria-selected="true"]')return[n('Sort by: Top sales')];if(s==='a[href*="-g-"],a[href*="goods_id="]')return[Object.assign(n('€10'),{href:'https://www.temu.com/x-g-123.html'})];return[];}};
+ assert.throws(()=>api.parseCategoryPage(doc,'https://www.temu.com/de-en/beds-o3-100.html'),e=>e.code==='CATEGORY_PAGE_HEALTH_INVALID');
 });
