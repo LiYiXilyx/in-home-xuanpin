@@ -11,6 +11,8 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
     return payload;
   };
   return{
+    currentProbe:()=>request('/api/catalog/operator/category-probes/current'),
+    registerProbe:(id,body)=>request(`/api/catalog/operator/category-probes/${encodeURIComponent(id)}/register`,{method:'POST',body}),
     listProfiles:()=>request('/api/catalog/operator/profiles'),
     validateOperatorProfile:body=>request('/api/catalog/operator/category-profiles/validate',{method:'POST',body}),
     registerOperatorProfile:body=>request('/api/catalog/operator/category-profiles',{method:'POST',body}),

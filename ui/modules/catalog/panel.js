@@ -12,7 +12,8 @@ export function catalogPanelMarkup(){return `
       <div><p class="eyebrow">MANUAL BIND</p><h2 id="catalog-panel-title">新建采集任务</h2></div>
       <span class="catalog-hint">创建后仍需在 Temu 页面人工检测、绑定和采集</span>
     </div>
-    <button id="catalog-add-category" class="catalog-add-category" type="button">添加新类目</button>
+    <section id="catalog-quick-category"><h3>快速使用当前 Temu 类目</h3><p>请在 Temu 扩展中人工点击“识别当前类目”。</p><pre id="catalog-probe-summary">尚未识别</pre><button id="catalog-probe-select" type="button" disabled>选择当前类目</button></section>
+    <button id="catalog-add-category" class="catalog-add-category" type="button">高级：手工创建 Category Profile</button>
     <section id="catalog-manual-bind-steps" class="catalog-manual-bind-steps"><h3>新类目手工采集步骤</h3><ol><li>创建首次任务</li><li>打开 Temu 页面</li><li>扩展检测当前页面</li><li>绑定当前页面</li><li>人工滚动 / See more</li><li>采集当前页面</li></ol><p>Manual Bind 手工采集不需要连接 CDP；不会自动滚动、导航或点击 See more。</p></section>
     <section id="catalog-onboarding" class="catalog-onboarding" hidden>
       <h3>Temu 新类目首次采集向导</h3>
@@ -82,9 +83,13 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   const catalogState=createCatalogState(),catalogApi=api??createCatalogApi({fetchImpl});
   patchCatalogState(catalogState,{mounted:true});
   const entryRequests=new Map();let mutationVersion=0;
+  let probeBusy=false;const probeRequests=new Map();
   const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,
     profileRequestId=null,initialCampaignRequestId=null,lastContextKey=null;
-  function render(){renderCatalogPanel({root,elements,state:catalogState});}
+  function render(){renderCatalogPanel({root,elements,state:catalogState});
+    const p=catalogState.categoryProbe,d=p?.descriptor,summary=root.querySelector('#catalog-probe-summary'),button=root.querySelector('#catalog-probe-select');
+    if(summary)summary.textContent=d?`${d.page_category_name}\n父类目：${d.breadcrumb_parent??''}\n路径：${(d.breadcrumbs??[]).join(' > ')}\n${d.canonical_listing_url??''}\nGermany / English / EUR · ${d.sort_order??''}\n商品卡：${d.dom_goods_count??0}\n识别时间：${d.detected_at??''}\nProfile：${p.resolution}${p.code?' · '+p.code:''}`:'尚未识别';
+    if(button){button.disabled=probeBusy||!p||p.resolution==='BLOCKED'||Date.parse(p.expires_at)<=Date.now();button.textContent=probeBusy?'处理中…':p?.resolution==='NEW'?'注册并选择当前类目':'选择当前类目';}}
   function setError(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});render();}
   function updateSelection(){
     const profile=catalogState.profiles.find(row=>row.category_key===elements.category?.value
@@ -109,10 +114,11 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       else{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});render();}
       try{
         const readVersion=mutationVersion;
-        const [profiles,current,blockers]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign(),catalogApi.listClaimBlockers?.()??{primary_blocker:null,all_blockers:[]}]);
+        const [profiles,current,blockers,probeResult]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign(),catalogApi.listClaimBlockers?.()??{primary_blocker:null,all_blockers:[]},catalogApi.currentProbe?.()??{probe:null}]);
         if(!active||readVersion!==mutationVersion)return snapshotCatalogState(catalogState);
         const campaign=current.current??null;
         applyRemote(profiles.profiles??[],campaign);
+        if(!probeBusy)patchCatalogState(catalogState,{categoryProbe:probeResult.probe??null});
         const historicalBlockers=(blockers.all_blockers??[]).filter(row=>row.campaignId!==campaign?.campaign_id);
         patchCatalogState(catalogState,{claimRecovery:{...catalogState.claimRecovery,primaryBlocker:historicalBlockers[0]??null,allBlockers:historicalBlockers}});
         emitContextIfChanged(root,campaign,context=>{if(context!==lastContextKey){lastContextKey=context;return true;}return false;});
@@ -129,6 +135,20 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       catalogPollingTimer=null;patchCatalogState(catalogState,{mounted:false});root.replaceChildren();mounts.delete(root);
       if(currentController===controller)currentController=null;}
   };
+  root.querySelector('#catalog-probe-select')?.addEventListener('click',async()=>{
+    const p=catalogState.categoryProbe;if(probeBusy||!p||p.resolution==='BLOCKED'||Date.parse(p.expires_at)<=Date.now())return;
+    probeBusy=true;render();try{
+      let profile=p.profile;
+      if(p.resolution==='NEW'){
+        if(!probeRequests.has(p.probe_id))probeRequests.set(p.probe_id,randomUUID());
+        const result=await catalogApi.registerProbe(p.probe_id,{probe_id:p.probe_id,descriptor_fingerprint:p.descriptor_fingerprint,request_id:probeRequests.get(p.probe_id)});profile=result.profile;
+      }
+      const result=await catalogApi.listProfiles();if(!active)return;
+      const exact=result.profiles.find(row=>row.category_key===profile?.category_key&&row.category_profile_version===profile?.category_profile_version);
+      if(!exact)throw coded('CATEGORY_PROFILE_CONFLICT','识别的 Profile 已变化，请重新识别。');
+      patchCatalogState(catalogState,{profiles:result.profiles,selectedProfile:exact,error:null});
+    }catch(error){setError(error);}finally{probeBusy=false;if(active)render();}
+  });
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
     openWindow,confirmAction,entryRequests,beginEntryMutation:()=>{mutationVersion+=1;},isActive:()=>active,
     getProfileRequestId:()=>profileRequestId,setProfileRequestId:value=>{profileRequestId=value;},
