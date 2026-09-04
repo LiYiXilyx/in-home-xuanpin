@@ -33,7 +33,7 @@ export function createOperatorEntryService({db,repository,initialRepository,now,
   const blocked=code=>({...base,action:'BLOCKED',available:false,code});
   let profile;try{profile=validateCategoryProfile(input);}catch(error){return blocked(error.code??'CATEGORY_PROFILE_INVALID');}
   const eligible=initialRepository.getInitialEligibility(profile);
-  const candidates=eligible.priorInitials.map(row=>repository.getCampaign(row.id));
+  let candidates;try{candidates=eligible.priorInitials.map(row=>repository.getCampaign(row.id));}catch(error){return blocked(error.code??'OPERATOR_MANUAL_CONTEXT_MISMATCH');}
   try{for(const c of candidates)validateScope(c,profile);}catch(error){return blocked(error.code??'OPERATOR_MANUAL_CONTEXT_MISMATCH');}
   if(candidates.length>1)return blocked('INITIAL_CAMPAIGN_CONTEXT_AMBIGUOUS');
   const active=eligible.poolHistory.filter(row=>row.status==='active');

@@ -20,6 +20,7 @@ export function createCatalogApi({fetchImpl=globalThis.fetch}={}){
     endStaleClaim:(id,body)=>request(`/api/catalog/operator/rpa-claims/${encodeURIComponent(id)}/end-stale`,{method:'POST',body}),
     createExpansion:body=>request('/api/catalog/operator-campaigns',{method:'POST',body}),
     createInitial:body=>request('/api/catalog/operator/initial-campaigns',{method:'POST',body}),
+    continueInitial:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/continue`,{method:'POST',body}),
     runInitialQa:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/qa-runs`,{method:'POST',body}),
     activateInitial:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/activate`,{method:'POST',body}),
     exportInitialPreview:(id,body)=>request(`/api/catalog/operator/initial-campaigns/${encodeURIComponent(id)}/preview-export`,{method:'POST',body}),

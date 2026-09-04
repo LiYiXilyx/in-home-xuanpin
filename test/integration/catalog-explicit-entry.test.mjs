@@ -1,9 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createInitialPoolFixture} from '../fixtures/initial-category-pool-fixture.mjs';
+import {createInitialPoolRepository} from '../../src/db/repositories/initial-pool-repository.mjs';
+import {buildInitialActivationPayload} from '../../src/modules/catalog-scale/initial-candidate-hash.mjs';
 
 function rows(db){return db.prepare('SELECT * FROM catalog_campaigns ORDER BY id').all();}
 function allRows(db){return ['catalog_campaigns','catalog_sources','catalog_rpa_queue','catalog_source_runs'].map(table=>db.prepare(`SELECT * FROM ${table} ORDER BY id`).all());}
+test('valid Active Pool resolves Expansion but never hides an unfinished Initial',async t=>{
+ const f=await createInitialPoolFixture(t),created=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'pool',requestId:'pool'}),campaign=f.service.getCampaign(created.campaignId),source=f.service.currentOperatorManualContext().source;
+ const repo=createInitialPoolRepository(f.db,{now:f.now});
+ repo.recordBatchContext({campaign,source,batchId:'b',captureMode:'MANUAL_BIND_PASSIVE_CAPTURE',pageUrl:'https://www.temu.com/de-en/fixture-category-b.html',pageContext:{siteCountry:'DE',language:'en',currency:'EUR',sortOrder:'Top Sales'},pageBinding:{binding_version:'manual-bind-v1',context_fingerprint:'fixture'}});
+ repo.applyCandidateItems(campaign,[buildInitialActivationPayload({campaign,source,batchId:'b',product:{platform:'temu',goodsId:'1',title:'Fixture Item',sourceUrl:'https://www.temu.com/de-en/item-1.html',canonicalUrl:'https://www.temu.com/goods.html?goods_id=1',imageUrl:'https://img.test/1.jpg',priceAmount:12,currency:'EUR',salesCount:100,rating:4.8,reviewCount:20,electronicScreeningStatus:'passed',businessEligible:true,reviewable:true,qualityStatus:'pending',raw:{}}})]);
+ const scope={campaignId:campaign.id,categoryKey:f.profile.category_key,categoryProfileVersion:f.profile.category_profile_version};
+ f.service.runInitialPoolQa({...scope,requestId:'qa'});f.service.activateInitialPool({...scope,requestId:'activate'});
+ assert.equal(f.service.resolveOperatorEntry(f.profile).action,'EXPANSION');
+ f.db.prepare("UPDATE catalog_campaigns SET status='paused' WHERE id=?").run(campaign.id);
+ assert.equal(f.service.resolveOperatorEntry(f.profile).code,'INITIAL_CAMPAIGN_WITH_ACTIVE_POOL');
+});
+test('multiple unfinished Initials fail closed without choosing latest',async t=>{
+ const f=await createInitialPoolFixture(t);f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'one',requestId:'one'});
+ const c=f.service.createCampaign({profile:f.profile,name:'two',campaignType:'test',targetCount:1});
+ const config=f.db.prepare("SELECT config_json FROM catalog_campaigns WHERE name='one'").get().config_json;
+ f.db.prepare("UPDATE catalog_campaigns SET campaign_type='initial',target_count=2147483647,config_json=?,browser_control_mode='MANUAL_BIND_PASSIVE_CAPTURE' WHERE id=?").run(config,c.id);
+ assert.equal(f.service.resolveOperatorEntry(f.profile).code,'INITIAL_CAMPAIGN_CONTEXT_AMBIGUOUS');
+});
+test('malformed stored quantity is a blocked descriptor rather than a failed profiles response',async t=>{
+ const f=await createInitialPoolFixture(t);f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'bad',requestId:'bad'});
+ f.db.exec("UPDATE catalog_campaigns SET config_json=json_set(config_json,'$.quantityMode','INVALID')");
+ assert.equal(f.service.resolveOperatorEntry(f.profile).action,'BLOCKED');
+});
 test('completed Initial without pool cannot bypass entry through create endpoint',async t=>{
  const f=await createInitialPoolFixture(t),c=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'old',requestId:'old'});
  f.db.prepare("UPDATE catalog_campaigns SET status='completed' WHERE id=?").run(c.campaignId);

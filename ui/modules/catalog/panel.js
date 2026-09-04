@@ -1,6 +1,6 @@
 import { createCatalogApi } from './api.js';
 import { createCatalogState,patchCatalogState,snapshotCatalogState } from './state.js';
-import { buildCreatePayload,buildInitialActivationPayload,buildInitialCreatePayload,buildInitialQaPayload,
+import { buildCreatePayload,buildInitialActivationPayload,buildInitialCreatePayload,buildInitialQaPayload,buildInitialContinuePayload,operatorEntry,
   buildOperatorCategoryDraft,calculateTarget,createRequestIdentity,initialOperatorViewModel,operatorErrorMessage } from './model.js';
 
 const mounts=new WeakMap();
@@ -81,18 +81,20 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   root.innerHTML=catalogPanelMarkup();
   const catalogState=createCatalogState(),catalogApi=api??createCatalogApi({fetchImpl});
   patchCatalogState(catalogState,{mounted:true});
-  const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,createRequestId=null,
+  const entryRequests=new Map();let mutationVersion=0;
+  const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,
     profileRequestId=null,initialCampaignRequestId=null,lastContextKey=null;
   function render(){renderCatalogPanel({root,elements,state:catalogState});}
   function setError(error){patchCatalogState(catalogState,{error:{code:error.code??'OPERATION_FAILED',message:operatorErrorMessage(error)}});render();}
   function updateSelection(){
     const profile=catalogState.profiles.find(row=>row.category_key===elements.category?.value
       && row.category_profile_version===elements.profile?.value)??null;
-    patchCatalogState(catalogState,{selectedProfile:profile});createRequestId=null;render();
+    patchCatalogState(catalogState,{selectedProfile:profile,error:null});render();
   }
   function applyRemote(profiles,current){
-    const rows=profiles??[],effectiveCurrent=current??(catalogState.activation?catalogState.currentCampaign:null),preferred=effectiveCurrent?rows.find(row=>row.category_key===effectiveCurrent.category_key
-      && row.category_profile_version===effectiveCurrent.category_profile_version):catalogState.selectedProfile;
+    const rows=profiles??[],effectiveCurrent=current??(catalogState.activation?catalogState.currentCampaign:null),selected=catalogState.selectedProfile,
+      preferred=selected?rows.find(row=>row.category_key===selected.category_key&&row.category_profile_version===selected.category_profile_version)
+      :effectiveCurrent?rows.find(row=>row.category_key===effectiveCurrent.category_key&&row.category_profile_version===effectiveCurrent.category_profile_version):null;
     patchCatalogState(catalogState,{profiles:rows,selectedProfile:preferred??rows[0]??null,currentCampaign:effectiveCurrent??null,
       currentPool:effectiveCurrent?.pool_version_id??catalogState.activation?.pool_version_id??preferred?.active_pool_version_id??null,quantityPolicy:effectiveCurrent?{
         quantityMode:effectiveCurrent.quantity_mode??'TARGETED',targetCount:effectiveCurrent.target_count??null,
@@ -106,7 +108,9 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(silent)patchCatalogState(catalogState,{error:null});
       else{patchCatalogState(catalogState,{loading:{...catalogState.loading,profiles:true,current:true},error:null});render();}
       try{
+        const readVersion=mutationVersion;
         const [profiles,current,blockers]=await Promise.all([catalogApi.listProfiles(),catalogApi.currentCampaign(),catalogApi.listClaimBlockers?.()??{primary_blocker:null,all_blockers:[]}]);
+        if(!active||readVersion!==mutationVersion)return snapshotCatalogState(catalogState);
         const campaign=current.current??null;
         applyRemote(profiles.profiles??[],campaign);
         const historicalBlockers=(blockers.all_blockers??[]).filter(row=>row.campaignId!==campaign?.campaign_id);
@@ -126,7 +130,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
       if(currentController===controller)currentController=null;}
   };
   bindCatalogHandlers({root,elements,state:catalogState,api:catalogApi,randomUUID,render,setError,updateSelection,
-    openWindow,confirmAction,getCreateRequestId:()=>createRequestId,setCreateRequestId:value=>{createRequestId=value;},
+    openWindow,confirmAction,entryRequests,beginEntryMutation:()=>{mutationVersion+=1;},isActive:()=>active,
     getProfileRequestId:()=>profileRequestId,setProfileRequestId:value=>{profileRequestId=value;},
     getInitialCampaignRequestId:()=>initialCampaignRequestId,setInitialCampaignRequestId:value=>{initialCampaignRequestId=value;},applyRemote,refresh});
   mounts.set(root,controller);currentController=controller;
@@ -165,8 +169,7 @@ function collectElements(root){
 function bindCatalogHandlers(context){const {elements}=context;if(!elements.form)return;
   elements.category.addEventListener('change',()=>{renderProfileOptions(context);context.updateSelection();});
   elements.profile.addEventListener('change',context.updateSelection);
-  elements.requested.addEventListener('input',()=>{context.setCreateRequestId(null);context.render();});
-  elements.campaignName.addEventListener('input',()=>context.setCreateRequestId(null));
+  elements.requested.addEventListener('input',()=>context.render());
   elements.form.addEventListener('submit',event=>createCampaign(event,context));
   elements.qa.addEventListener('click',()=>runQa(context));elements.activate.addEventListener('click',()=>activatePool(context));
   elements.addCategory.addEventListener('click',()=>{patchCatalogState(context.state,{onboarding:{...context.state.onboarding,
@@ -228,16 +231,25 @@ async function saveAndCreateInitial(context){const {state,api,elements}=context;
 }
 
 async function createCampaign(event,context){event.preventDefault();const {state,api,elements}=context;
+  if(state.loading.create)return;
+  const selected=state.selectedProfile,selectionKey=identityKey(selected),entry=operatorEntry(selected);
+  if(!entry.available||entry.action==='BLOCKED')return context.setError(coded(entry.code??'INITIAL_CAMPAIGN_NOT_CONTINUABLE','当前类目状态不允许开始或继续采集。'));
+  const stillSelected=()=>context.isActive()&&identityKey(state.selectedProfile)===selectionKey;
+  context.beginEntryMutation();
   patchCatalogState(state,{loading:{...state.loading,create:true},error:null});context.render();
   try{const profile=state.selectedProfile;if(!profile)throw coded('CATEGORY_PROFILE_NOT_FOUND','找不到所选 Category Profile。');
-    let requestId=context.getCreateRequestId();if(!requestId){requestId=createRequestIdentity({randomUUID:context.randomUUID});context.setCreateRequestId(requestId);}
-    const initial=profile.initial_pool_available===true&&profile.expansion_available!==true;
-    const body=initial?buildInitialCreatePayload({profile,campaignName:elements.campaignName.value,requestId})
+    const requestKey=JSON.stringify([selectionKey,entry.action,entry.campaign_id,entry.action==='CONTINUE_INITIAL'?null:elements.campaignName.value.trim(),entry.action==='EXPANSION'?Number(elements.requested.value):null]);
+    let requestId=context.entryRequests.get(requestKey);if(!requestId){requestId=createRequestIdentity({randomUUID:context.randomUUID});context.entryRequests.set(requestKey,requestId);}
+    const body=entry.action==='CONTINUE_INITIAL'?buildInitialContinuePayload({profile,campaignId:entry.campaign_id,requestId})
+      :entry.action==='START_INITIAL'?buildInitialCreatePayload({profile,campaignName:elements.campaignName.value,requestId})
       :buildCreatePayload({profile,requestedNewCount:Number(elements.requested.value),campaignName:elements.campaignName.value,requestId});
-    const response=initial?await api.createInitial(body):await api.createExpansion(body),current=response.result??null;
+    const response=entry.action==='CONTINUE_INITIAL'?await api.continueInitial(entry.campaign_id,body):entry.action==='START_INITIAL'?await api.createInitial(body):await api.createExpansion(body),current=response.result??null;
+    if(!stillSelected())return;
     patchCatalogState(state,{currentCampaign:current,currentPool:current?.pool_version_id??null,initialQa:current?.qa??null});
-    context.setCreateRequestId(null);emitCatalogIdentity(context.root,'catalog:context-changed',current??{});
-  }catch(error){context.setError(error);}
+    if(entry.action==='START_INITIAL'&&current?.campaign_id){const next={...profile,entry:{...entry,action:'CONTINUE_INITIAL',campaign_id:current.campaign_id}};
+      patchCatalogState(state,{selectedProfile:next,profiles:state.profiles.map(row=>row===profile?next:row)});}
+    emitCatalogIdentity(context.root,'catalog:context-changed',current??{});
+  }catch(error){if(stillSelected())context.setError(error);}
   finally{patchCatalogState(state,{loading:{...state.loading,create:false}});context.render();}
 }
 
@@ -265,12 +277,13 @@ async function activatePool(context){const {state,api}=context,current=state.cur
 
 function renderCatalogPanel({root,elements,state}){if(!elements.form)return;
   renderCategoryOptions({root,elements,state});renderProfileOptions({root,elements,state});
-  const profile=state.selectedProfile,initial=profile?.initial_pool_available===true&&profile?.expansion_available!==true;
+  const profile=state.selectedProfile,entry=operatorEntry(profile),initial=['START_INITIAL','CONTINUE_INITIAL'].includes(entry.action);
   elements.activePoolCount.textContent=formatNumber(profile?.active_pool_count);elements.requestedField.hidden=Boolean(initial);
   elements.targetField.hidden=Boolean(initial);elements.requested.required=!initial;
   const target=calculateTarget(profile,Number(elements.requested.value));elements.calculatedTarget.textContent=target===null?'—':formatNumber(target);
-  elements.create.textContent=initial?'创建首次采集任务':'创建采集任务';
-  elements.create.disabled=state.loading.create||!(profile?.available||profile?.initial_pool_available);
+  elements.campaignName.required=entry.action!=='CONTINUE_INITIAL';elements.campaignName.disabled=entry.action==='CONTINUE_INITIAL';
+  elements.create.textContent=({START_INITIAL:'开始首次采集',CONTINUE_INITIAL:'继续首次采集',EXPANSION:'创建新增采集任务',BLOCKED:'当前类目不可采集'})[entry.action];
+  elements.create.disabled=state.loading.create||!entry.available;
   const busy=Object.values(state.loading).some(Boolean);elements.loading.hidden=!busy;
   elements.error.hidden=!state.error;elements.error.textContent=state.error?.message??'';
   renderClaimBlockers(elements,state);renderOnboarding(elements,state);
@@ -297,8 +310,8 @@ function renderCategoryOptions({root,elements,state}){const values=[...new Set(s
   if(state.selectedProfile&&values.includes(state.selectedProfile.category_key))elements.category.value=state.selectedProfile.category_key;
 }
 function renderProfileOptions({root,elements,state}){const rows=state.profiles.filter(row=>row.category_key===elements.category.value),previous=elements.profile.value;
-  replaceOptions(root,elements.profile,rows.map(row=>({value:row.category_profile_version,label:`${row.category_profile_version}${row.available||row.initial_pool_available?'':'（不可用）'}`,
-    disabled:!row.available&&!row.initial_pool_available})));if(rows.some(row=>row.category_profile_version===previous))elements.profile.value=previous;
+  replaceOptions(root,elements.profile,rows.map(row=>({value:row.category_profile_version,label:`${row.category_profile_version}${operatorEntry(row).available?'':'（不可用）'}`,
+    disabled:false})));if(rows.some(row=>row.category_profile_version===previous))elements.profile.value=previous;
   if(state.selectedProfile&&rows.includes(state.selectedProfile))elements.profile.value=state.selectedProfile.category_profile_version;
 }
 function replaceOptions(root,select,rows){if(!select||!root.ownerDocument?.createElement)return;const options=rows.map(row=>{const option=root.ownerDocument.createElement('option');

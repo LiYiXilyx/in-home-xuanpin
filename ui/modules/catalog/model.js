@@ -39,6 +39,13 @@ export function buildInitialCreatePayload({profile,campaignName,requestId}={}){
   return{category_key:profile.category_key,category_profile_version:profile.category_profile_version,campaign_name:name,request_id:identity};
 }
 export function buildInitialQaPayload(input={}){return buildInitialActionPayload(input);}
+export function buildInitialContinuePayload(input={}){return buildInitialActionPayload(input);}
+export function operatorEntry(profile){
+  if(profile?.entry)return profile.entry;
+  // Compatibility for older descriptors only; never infer a continuation identity.
+  const action=profile?.initial_pool_available&&!profile?.expansion_available?'START_INITIAL':profile?.available?'EXPANSION':'BLOCKED';
+  return {action,available:action!=='BLOCKED',campaign_id:null};
+}
 export function buildInitialActivationPayload(input={}){return buildInitialActionPayload(input);}
 export function initialOperatorViewModel(current={}){const qa=current.qa??{},status=qa.status??'NOT_RUN',currentCount=Number(current.current_unique??0);
   return{modeLabel:'不限数量 / OPEN_ENDED',currentCount,qaStatus:status,qaCandidateCount:Number(qa.qa_candidate_count??0),
