@@ -1,0 +1,12 @@
+[
+ {"name":"Girls' Sets","parent":"Kids' Fashion","path":"/de-en/girls-sets-o3-1088.html","type":"CATEGORY_LISTING","accepted":true},
+ {"name":"Pet Beds","parent":"Pet Supplies","path":"/de-en/pet-beds-o3-1101.html","type":"CATEGORY_LISTING","accepted":true},
+ {"name":"Storage Boxes","parent":"Home Storage","path":"/de-en/storage-boxes-o3-1102.html","type":"CATEGORY_LISTING","accepted":true},
+ {"name":"Car Mats","parent":"Automotive","path":"/de-en/car-mats-o3-1103.html","type":"CATEGORY_LISTING","accepted":true},
+ {"name":"Garden Pots","parent":"Garden","path":"/de-en/garden-pots-o3-1104.html","type":"CATEGORY_LISTING","accepted":true},
+ {"name":"Search","parent":"Home","path":"/search_result.html","type":"SEARCH_RESULTS","accepted":false},
+ {"name":"Detail","parent":"Home","path":"/item-g-12345.html","type":"PRODUCT_DETAIL","accepted":false},
+ {"name":"Home","parent":"Home","path":"/","type":"HOME","accepted":false},
+ {"name":"Security","parent":"Home","path":"/de-en/garden-pots-o3-1104.html","type":"CATEGORY_LISTING","security":true,"accepted":false},
+ {"name":"Empty","parent":"Home","path":"/de-en/garden-pots-o3-1104.html","type":"CATEGORY_LISTING","empty":true,"accepted":false}
+]
