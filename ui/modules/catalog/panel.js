@@ -244,6 +244,7 @@ async function createCampaign(event,context){event.preventDefault();const {state
       :entry.action==='START_INITIAL'?buildInitialCreatePayload({profile,campaignName:elements.campaignName.value,requestId})
       :buildCreatePayload({profile,requestedNewCount:Number(elements.requested.value),campaignName:elements.campaignName.value,requestId});
     const response=entry.action==='CONTINUE_INITIAL'?await api.continueInitial(entry.campaign_id,body):entry.action==='START_INITIAL'?await api.createInitial(body):await api.createExpansion(body),current=response.result??null;
+    context.entryRequests.delete(requestKey);
     if(!stillSelected())return;
     patchCatalogState(state,{currentCampaign:current,currentPool:current?.pool_version_id??null,initialQa:current?.qa??null});
     if(entry.action==='START_INITIAL'&&current?.campaign_id){const next={...profile,entry:{...entry,action:'CONTINUE_INITIAL',campaign_id:current.campaign_id}};

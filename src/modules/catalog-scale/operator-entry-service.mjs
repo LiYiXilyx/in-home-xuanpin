@@ -24,6 +24,7 @@ export function createOperatorEntryService({db,repository,initialRepository,now,
   if(!['pending','opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(q.status)
    ||!['pending','opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(source.status))fail('INITIAL_CAMPAIGN_NOT_CONTINUABLE');
   const claim=db.prepare('SELECT claim_token,claim_generation FROM catalog_rpa_queue WHERE id=?').get(q.id);
+  if(claim.claim_token!==null&&(typeof claim.claim_token!=='string'||!claim.claim_token.trim()))fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
   if(claim.claim_token&&(q.status==='pending'||claim.claim_generation<1||runs.length!==1))fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
   if(c.status==='running'&&(!claim.claim_token||runs.length!==1))fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
   return {q,source,runs};
@@ -52,7 +53,13 @@ export function createOperatorEntryService({db,repository,initialRepository,now,
    try{readChildren(c);}catch(error){return blocked(error.code??'INITIAL_CAMPAIGN_NOT_CONTINUABLE');}
    return {...base,action:'CONTINUE_INITIAL',available:true,code:null,campaign_id:c.id};
   }
-  return {...base,action:'START_INITIAL',available:true,code:null};
+ return {...base,action:'START_INITIAL',available:true,code:null};
+ }
+ function assertNoForeignClaim(campaignId=null){
+  const foreign=db.prepare(`SELECT q.id FROM catalog_rpa_queue q JOIN catalog_campaigns c ON c.id=q.campaign_id
+   WHERE (? IS NULL OR q.campaign_id<>?) AND (q.status IN ('opening','waiting_page_ready','capturing','waiting_load_more','manual_required')
+   OR (q.claim_token IS NOT NULL AND q.status NOT IN ('completed','failed','cancelled') AND c.status NOT IN ('completed','failed','cancelled')))` ).all(campaignId,campaignId);
+  if(foreign.length)throw new AppError('已有其它任务占用采集 claim。',{code:'CATALOG_RPA_CLAIM_CONFLICT',details:claimBlockers()});
  }
  function continueInitial({profile,campaignId,requestId}){
   if(typeof requestId!=='string'||!requestId.trim())fail('OPERATOR_REQUEST_ID_REQUIRED');
@@ -62,10 +69,7 @@ export function createOperatorEntryService({db,repository,initialRepository,now,
    if(entry.action!=='CONTINUE_INITIAL')fail(entry.code??'INITIAL_CAMPAIGN_NOT_CONTINUABLE');
    if(entry.campaign_id!==campaignId)fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
    const c=repository.getCampaign(campaignId),{q,source,runs}=readChildren(c),active=['opening','waiting_page_ready','capturing','waiting_load_more','manual_required'];
-   const foreign=db.prepare(`SELECT q.id FROM catalog_rpa_queue q JOIN catalog_campaigns c ON c.id=q.campaign_id
-    WHERE q.campaign_id<>? AND (q.status IN ('opening','waiting_page_ready','capturing','waiting_load_more','manual_required')
-    OR (q.claim_token IS NOT NULL AND q.status NOT IN ('completed','failed','cancelled') AND c.status NOT IN ('completed','failed','cancelled')))` ).all(campaignId);
-   if(foreign.length)throw new AppError('已有其它任务占用采集 claim。',{code:'CATALOG_RPA_CLAIM_CONFLICT',details:claimBlockers()});
+   assertNoForeignClaim(campaignId);
    const claim=db.prepare('SELECT claim_token,claim_generation FROM catalog_rpa_queue WHERE id=?').get(q.id);
    if(claim.claim_token&&(!active.includes(q.status)||claim.claim_generation<1||runs.length!==1))fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
    if(c.status==='running'&&(!claim.claim_token||runs.length!==1))fail('OPERATOR_MANUAL_CONTEXT_MISMATCH');
@@ -88,5 +92,5 @@ export function createOperatorEntryService({db,repository,initialRepository,now,
    return result;
   });
  }
- return {resolve,continueInitial};
+ return {resolve,continueInitial,assertNoForeignClaim};
 }

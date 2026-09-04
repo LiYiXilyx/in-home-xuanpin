@@ -47,3 +47,8 @@ test('continue API uses explicit path id and same scoped body',async()=>{
  const body={campaign_id:'exact',category_key:'b',category_profile_version:'b-v1',request_id:'r'};
  await api.continueInitial('exact',body);assert.equal(sent[0].path,'/api/catalog/operator/initial-campaigns/exact/continue');assert.deepEqual(JSON.parse(sent[0].options.body),body);
 });
+test('a later explicit continuation after success uses a new request, not an old resume replay',async t=>{
+ const {f,panel,calls}=setup(t,[profile('b','CONTINUE_INITIAL')],async()=>({result:{campaign_id:'b-campaign',category_key:'b',category_profile_version:'b-v1',status:'running'}}));
+ await panel.refresh();await f.byId('catalog-create-form').emit('submit');await f.byId('catalog-create-form').emit('submit');
+ assert.equal(calls.length,2);assert.notEqual(calls[0].args[1].request_id,calls[1].args[1].request_id);
+});

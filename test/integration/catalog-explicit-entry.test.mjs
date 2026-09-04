@@ -6,6 +6,18 @@ import {buildInitialActivationPayload} from '../../src/modules/catalog-scale/ini
 
 function rows(db){return db.prepare('SELECT * FROM catalog_campaigns ORDER BY id').all();}
 function allRows(db){return ['catalog_campaigns','catalog_sources','catalog_rpa_queue','catalog_source_runs'].map(table=>db.prepare(`SELECT * FROM ${table} ORDER BY id`).all());}
+test('malformed empty claim cannot produce a successful claimless continuation',async t=>{
+ const f=await createInitialPoolFixture(t),c=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'empty',requestId:'empty'});
+ f.db.exec("UPDATE catalog_campaigns SET status='paused'; UPDATE catalog_rpa_queue SET claim_token=''");
+ const before=allRows(f.db);assert.throws(()=>f.service.continueOperatorInitial({profile:f.profile,campaignId:c.campaignId,requestId:'continue'}));assert.deepEqual(allRows(f.db),before);
+});
+test('START cannot take over a foreign paused Campaign pending claimed queue',async t=>{
+ const f=await createInitialPoolFixture(t),other=f.service.createCampaign({profile:{...f.profile,category_key:'other'},name:'foreign',campaignType:'test',targetCount:1});
+ f.service.createSource(other.id,{sourceKey:'foreign',sourceType:'category',sortOrder:'Top Sales'});
+ f.db.prepare("UPDATE catalog_campaigns SET status='paused' WHERE id=?").run(other.id);
+ f.db.prepare("UPDATE catalog_rpa_queue SET status='pending',claim_token='held',claim_generation=1 WHERE campaign_id=?").run(other.id);
+ const before=allRows(f.db);assert.throws(()=>f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'start',requestId:'start'}),e=>e.code==='CATALOG_RPA_CLAIM_CONFLICT');assert.deepEqual(allRows(f.db),before);
+});
 test('valid Active Pool resolves Expansion but never hides an unfinished Initial',async t=>{
  const f=await createInitialPoolFixture(t),created=f.service.createOperatorInitialCampaign({profile:f.profile,campaignName:'pool',requestId:'pool'}),campaign=f.service.getCampaign(created.campaignId),source=f.service.currentOperatorManualContext().source;
  const repo=createInitialPoolRepository(f.db,{now:f.now});
