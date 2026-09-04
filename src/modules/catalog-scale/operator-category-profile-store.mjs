@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {AppError} from '../../shared/errors.mjs';
+import {validateCategoryProfile} from './category-profile.mjs';
+import '../../../browser-extension/category-page-descriptor.js';
 
 export function createOperatorCategoryProfileStore({root,builtInRegistry,validateInput}={}){
   const configuredRoot=path.resolve(required(root,'root'));
@@ -11,8 +13,21 @@ export function createOperatorCategoryProfileStore({root,builtInRegistry,validat
   async function validate(input){return validateInput(input);}
 
   async function register({requestId,...input}={}){
-    const id=required(requestId,'request_id');
     const profile=await validate(input);
+    assertSafeIdentity(profile);
+    await assertBuiltInIdentityAvailable(builtInRegistry,profile);
+    return withRegistrationLock(write=>write({requestId,...input}));
+  }
+
+  async function withRegistrationLock(action){
+    const canonicalRoot=await ensureSafeRoot(configuredRoot);
+    const release=await acquireLock(path.join(canonicalRoot,'.locks','registration.lock'));
+    try{return await action(writeRegistered);}finally{await release();}
+  }
+
+  async function writeRegistered({requestId,...input}={},normalizedProfile){
+    const id=required(requestId,'request_id');
+    const profile=normalizedProfile?validateCategoryProfile(normalizedProfile):await validate(input);
     assertSafeIdentity(profile);
     const requestHash=hashCanonical(profile);
     const filename=`${profile.category_key}--${profile.category_profile_version}.json`;
@@ -32,6 +47,13 @@ export function createOperatorCategoryProfileStore({root,builtInRegistry,validat
       if(await exists(paths.final))throw new AppError('Operator Category Profile 已存在。',{
         code:'CATEGORY_PROFILE_ALREADY_EXISTS',details:identity(profile)
       });
+      const listing=canonical(profile.listing_url);
+      if(listing){
+        const names=(await fs.readdir(canonicalRoot)).filter(name=>name.endsWith('.json'));
+        const existing=await Promise.all(names.map(name=>readJson(path.join(canonicalRoot,name))));
+        const builtIns=await builtInRegistry?.list?.();
+        if([...existing,...(builtIns?.profiles??[])].some(row=>canonical(row?.listing_url)===listing))throw new AppError('同一类目已存在其它 Profile。',{code:'CATEGORY_PROFILE_CONFLICT'});
+      }
       await atomicWrite(paths.final,profileBytes);
       try{
         await atomicWrite(paths.receipt,`${JSON.stringify({request_id:id,request_hash:requestHash,filename},null,2)}\n`);
@@ -43,7 +65,7 @@ export function createOperatorCategoryProfileStore({root,builtInRegistry,validat
     }finally{await release();}
   }
 
-  return Object.freeze({root:configuredRoot,validate,register});
+  return Object.freeze({root:configuredRoot,validate,register,withRegistrationLock});
 }
 
 async function ensureSafeRoot(root){
@@ -124,3 +146,4 @@ function identity(profile){return{categoryKey:profile.category_key,categoryProfi
 function required(value,field){const result=String(value??'').trim();if(!result)throw new AppError(`缺少 ${field}。`,{code:'CATEGORY_PROFILE_INPUT_INVALID'});return result;}
 function conflict(){return new AppError('同一 request_id 的 Profile 参数发生变化。',{code:'CATEGORY_PROFILE_IDEMPOTENCY_CONFLICT'});}
 function unsafe(message){return new AppError(message,{code:'CATEGORY_PROFILE_STORE_UNSAFE'});}
+function canonical(url){try{return globalThis.TemuCategoryPageDescriptor.canonicalizeTemuCategoryListingUrl(url);}catch{return null;}}

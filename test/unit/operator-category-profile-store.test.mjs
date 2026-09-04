@@ -6,6 +6,23 @@ import test from 'node:test';
 
 import {createOperatorCategoryProfileStore} from '../../src/modules/catalog-scale/operator-category-profile-store.mjs';
 
+test('store exclusive identity boundary rejects concurrent independent instance without partial writes',async t=>{
+ const root=tempRoot(t),a=createStore(root,{validateInput:()=>fixtureProfile()}),b=createStore(root,{validateInput:()=>fixtureProfile()});
+ let entered,release;const ready=new Promise(r=>entered=r),hold=new Promise(r=>release=r);
+ const first=a.withRegistrationLock(async register=>{entered();await hold;return register({requestId:'first'});});
+ await ready;
+ await assert.rejects(()=>b.register({requestId:'second'}),e=>e.code==='CATEGORY_PROFILE_REGISTRATION_IN_PROGRESS');
+ release();await first;assert.equal(profileFiles(root).length,1);
+});
+
+test('advanced registration cannot write a parallel version of the same listing identity',async t=>{
+ const root=tempRoot(t);let current={...fixtureProfile(),listing_url:'https://www.temu.com/de-en/pets-o3-100.html'};
+ const store=createStore(root,{validateInput:()=>current});await store.register({requestId:'one'});
+ current={...current,category_profile_version:'operator-pet-supplies-v1-abcdefabcdef'};
+ await assert.rejects(()=>store.register({requestId:'two'}),e=>e.code==='CATEGORY_PROFILE_CONFLICT');
+ assert.equal(profileFiles(root).length,1);
+});
+
 test('register writes canonical profile atomically and same request replays',async t=>{
   const root=tempRoot(t),profile=fixtureProfile();
   const store=createStore(root,{validateInput:()=>profile});
