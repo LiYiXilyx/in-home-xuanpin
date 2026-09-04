@@ -110,3 +110,13 @@ Interface: profile.entry descriptor drives button; continueInitial(body) submits
 ## Coverage self-review
 
 Precedence/read-only: Task 1. Full state tuple/claim/idempotency/rollback: Task 2. Exact HTTP identity and two-connection race: Task 3. Explicit operator trigger and frontend duplicate/stale-response safety: Task 4. Exact-seven regressions and production boundary: Task 5.
+
+## Gap execution completion
+
+- [x] Gap Task A (G1/G2): 3de7138; additional combination-state coverage in 3fc43c2. Existing core tasks retained.
+- [x] Gap Task B (G3): 7d9e97b; independent race, exact payload and same-request replay acceptance.
+- [x] Gap Task C (G4/G5): 3fc43c2; descriptor-driven UI, no read-triggered writes, synchronous double-click guard and scoped uncertain requests.
+- [x] Independent review: three further bounded findings reproduced RED and fixed by ca1f4aa; read-only reviewer confirmed closure.
+- [x] Gap Task D (G6): 24 focused PASS, 86 related PASS, full 822 / 813 PASS / exact 7 baseline FAIL / 2 existing SKIP. Four former environment failures resolved (14/14 environment characterization tests). npm run check and git diff --check PASS.
+
+Final evidence: `docs/superpowers/verification/2026-09-04-catalog-explicit-entry.md`. No stable integration/deployment or production actions performed.

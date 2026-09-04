@@ -22,3 +22,20 @@ GAP_COUNT = 6
 SAFE_TO_CONTINUE_REMAINING_IMPLEMENTATION = YES
 
 No core repository, quantity policy, QA, activation, extension, migration or frozen snapshot changes are needed. Do not migrate either old branch.
+
+## Post-patch conformance (ca1f4aa)
+
+All original rows above remain as the pre-patch audit, not a claim that those original commits passed everything. G1–G6 are now closed. G1 additionally blocks malformed stored quantity as an action descriptor and revalidates START within the existing creation transaction, including completed-without-pool. G2 checks source category, frozen membership scope, legal children, replay capturing state, and returns existing blocker details. G3 preserves the original independent worker race and verifies the exact hard-failure code, eligibility/candidate-state row counts and winner request replay. G4/G5 add explicit descriptor-driven UI and scoped request lifecycle. G6 supplies isolated data/image copies and validates exact-seven full regression.
+
+Independent read-only review identified three additional concrete issues: pending foreign claimed queue bypass at START; successful UI continuation request retained forever; empty claim token yielding claimless success. Each was reproduced RED, corrected in ca1f4aa, and independently re-reviewed as closed. Total tracked gaps: original six groups plus three review findings = nine; patched/verified = nine.
+
+| Retained commit | Final capability verdict | Evidence |
+|---|---|---|
+|9e0ceb7|PASS with bounded patches|Exact scope/children, ambiguity, valid Active Pool + unfinished, malformed quantity, read-only and completed-without-pool tests|
+|c18efce|PASS with bounded patches|Full continuation tuple, no-run manual_required branch, original run/claim reuse, foreign/empty claim rejection, replay validation, transaction rollback|
+|4d8f01a|PASS with expanded acceptance tests|Exact POST identity/request id, zero-write retry/rejection, independent-connection one-winner race and distinct request retry|
+
+CONFORMANCE_AUDIT_PASS = YES
+EXISTING_ENTRY_COMMITS_RETAINED = YES
+FROZEN_INITIAL_INFRA_TOUCHED = NO
+FROZEN_SNAPSHOT_FEATURE_TOUCHED = NO
