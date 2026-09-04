@@ -18,6 +18,41 @@
 - Final full-suite failures must match the approved seven file/name/reason identities; NEW_FAILURES=0.
 - Category/profile identity precedes every action; BEGIN IMMEDIATE covers all continuation rechecks and writes.
 
+## Gap-based execution amendment (supersedes repeating Tasks 1–3)
+
+Retain 9e0ceb7/c18efce/4d8f01a. Audit: `docs/superpowers/verification/2026-09-04-entry-conformance-audit.md`. Design status PARTIAL_IMPLEMENTATION_EXISTS / ACCEPTANCE_PENDING. Six gaps, executed inline without another approval pause.
+
+### Gap Task A — G1/G2 bounded service conformance
+
+Files: `src/modules/catalog-scale/operator-entry-service.mjs`, thin dependency injection in `catalog-campaign-service.mjs`, `test/integration/catalog-explicit-entry.test.mjs`.
+
+- [ ] RED: corrupt frozen membership scope or source category; assert `resolve(...).action === 'BLOCKED'` and ordered DB rows unchanged. End a source while parent is running; replay must throw rather than return prior success. Foreign conflict must include complete blockers.
+- [ ] Minimal patch: private read-only Entry tuple validation checks frozen profile/category/scope, exact child/run ownership and legal states. Share it with continuation without changing repositories. Replay additionally requires capturing children. Inject existing claimBlockers callback for error details.
+- [ ] GREEN: `node --test test/integration/catalog-explicit-entry.test.mjs`.
+- [ ] Related: Initial create/manual-capture/QA/activation tests. `git diff --check`, commit only bounded files.
+
+### Gap Task B — G3 API/race acceptance coverage
+
+Files: existing Entry API test and race worker fixture only, unless RED identifies a bounded controller defect.
+
+- [ ] Add missing/wrong payload and request identity cases; verify `total_changes()` unchanged on rejection/replay. Strengthen competing-request race with allowed loser errors and all Initial creation row counts. Verify identical request retry returns the winner without writes. Bound barrier wait and clean up workers.
+- [ ] Run Entry API tests and existing operator/Initial API regressions. Existing passing implementation is retained, not rewritten merely to manufacture RED. If a real failing behavior appears, patch only its Entry boundary.
+- [ ] `git diff --check`, independent test commit.
+
+### Gap Task C — G4/G5 remaining UI TDD
+
+Files: `ui/modules/catalog/{api,model,panel}.js`, `test/unit/catalog-explicit-entry-ui.test.mjs`.
+
+- [ ] RED: authoritative descriptor selects START/CONTINUE/EXPANSION/BLOCKED; `continueInitial` sends exact displayed campaign. Initial quantity controls hidden; no required campaign name for continuation. Mount/refresh/change never POST. A deferred response plus two submit events produces one request. Change selection before resolution and assert selection/result stays scoped.
+- [ ] Minimal patch: descriptor helper, explicit continue API, synchronous loading guard. Key retained request by category/profile/action/campaign/payload; retry uncertainty reuses identity. Preserve selected profile across refresh; suppress old-scope mutation response/error. Re-read server after success without mutation.
+- [ ] GREEN and Catalog module/namespace/polling/Initial UI related tests. `git diff --check`, independent commit.
+
+### Gap Task D — G6 acceptance only
+
+- [ ] Prepare ignored fixture/copied SQLite for four existing environment-dependent tests; production inputs read-only, no production test config.
+- [ ] Run focused, related, and full `node --test --test-reporter=tap` with explicit `YINGDAO_REAL_SOURCE_DIR` read-only fixture directory. Capture logs outside git.
+- [ ] Compare each failure file/name/reason to approved exact seven; environment failures are not baseline exceptions. Verify protected file diff empty and original three commits ancestors. Record final counts and remaining limitations, commit documentation. No production startup/actions/push.
+
 ## Task 1 — Read-only entry resolver
 
 Files: new src/modules/catalog-scale/operator-entry-service.mjs and test/integration/catalog-explicit-entry.test.mjs; modify Catalog service composition and profile descriptor.
