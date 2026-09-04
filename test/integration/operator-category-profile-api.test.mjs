@@ -9,6 +9,16 @@ import {createOperationsServer} from '../../src/server/index.mjs';
 const draft=()=>({display_name:'Pet Supplies',page_category_name:'Pet Supplies',category_aliases:['Pet Supplies'],
   parent_category:'Home & Pet',breadcrumbs:['Home & Pet','Pet Supplies'],listing_url:'https://www.temu.com/de-en/pet-supplies.html'});
 
+test('category probe HTTP recognition writes nothing and explicit register writes Profile only',async t=>{
+ const {post,get,app,operatorDirectory}=await serverFixture(t),before=dbFingerprint(app.db);
+ const descriptor={descriptor_schema_version:1,page_url:'https://www.temu.com/de-en/pet-beds-o3-100.html',page_type:'CATEGORY_LISTING',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales',breadcrumbs:['Home','Pets','Pet Beds'],dom_goods_count:40,captcha_blocking:false,security_verification:false,search_no_results:false,detected_at:'2026-09-04T00:00:00Z'};
+ const r=await post('/api/catalog/operator/category-probes',descriptor);assert.equal(r.status,200);const {probe}=await r.json();
+ assert.equal(fs.existsSync(operatorDirectory),false);assert.deepEqual(dbFingerprint(app.db),before);
+ const response=await post(`/api/catalog/operator/category-probes/${probe.probe_id}/register`,{probe_id:probe.probe_id,descriptor_fingerprint:probe.descriptor_fingerprint,request_id:'probe-register'});assert.equal(response.status,200);
+ const {profile}=await response.json();assert.equal(profile.category_key,'pet-beds');assert.deepEqual(dbFingerprint(app.db),before);
+ const entry=await get(`/api/catalog/operator/entry?category_key=${profile.category_key}&category_profile_version=${profile.category_profile_version}`);assert.equal((await entry.json()).entry.action,'START_INITIAL');assert.deepEqual(dbFingerprint(app.db),before);
+});
+
 test('validate is zero-write and register is immediately visible and idempotent',async t=>{
   const fixture=await serverFixture(t),{get,post,operatorDirectory,app}=fixture;
   const beforeDb=dbFingerprint(app.db);assert.equal(fs.existsSync(operatorDirectory),false);
@@ -49,7 +59,7 @@ async function serverFixture(t){
     browserDependencies:{ready:async()=>true,openSession:async()=>({context:{}}),connectSession:async()=>({context:{}}),currentPage:async()=>({}),inspectPage:async()=>({status:'READY',code:'READY',checks:{}})}});
   const address=await app.listen({port:0});t.after(async()=>{await app.close();fs.rmSync(directory,{recursive:true,force:true,maxRetries:5,retryDelay:20});});
   const request=(route,options={})=>fetch(`${address.url}${route}`,options);
-  const get=route=>request(route);const post=(route,payload)=>request(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const get=route=>request(route);const post=(route,payload)=>request(route,{method:'POST',headers:{'Content-Type':'application/json','Origin':address.url},body:JSON.stringify(payload)});
   return{directory,operatorDirectory,app,get,post,request};
 }
 function dbFingerprint(db){return Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()

@@ -19,6 +19,7 @@ import {resolveClaimRecoveryThresholds} from '../modules/catalog-scale/catalog-c
 import { createCategoryProfileRegistry } from '../modules/catalog-scale/category-profile-registry.mjs';
 import { createOperatorCategoryProfileStore } from '../modules/catalog-scale/operator-category-profile-store.mjs';
 import { normalizeOperatorCategoryProfile } from '../modules/catalog-scale/operator-category-profile.mjs';
+import {createCategoryProbeService} from '../modules/catalog-scale/page-derived-category-probes.mjs';
 import { createCatalogScopedExportService } from '../modules/catalog-scale/catalog-scoped-export-service.mjs';
 import { createJobService } from '../jobs/job-service.mjs';
 import { createReviewQueueService } from '../modules/reviews/review-queue-service.mjs';
@@ -96,6 +97,7 @@ export async function createOperationsServer(options={}) {
     repository:createCatalogScopedExportRepository(db),outputDir:path.join(config.export.outputDir,'catalog-scoped')
   });
   const catalogController=createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,
+    categoryProbeService:createCategoryProbeService({registry:categoryProfileRegistry,store:operatorCategoryProfileStore}),
     operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService });
   const sourcingRoot=path.dirname(config.app.databasePath);
   const sourcingDatabasePath=options.sourcingDatabasePath??path.join(sourcingRoot,'1688_sourcing.db');

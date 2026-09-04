@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createOperatorCategoryProfileStore} from '../../src/modules/catalog-scale/operator-category-profile-store.mjs';
+import {createCategoryProfileRegistry} from '../../src/modules/catalog-scale/category-profile-registry.mjs';
+import {normalizeOperatorCategoryProfile} from '../../src/modules/catalog-scale/operator-category-profile.mjs';
+const descriptor=()=>({descriptor_schema_version:1,page_url:'https://www.temu.com/de-en/pet-beds-o3-100.html',page_type:'CATEGORY_LISTING',site_country:'DE',language:'en',currency:'EUR',sort_order:'Top Sales',breadcrumbs:['Home','Pets','Pet Beds'],dom_goods_count:40,captcha_blocking:false,security_verification:false,search_no_results:false,detected_at:'2026-09-04T00:00:00Z'});
+test('probes are ephemeral; exact registration persists one Profile, repeat reuses, expiry and mismatch write nothing',async t=>{
+ const {createCategoryProbeService}=await import('../../src/modules/catalog-scale/page-derived-category-probes.mjs');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'category-probes-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const builtIn=path.join(root,'built');fs.mkdirSync(builtIn);const operator=path.join(root,'operator');
+ const registry=createCategoryProfileRegistry({builtInDirectory:builtIn,operatorDirectory:operator});
+ const store=createOperatorCategoryProfileStore({root:operator,validateInput:normalizeOperatorCategoryProfile});let now=0;
+ const service=createCategoryProbeService({registry,store,clock:()=>now});
+ const p=await service.create(descriptor());assert.equal(fs.existsSync(operator),false);assert.equal(p.resolution,'NEW');
+ const exact={probe_id:p.probe_id,descriptor_fingerprint:p.descriptor_fingerprint,request_id:'one'};
+ await assert.rejects(()=>service.register({...exact,descriptor_fingerprint:'wrong'}),e=>e.code==='CATEGORY_PROBE_CONTEXT_MISMATCH');assert.equal(fs.existsSync(operator),false);
+ const first=await service.register(exact);assert.equal(first.profile.category_key,'pet-beds');
+ const second=await service.register({...exact,request_id:'two'});assert.equal(second.profile_reused,true);assert.equal((await registry.list()).profiles.length,1);
+ now=300001;await assert.rejects(()=>service.register(exact),e=>e.code==='CATEGORY_PROBE_EXPIRED');assert.equal((await registry.list()).profiles.length,1);
+ assert.equal(await createCategoryProbeService({registry,store}).current(),null);
+});

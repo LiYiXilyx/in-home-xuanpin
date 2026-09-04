@@ -85,6 +85,12 @@ export function createRouter({ statusService,browserController,jobController,rev
       const poolExport=url.pathname.match(/^\/api\/catalog\/pools\/([^/]+)\/export$/);
       if(request.method==='POST'&&poolExport){const result=await catalogController.exportFormalPool(decodeURIComponent(poolExport[1]),await readJson(request,16_384));
         return json(response,200,{ok:true,result},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/operator/category-probes'){
+        const probe=await catalogController.createCategoryProbe(await readJson(request,16_384));return json(response,200,{ok:true,probe},CATALOG_HEADERS);}
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/category-probes/current'){
+        return json(response,200,{ok:true,probe:await catalogController.currentCategoryProbe()},CATALOG_HEADERS);}
+      const categoryProbeRegister=url.pathname.match(/^\/api\/catalog\/operator\/category-probes\/([^/]+)\/register$/);
+      if(request.method==='POST'&&categoryProbeRegister){assertLocalOrigin(request);const result=await catalogController.registerCategoryProbe(decodeURIComponent(categoryProbeRegister[1]),await readJson(request,16_384));return json(response,200,{ok:true,...result},CATALOG_HEADERS);}
       if(request.method==='POST'&&url.pathname==='/api/catalog/operator/category-profiles/validate'){
         const profile=await catalogController.validateOperatorCategoryProfile(await readJson(request,32_768));
         return json(response,200,{ok:true,profile},CATALOG_HEADERS);}

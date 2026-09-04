@@ -1,7 +1,10 @@
 import { AppError } from '../../shared/errors.mjs';
 
-export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService }) {
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService,categoryProbeService }) {
   return {
+    createCategoryProbe:body=>categoryProbeService.create(body),
+    currentCategoryProbe:()=>categoryProbeService.current(),
+    registerCategoryProbe(id,body){if(body?.probe_id!==id)throw new AppError('Probe 身份不匹配',{code:'CATEGORY_PROBE_CONTEXT_MISMATCH'});return categoryProbeService.register(body);},
     async operatorEntry(params){const profile=await categoryProfileRegistry.resolve({categoryKey:params.get('category_key'),categoryProfileVersion:params.get('category_profile_version')});return catalogService.resolveOperatorEntry(profile);},
     async continueOperatorInitial(campaignId,body){assertCampaignBodyIdentity(campaignId,body);const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});return catalogService.continueOperatorInitial({profile,campaignId,requestId:body?.request_id});},
     claimBlockers(){return catalogClaimInspectionService.listBlockers();},
