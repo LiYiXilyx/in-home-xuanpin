@@ -853,7 +853,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
 
   function withActivity(campaignId,kind,fn){if(!activityRegistry||!campaignId)return fn();const queue=repository.listRpaQueues(String(campaignId)).find(row=>['opening','waiting_page_ready','capturing','waiting_load_more','manual_required'].includes(row.status));if(!queue)return fn();const token=activityRegistry.enter({campaignId:String(campaignId),queueId:queue.id},kind);try{return fn();}finally{activityRegistry.leave(token);}}
 
-  const api={ resolveOperatorEntry:operatorEntry.resolve,createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
+  const api={ continueOperatorInitial:operatorEntry.continueInitial,resolveOperatorEntry:operatorEntry.resolve,createCampaign,describeOperatorProfile,createOperatorManualCampaign,createOperatorInitialCampaign,currentOperatorManualContext,transitionCampaign,updateBrowserContext,createSource,captureBatch,submitQa,failCampaign,
     recordNavigationRisk,materializeRefresh,evaluateRefreshQa,materializeExpansion,evaluateExpansionQa,activatePoolVersion,
     recordExpansionCheckpoint,recordNotSeenInCampaign,
     getBaselineConsistency:repository.getBaselineConsistency,getBaselineAudit:repository.getBaselineAudit,
