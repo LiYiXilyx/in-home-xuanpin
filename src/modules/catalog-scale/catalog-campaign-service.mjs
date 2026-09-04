@@ -35,7 +35,7 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
   evaluateInitialQa=evaluateInitialPoolQa,activationCoordinator=createInitialActivationCoordinator(),activationHooks={},claimInspectionService=null,activityRegistry=null }={}) {
   const repository=createCatalogCampaignRepository(db,{ now });
   const initialRepository=createInitialPoolRepository(db,{ now });
-  const operatorEntry=createOperatorEntryService({db,repository,initialRepository,now});
+  const operatorEntry=createOperatorEntryService({db,repository,initialRepository,now,claimBlockers:()=>claimBlockers()});
   const blockerRepository=createCatalogClaimRecoveryRepository(db,{now});
   const claimBlockers=()=>claimInspectionService?.listBlockers?.() ?? completeBlockerList(blockerRepository.listBlockerRows());
 
@@ -141,6 +141,8 @@ export function createCatalogCampaignService(db,{ now=() => new Date().toISOStri
         code:'CAMPAIGN_NAME_CONFLICT',details:{ campaignName } });
       const eligibility=initialRepository.getInitialEligibility(profile);
       assertInitialEligibility(eligibility);
+      const entry=operatorEntry.resolve(profile);
+      if(entry.action!=='START_INITIAL')throw new AppError('当前类目入口不允许创建首次任务。',{code:entry.code??'INITIAL_CAMPAIGN_NOT_CONTINUABLE'});
       let campaign=createCampaignRecord({ name:campaignName,campaignType:'initial',profile,baselinePoolCount:0,
         targetCount:INITIAL_TARGET_STORAGE_SENTINEL,
         browserContext:{ profileName:'Temu1店',profileDirectory:'Profile 10',controlMode:MANUAL_PASSIVE_CAPTURE_MODE },
