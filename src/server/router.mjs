@@ -5,6 +5,9 @@ export function createRouter({ statusService,browserController,jobController,rev
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');
     try {
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/entry')return json(response,200,{ok:true,entry:await catalogController.operatorEntry(url.searchParams)},CATALOG_HEADERS);
+      const continueInitial=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/continue$/);
+      if(request.method==='POST'&&continueInitial){assertLocalOrigin(request);const result=await catalogController.continueOperatorInitial(decodeURIComponent(continueInitial[1]),await readJson(request));return json(response,200,{ok:true,result:mapInitialCampaignResult(result)},CATALOG_HEADERS);}
       if(temuMarketEvidenceController&&url.pathname.startsWith('/api/sourcing/review/')) {
         const sessions=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions$/);
         if(sessions&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.create({goodsId:decodeURIComponent(sessions[1]),body:await readJson(request,32_768)}));}

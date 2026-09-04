@@ -2,6 +2,8 @@ import { AppError } from '../../shared/errors.mjs';
 
 export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService }) {
   return {
+    async operatorEntry(params){const profile=await categoryProfileRegistry.resolve({categoryKey:params.get('category_key'),categoryProfileVersion:params.get('category_profile_version')});return catalogService.resolveOperatorEntry(profile);},
+    async continueOperatorInitial(campaignId,body){assertCampaignBodyIdentity(campaignId,body);const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});return catalogService.continueOperatorInitial({profile,campaignId,requestId:body?.request_id});},
     claimBlockers(){return catalogClaimInspectionService.listBlockers();},
     inspectClaim(campaignId,body){return catalogClaimInspectionService.inspect({campaignId,previousInspectionId:body?.previous_inspection_id??null});},
     endStaleClaim(campaignId,body){return catalogClaimRecoveryService.endStaleClaim({campaignId,queueId:body?.queue_id,sourceId:body?.source_id,firstInspectionId:body?.first_inspection_id,secondInspectionId:body?.second_inspection_id,expectedClaimToken:body?.expected_claim_token,expectedClaimGeneration:body?.expected_claim_generation,requestId:body?.request_id,operatorConfirmation:body?.operator_confirmation});},
