@@ -41,6 +41,30 @@ Active Pool still requires existing baseline consistency checks; this feature do
 
 ## Mutation contracts
 
+### Frozen precedence (first matching rule wins)
+
+1. Invalid category/profile/membership identity or scope: BLOCKED.
+2. More than one unfinished Initial within category identity: BLOCKED.
+3. Pool history with missing, multiple, mismatched or baseline-inconsistent Active Pool: BLOCKED.
+4. Active Pool together with any unfinished Initial: BLOCKED, even if the Active Pool itself is valid.
+5. Valid Active Pool and no unfinished Initial: EXPANSION.
+6. No history and exactly one valid unfinished Initial: CONTINUE_INITIAL.
+7. No history and zero unfinished Initials: START_INITIAL, subject to orphan-membership/completed-without-pool gates above.
+
+### Frozen continuation tuple and claim semantics
+
+Audited `CAMPAIGN_TRANSITIONS`, migration 017 source/queue CHECKs, `claimRpaQueue`, and `createSourceRun`: campaign supports paused/manual_required → running; source/queue use capturing (not running); source runs have finished_at rather than a status column. Repository transitions are not general-purpose validators, so this endpoint must validate input tuples explicitly.
+
+Successful continuation always returns: Campaign=running; Queue=capturing; Source=capturing; exactly one unfinished source_run; checkpoint runner_state=UNBOUND; capture_paused=true; no live page binding; all automatic action flags=false; exact Queue has a nonempty operator claim token/generation. These names already exist. It never returns paused Campaign with capturing children.
+
+Allowed parent states are running, paused, manual_required. Queue/source must belong to the exact Campaign and each be pending, opening, waiting_page_ready, capturing, waiting_load_more or manual_required; terminal children and ambiguous/missing children fail. running continuation requires an existing valid same-Campaign claim and exactly one unfinished run. paused/manual_required may reacquire a missing claim; existing valid same-Campaign claim is reused. A same-Campaign claim is valid only with exact child identity, nonempty token, positive generation, an active queue state and an internally consistent source run; this is not stale-claim takeover.
+
+For paused/manual_required without claim: under BEGIN IMMEDIATE, recheck foreign active queue/claim, atomically assign a fresh token to the exact Queue, increment generation/attempt, reuse its sole unfinished run or create one if there are zero unfinished runs (run_number=max+1); more than one unfinished run fails. Retain every finished run. Reset page binding and transition all statuses in the same transaction. Exception rolls back all state, claim, run and request changes.
+
+Any foreign active queue or foreign nonterminal claimed queue: HARD FAIL / ZERO writes, including paused foreign parents. No global/latest claim selection or takeover. Running same-claim continuation creates no new run or generation. Every successful continuation requires fresh manual binding; no browser action is issued. A request replay validates terminal/current ownership before returning, and cannot reset a subsequently established binding as a retry side effect.
+
+Two independent SQLite connections race START_INITIAL under BEGIN IMMEDIATE: exactly one complete winner; the loser observes existing Initial/claim and fails with zero partial rows. A busy-timeout error is also a hard failure, never a reason to run without the transaction.
+
 ### Start
 
 Reuse the existing Initial creation transaction. Require category_key, category_profile_version, request_id and the existing name contract. Baseline remains zero; business target and capture_limit remain null; quantity_mode remains OPEN_ENDED. Keep storage sentinel internal.
@@ -85,6 +109,10 @@ All write tests use temporary/fixture/copied SQLite, never production.
 8. Pool history without Active Pool blocks; valid Active Pool preserves targeted Expansion and baseline checks.
 9. Stale UI responses and request identities cannot cross categories.
 10. Existing Initial capture/QA STALE/activation mutex and Catalog–YingDao isolation regressions pass.
+11. Active Pool plus unfinished Initial blocks before EXPANSION selection.
+12. paused Initial without claim transitions the full exact tuple atomically; with foreign claim the complete database fingerprint is unchanged.
+13. running exact Initial with valid same claim retains source_run id and claim generation.
+14. Two worker-thread independent DB connections synchronize before START_INITIAL; assert one winner and one hard failure plus one complete Campaign/source/queue/run.
 
 ## Delivery boundary
 
