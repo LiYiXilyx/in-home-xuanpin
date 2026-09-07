@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {createRuntimeLifecycle} from './runtime-lifecycle.mjs';
 import path from 'node:path';
 import { fileURLToPath,pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/load.mjs';
@@ -147,7 +148,8 @@ export async function createOperationsServer(options={}) {
   const serveStatic=createStaticServer(path.join(projectDir,'ui'));
   const router=createRouter({ statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
     environment:{ name:config.app.environment,testMode:testController.isTestMode },logError:options.logError });
-  const server=http.createServer(router);
+  const runtimeLifecycle=createRuntimeLifecycle(router);
+  const server=http.createServer(runtimeLifecycle.handle);
   let closed=false;
   return {
     server,db,repository,service,catalogService,
@@ -161,6 +163,7 @@ export async function createOperationsServer(options={}) {
     async close() {
       if (closed) return;
       closed=true;
+      await runtimeLifecycle.drain();
       await browserController.closeConnection();
       if (server.listening) {
         await new Promise(resolve => {
