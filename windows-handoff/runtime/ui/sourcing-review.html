@@ -14,7 +14,7 @@
       <div class="run-badge">当前 run_id <code id="reviewRunId">—</code></div>
     </header>
 
-    <section class="toolbar"><label>选择复核批次 <select id="reviewRunSelect" style="max-width:75vw"><option>正在读取批次…</option></select></label><span id="reviewRunSelectStatus" role="status"></span></section><section class="summary" aria-label="复核概览">
+    <section class="toolbar"><label>选择复核批次 <select id="reviewRunSelect" style="max-width:75vw"><option>正在读取批次…</option></select></label><button id="deleteReviewRun" style="background:#fff1f0;color:#b42318">删除本批次</button><button id="reviewRecycle">回收站 / 恢复</button><span id="reviewRunSelectStatus" role="status"></span></section><section class="summary" aria-label="复核概览">
       <article><span>商品总数</span><strong id="metricTotal">0</strong></article>
       <article><span>待复核</span><strong id="metricPending">0</strong></article>
       <article><span>已确认</span><strong id="metricConfirmed">0</strong></article>

@@ -41,7 +41,7 @@ export function catalogPanelMarkup(){return `
       <label class="catalog-field" style="display:none">采集模式<input id="catalog-capture-mode" value="MANUAL_BIND_PASSIVE_CAPTURE" readonly></label>
       <label class="catalog-field">正式商品池数量<output id="catalog-active-pool-count">0</output></label>
       <label id="catalog-requested-new-field" class="catalog-field">本次新增目标数量<input id="catalog-requested-new" type="number" min="1" step="1"></label>
-      <label id="catalog-target-field" class="catalog-field">预计累计商品数<output id="catalog-calculated-target">—</output></label>
+      <label id="catalog-target-field" class="catalog-field">目标累计数量（以去重入池为准）<output id="catalog-calculated-target">—</output></label>
       <label class="catalog-field">任务名称<input id="catalog-campaign-name" maxlength="200" required></label>
       <button id="catalog-create-campaign" class="catalog-create-button primary" type="submit">创建采集任务</button>
     </form>
@@ -84,6 +84,26 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   if(!root||typeof root!=='object')throw coded('CATALOG_ROOT_REQUIRED','缺少 Catalog mount root。');
   const existing=mounts.get(root);if(existing)return existing;
   root.innerHTML=catalogPanelMarkup();
+  const container=root.querySelector('#catalog-panel');
+  const heading=container.querySelector('.catalog-heading');
+  heading.querySelector('h2').textContent='1. 选择采集类目';
+  const flow=document.createElement('p');flow.textContent='选类目 → 新建或继续任务 → 在 Temu 插件采集 → 查看进度 → 预览入池';flow.style.cssText='padding:12px;background:#ecf5ff;color:#245c94;border-radius:6px';heading.after(flow);
+  const current=root.querySelector('#catalog-current-campaign');flow.after(current);
+  const exports=document.createElement('details');exports.innerHTML='<summary>导出与下载（备份、分享时使用）</summary><p>1688 一键找货会自动准备图片，无需先导出 Excel 或下载 JPG。</p>';
+  container.querySelectorAll('.catalog-export-actions').forEach(node=>exports.append(node));container.append(exports);
+  const create=document.createElement('section');create.id='catalog-new-task-entry';create.innerHTML='<h3>2. 新建采集任务</h3>';flow.after(create);
+  const form=root.querySelector('#catalog-create-form');
+  const category=root.querySelector('#catalog-category-select').closest('label'),count=root.querySelector('#catalog-active-pool-count').closest('label');
+  const poolBar=document.createElement('div');poolBar.className='catalog-form';poolBar.append(category,count);flow.before(poolBar);
+  const guide=document.createElement('section');guide.innerHTML='<h3>3. 在 Temu 插件中检测、绑定并采集</h3>';
+  for(const id of ['catalog-quick-category','catalog-add-category','catalog-manual-bind-steps','catalog-onboarding'])guide.append(root.querySelector('#'+id));create.append(form,guide);
+  const help=root.querySelector('#catalog-supplement-help');form.before(help);const resumeLink=container.querySelector('a[href="#existing-task-entry"]');if(resumeLink)create.querySelector("h3").after(resumeLink.parentElement);
+  container.querySelectorAll(':scope > p.catalog-hint').forEach(p=>p.hidden=true);
+  const name=root.querySelector('#catalog-campaign-name');name.required=false;name.placeholder='可留空，自动命名';
+  form.addEventListener('submit',()=>{if(!name.value.trim())name.value=root.querySelector('#catalog-category-select').value+' 新商品 '+new Date().toLocaleString('zh-CN');},true);
+  const next=document.createElement('button');next.type='button';next.textContent='去1688找货';next.style.cssText='background:#409eff;color:white;border:0;border-radius:5px;padding:10px 18px';next.id='catalog-next-sourcing';next.textContent='入池后需要找货？去1688一键找货 →';next.style.cssText='background:transparent;color:#409eff;border:0;text-decoration:underline;padding:8px 0';container.append(next);
+  next.onclick=async()=>{next.disabled=true;try{const data=await (await fetch('/api/sourcing/pools')).json();const key=root.querySelector('#catalog-category-select').value;const pool=data.pools.find(p=>p.category_key===key&&p.status==='active');if(!pool)throw Error('该类目还没有正式商品池，请先预览并入池');const response=await fetch('/api/sourcing/automation/switch-pool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({poolId:pool.id})});const value=await response.json();if(!response.ok)throw Error(value.error?.message||'无法切换商品池');location.hash='sourcing';}catch(e){const status=root.querySelector('#catalog-error');status.hidden=false;status.textContent=e.message;}finally{next.disabled=false;}};
+
   const catalogState=createCatalogState(),catalogApi=api??createCatalogApi({fetchImpl});
   patchCatalogState(catalogState,{mounted:true});
   const entryRequests=new Map();let mutationVersion=0;
@@ -91,7 +111,7 @@ export function mountCatalogPanel({root,pollIntervalMs=1500,fetchImpl=globalThis
   let probeBusy=false;const probeRequests=new Map();
   const elements=collectElements(root);let active=true,refreshPromise=null,catalogPollingTimer=null,
     profileRequestId=null,initialCampaignRequestId=null,lastContextKey=null;
-  function render(){renderCatalogPanel({root,elements,state:catalogState});
+  function render(){renderCatalogPanel({root,elements,state:catalogState});document.dispatchEvent(new CustomEvent('catalog-category-selected',{detail:elements.category?.value}));
     const pauseButton=root.querySelector?.('#catalog-pause-switch'),current=catalogState.currentCampaign;
     if(pauseButton){pauseButton.hidden=!(current?.campaign_type==='initial'&&['running','manual_required'].includes(current.status));pauseButton.disabled=pauseBusy||!Number.isInteger(current?.claim_generation)||Object.values(catalogState.loading).some(Boolean);pauseButton.textContent=pauseBusy?'正在安全暂停…':'暂停当前首次任务，切换类目';}
     const feedback=root.querySelector?.('#catalog-pause-feedback');if(feedback)feedback.textContent=['running','manual_required'].includes(current?.status)?'':pauseFeedback;
@@ -346,7 +366,7 @@ function renderCatalogPanel({root,elements,state}){if(!elements.form)return;
   const help=root.querySelector('#catalog-supplement-help');if(help){help.hidden=!supplement;help.textContent='已有正式池 '+formatNumber(profile?.active_pool_count)+' 件。填写本次新增目标和新任务名称，点击“新建补充采集任务”（新开一批，不会接着旧任务），然后回 Temu 插件检测、绑定并开始。池内已有商品不计入新增目标；本次采集不自动更新正式池。';}
   if(supplement&&elements.requested.dataset.supplementDefault!=='set'){if(!elements.requested.value)elements.requested.value='300';elements.requested.dataset.supplementDefault='set';}
   const target=calculateTarget(profile,Number(elements.requested.value));elements.calculatedTarget.textContent=target===null?'—':formatNumber(target);
-  elements.campaignName.required=entry.action!=='CONTINUE_INITIAL';elements.campaignName.disabled=entry.action==='CONTINUE_INITIAL';
+  elements.campaignName.required=false;elements.campaignName.disabled=entry.action==='CONTINUE_INITIAL';
   elements.create.textContent=({START_INITIAL:'开始首次采集',CONTINUE_INITIAL:'继续首次采集',EXPANSION:'新建补充采集任务',BLOCKED:'当前类目不可采集'})[entry.action];
   elements.create.disabled=state.loading.create||!entry.available;
   const busy=Object.values(state.loading).some(Boolean);elements.loading.hidden=!busy;

@@ -5,17 +5,17 @@ import {loadArtifactTool} from '../analysis/artifact-runtime.mjs';
 export const SCOPED_SHEETS=Object.freeze(['01_商品明细','02_数据质量','03_采集任务','04_类目配置','05_待分类说明']);
 
 export function createCatalogScopedExportService({repository,outputDir,artifactLoader=loadArtifactTool,imageLoader=loadMainImage}={}){
-  async function save(result){const model=buildCatalogScopedWorkbookModel(result),artifact=await artifactLoader();
+  async function save(result,destination=outputDir){const model=buildCatalogScopedWorkbookModel(result),artifact=await artifactLoader();
     if(model.metadata.export_type==='FORMAL_POOL'){for(const row of model.products){try{row.image_data=await imageLoader(row.image_url);row.image_status='OK';}catch(e){row.image_status='MISS';row.image_error=e.message;}}model.quality.missing_images=model.products.filter(r=>r.image_status!=='OK').length;model.sheetNames.push('05_细分商品明细');}
     const built=buildCatalogScopedWorkbook(artifact,model);
-    await fs.mkdir(outputDir,{recursive:true});const filename=`catalog-${safe(model.metadata.category_key)}-${model.metadata.export_type.toLowerCase()}-${safe(model.metadata.pool_version_id??model.metadata.campaign_id)}-${Date.now()}-${crypto.randomUUID().slice(0,8)}.xlsx`;
-    const target=path.join(outputDir,filename),temporary=path.join(outputDir,`.${filename}.tmp-${crypto.randomUUID()}`);
+    await fs.mkdir(destination,{recursive:true});const filename=`catalog-${safe(model.metadata.category_key)}-${model.metadata.export_type.toLowerCase()}-${safe(model.metadata.pool_version_id??model.metadata.campaign_id)}-${Date.now()}-${crypto.randomUUID().slice(0,8)}.xlsx`;
+    const target=path.join(destination,filename),temporary=path.join(destination,`.${filename}.tmp-${crypto.randomUUID()}`);
     try{const output=await artifact.SpreadsheetFile.exportXlsx(built.workbook);await output.save(temporary);await fs.rename(temporary,target);}
     catch(error){await fs.rm(temporary,{force:true});throw error;}
     finally{await fs.rm(`${temporary}.inspect.ndjson`,{force:true});}
     await fs.writeFile(target+'.images.json',JSON.stringify(model.products.map(r=>({goods_id:r.goods_id,image_url:r.image_url}))));
     return{saved_path:target,file_name:filename,product_count:model.products.length,scope:model.metadata,sheet_names:model.sheetNames};}
-  return Object.freeze({exportPreview:input=>save(repository.readPreview(input)),exportFormalPool:input=>save(repository.readFormalPool(input))});
+  return Object.freeze({exportForSourcing:async(input,goodsIds,destination)=>{const result=repository.readFormalPool(input);const wanted=new Set(goodsIds);result.products=result.products.filter(r=>wanted.has(String(r.goods_id)));if(result.products.length!==wanted.size)throw Error('商品池数据发生变化，请重新开始');const output=await save(result,destination);return {...output,goods:result.products.map(r=>({goods_id:String(r.goods_id),image_url:r.image_url}))};},exportPreview:input=>save(repository.readPreview(input)),exportFormalPool:input=>save(repository.readFormalPool(input))});
 }
 
 export function buildCatalogScopedWorkbookModel({scope,products}){const rows=products.map(row=>{const title=String(row.title??'').replace(/^item picture\s+/i,'').replace(/\s*Open in new tab\.?$/i,'').replace(/^Top pick(?:\s+|(?=[A-Z0-9]))/,'').trim();const raw=row.raw?.raw_card_text||'';return {...row,title:title||null,currency:row.currency??(/[€]|\bEUR\b/.test(raw)&&Number.isFinite(row.price_amount)?'EUR':null),image_url:/^https?:\/\//i.test(row.image_url||'')&&!/\/(?:ad_tag|badge|icon)(?:\/|[_.-])/i.test(row.image_url||'')?row.image_url:null};}).sort((a,b)=>String(a.platform).localeCompare(String(b.platform))||String(a.goods_id).localeCompare(String(b.goods_id)));

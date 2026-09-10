@@ -1,3 +1,4 @@
+import {purgeReviewRun} from '../modules/sourcing/purge-review-run.mjs';
 import {createPoolBatches} from '../modules/sourcing/sourcing-pool-batches.mjs';
 import {createTrackingService} from '../modules/tracking/tracking-service.mjs';
 import http from 'node:http';
@@ -45,7 +46,7 @@ import { createSourcingReviewRepository } from '../db/repositories/sourcing-revi
 import { createTemuSourcingContextRepository,openTemuContextDatabase } from '../db/repositories/temu-sourcing-context-repository.mjs';
 import { createYingdaoImportService } from '../modules/sourcing/yingdao-import-service.mjs';
 import { createSourcingReviewService } from '../modules/sourcing/sourcing-review-service.mjs';
-import { createSourcingReviewImageResolver } from '../modules/sourcing/sourcing-review-images.mjs';
+import { createSourcingReviewImageResolver, attachBatchTemuImages } from '../modules/sourcing/sourcing-review-images.mjs';
 import { createSourcingReviewController } from './controllers/sourcing-review-controller.mjs';
 import { createTemuMarketEvidenceRepository } from '../db/repositories/temu-market-evidence-repository.mjs';
 import { createTemuMarketEvidenceService } from '../modules/sourcing/temu-market-evidence-service.mjs';
@@ -115,7 +116,7 @@ export async function createOperationsServer(options={}) {
   const sourcingService=options.sourcingService??createYingdaoImportService({repository:sourcingRepository});
   const sourcingSettings=options.sourcingSettings??createSourcingSettings({settingsPath:options.sourcingSettingsPath??path.join(sourcingRoot,'sourcing-console-settings.json')});
   const sourcingController=options.sourcingController??createSourcingController({
-    service:sourcingService,repository:sourcingRepository,settingsStore:sourcingSettings,poolBatches,
+    service:sourcingService,repository:sourcingRepository,settingsStore:sourcingSettings,poolBatches,automaticExport:(poolId,ids,destination)=>{const p=poolBatches.scope(poolId);return catalogScopedExportService.exportForSourcing({poolVersionId:poolId,categoryKey:p.category_key,categoryProfileVersion:p.category_profile_version},ids,destination);},automationExportsDir:path.join(config.export.outputDir,'catalog-scoped'),
     pathDialog:options.pathDialog??(input=>chooseNativePath({...input,runProcess:options.nativePathRunProcess})),
   });
   let temuContextDb=null;
@@ -138,8 +139,8 @@ export async function createOperationsServer(options={}) {
     temuContextDb??=openTemuContextDatabase(config.app.databasePath);
     const sourcingReviewRepository=createSourcingReviewRepository(sourcingDb);
     const temuContextRepository=createTemuSourcingContextRepository(temuContextDb,{projectRoot:temuPathBase,imageCacheRoot:temuImageRoot});
-    const imageResolver=createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot});let visualContext=null;
-    if(reviewImport?.selected_workbook_path){const universe=await loadVisualWorkbookUniverse({workbookPath:reviewImport.selected_workbook_path});const visualCacheRoot=options.sourcingVisualCacheRoot??path.join(path.dirname(reviewImport.selected_workbook_path),'visual-cache');const embeddingBackend=createLocalVisualEmbeddingBackend({cacheRoot:visualCacheRoot,sourcePath:path.join(projectDir,'tools/yingdao-vision-embed.swift')});const indexStore=createVisualIndexStore({cacheRoot:visualCacheRoot,embeddingBackend});const displayResolver=createVisualDisplayImageResolver({runId:reviewRunId,universe,indexStore,temuRepository:temuContextRepository,temuImageResolver:imageResolver});visualContext=createVisualReviewContext({universe,indexStore,currentRunId:reviewRunId,currentGoodsIds:[...new Set(reviewImport.items.map(item=>String(item.temu_goods_id)))],displayResolver});}
+    const imageResolver=await attachBatchTemuImages(createSourcingReviewImageResolver({projectRoot:projectDir,temuPathBase,temuImageRoot}),reviewImport);let visualContext=null;
+
     const sourcingReviewService=createSourcingReviewService({
       sourcingRepository:sourcingReviewRepository,temuRepository:temuContextRepository,
       runId:reviewRunId,opportunityContext,visualContext,
@@ -149,7 +150,16 @@ export async function createOperationsServer(options={}) {
     const getRun=id=>{if(!runControllers.has(id)){const p=buildRunController(id).catch(e=>{runControllers.delete(id);throw e;});runControllers.set(id,p);}return runControllers.get(id);};
     sourcingReviewController={};
     for(const method of ['bootstrap','goods','temuImage','supplierImage','openLink','visualMatches','visualImage','visualDisplayImage','select','clearSelection','exclude','restore','note'])sourcingReviewController[method]=async(args={})=>(await getRun(args.runId||args.body?.run_id||defaultReviewRunId))[method](args);
-    sourcingReviewController.listRuns=()=>{const repo=createSourcingReviewRepository(sourcingDb);return sourcingDb.prepare("SELECT run_id,imported_at FROM sourcing_runs WHERE import_status IN ('COMPLETED','COMPLETED_WITH_WARNINGS') ORDER BY imported_at DESC").all().map(run=>{const goods=repo.listReviewGoods(run.run_id);return {...run,pool_batch:poolBatches.get(run.run_id),total:goods.length,confirmed:goods.filter(g=>g.review_status==='CONFIRMED').length,pending:goods.filter(g=>g.review_status==='PENDING').length};});};
+    sourcingDb.exec('CREATE TABLE IF NOT EXISTS sourcing_review_recycle (run_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)');
+    sourcingReviewController.purge=({runId,confirmation}={})=>{if(confirmation!==runId)throw Error('请确认彻底删除');const result=purgeReviewRun(sourcingDb,runId);runControllers.delete(runId);return result;};
+    sourcingReviewController.recycle=({runId,deleted}={})=>{
+      if(typeof deleted!=='boolean'||!sourcingRepository.getImport(runId))throw Error('请选择有效批次');
+      const run=sourcingRepository.getImport(runId);if(!['COMPLETED','COMPLETED_WITH_WARNINGS'].includes(run.import_status))throw Error('导入未结束，不能删除');
+      if(deleted)sourcingDb.prepare('INSERT OR IGNORE INTO sourcing_review_recycle(run_id,deleted_at) VALUES (?,?)').run(runId,new Date().toISOString());
+      else sourcingDb.prepare('DELETE FROM sourcing_review_recycle WHERE run_id=?').run(runId);
+      return {ok:true,runId,deleted};
+    };
+    sourcingReviewController.listRuns=(deleted=false)=>{const repo=createSourcingReviewRepository(sourcingDb);return sourcingDb.prepare("SELECT run_id,imported_at FROM sourcing_runs WHERE import_status IN ('COMPLETED','COMPLETED_WITH_WARNINGS') ORDER BY imported_at DESC").all().filter(run=>Boolean(sourcingDb.prepare('SELECT 1 FROM sourcing_review_recycle WHERE run_id=?').get(run.run_id))===deleted).map(run=>{const goods=repo.listReviewGoods(run.run_id);return {...run,pool_batch:poolBatches.get(run.run_id),total:goods.length,confirmed:goods.filter(g=>g.review_status==='CONFIRMED').length,pending:goods.filter(g=>g.review_status==='PENDING').length};});};
   }
   const statusService=createStatusService({ db,jobRepository:repository,config,browserStatus:() => browserController.status(),
     latestExcel:exportController.latestExcel,currentExcel:exportController.currentExcel });

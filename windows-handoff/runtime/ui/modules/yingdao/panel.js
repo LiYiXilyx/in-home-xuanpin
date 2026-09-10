@@ -1,3 +1,4 @@
+import {mountShadowbot} from './shadowbot-panel.js';
 import {createYingdaoApi} from './api.js';
 import {applySourcingPayload,deriveYingdaoControls} from './model.js';
 import {createYingdaoState,patchYingdaoState,snapshotYingdaoState} from './state.js';
@@ -29,6 +30,7 @@ export function mountYingdaoPanel({root,pollIntervalMs=3000,scheduler=globalThis
   const existing=mounts.get(root);if(existing)return existing;
   if(currentController)throw coded('YINGDAO_PANEL_ALREADY_MOUNTED','YingDao panel already has a root');
   root.innerHTML=yingdaoPanelMarkup;
+  const destroyShadowbot=typeof document!=='undefined'?mountShadowbot(root):()=>{};
   let active=true,refreshPromise=null,yingdaoPollingTimer=null,state=createYingdaoState();patchYingdaoState(state,{mounted:true});
   const client=api??createYingdaoApi();
   const elements=collectElements(root);
@@ -45,7 +47,7 @@ export function mountYingdaoPanel({root,pollIntervalMs=3000,scheduler=globalThis
         patchYingdaoState(state,{reviewRun:review?.run_id??null,...(review?{reviewSummary:{awaiting:Number(review.awaiting_review??0),confirmed:Number(review.confirmed??0),noSelection:Number(review.no_selection??0),totalGoods:Number(review.total_goods??0),candidates:Number(current.random5_candidates??current.candidate_count??state.random5.candidates)}}:{})});return snapshotYingdaoState(state);}
       catch(error){patchYingdaoState(state,{error:{code:error.code??'OPERATION_FAILED',message:error.message??'YingDao 刷新失败。'}});throw error;}
       finally{patchYingdaoState(state,{loading:{...state.loading,settings:false}});render();}})();refreshPromise=operation;try{return await operation;}finally{refreshPromise=null;}}
-  const controller={refresh,getState:()=>snapshotYingdaoState(state),destroy(){if(!active)return;active=false;if(yingdaoPollingTimer!==null)scheduler.clearInterval(yingdaoPollingTimer);yingdaoPollingTimer=null;root.replaceChildren();mounts.delete(root);if(currentController===controller)currentController=null;}};
+  const controller={refresh,getState:()=>snapshotYingdaoState(state),destroy(){if(!active)return;active=false;destroyShadowbot();if(yingdaoPollingTimer!==null)scheduler.clearInterval(yingdaoPollingTimer);yingdaoPollingTimer=null;root.replaceChildren();mounts.delete(root);if(currentController===controller)currentController=null;}};
   bindHandlers({elements,state,client,render});mounts.set(root,controller);currentController=controller;void refresh().catch(()=>{});yingdaoPollingTimer=scheduler.setInterval(()=>{void refresh().catch(()=>{});},Number(pollIntervalMs));return controller;
 }
 

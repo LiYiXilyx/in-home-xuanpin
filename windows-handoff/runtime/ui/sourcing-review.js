@@ -59,11 +59,11 @@ function render() {
   if($('search-pilot-dialog').open&&$('search-pilot-dialog').dataset.anchor!==state.currentGoodsId)$('search-pilot-dialog').close();
   if(state.currentGoodsId){const url=new URL(location.href);url.searchParams.set('goods_id',state.currentGoodsId);history.replaceState(null,'',url);}
   $('reviewRunId').textContent=RUN_ID;
-  $('metricTotal').textContent=summary?.total_goods??0;
-  $('metricPending').textContent=summary?.awaiting_review??0;
-  $('metricConfirmed').textContent=summary?.confirmed??0;
-  $('metricNoSelection').textContent=summary?.no_selection??0;
-  $('reviewNotice').textContent=state.notice||(FROM_TRACKING&&state.currentGoodsId===INITIAL_GOODS_ID?'已从周期跟踪定位商品 '+INITIAL_GOODS_ID+'，请复核下方 1688 候选。':'');
+  $('metricTotal').textContent=summary?.total_goods??'加载中…';
+  $('metricPending').textContent=summary?.awaiting_review??'加载中…';
+  $('metricConfirmed').textContent=summary?.confirmed??'加载中…';
+  $('metricNoSelection').textContent=summary?.no_selection??'加载中…';
+  $('reviewNotice').textContent=state.notice||(!summary?'正在加载本批商品，请稍候。':'')||(FROM_TRACKING&&state.currentGoodsId===INITIAL_GOODS_ID?'已从周期跟踪定位商品 '+INITIAL_GOODS_ID+'，请复核下方 1688 候选。':'');
   document.querySelectorAll('[data-filter]').forEach(button=>button.classList.toggle('active',button.dataset.filter===state.filter));
   renderGoods(state); renderTemu(detail);if(FROM_TRACKING&&state.currentGoodsId===INITIAL_GOODS_ID&&detail&&!trackingScrolled){trackingScrolled=true;requestAnimationFrame(()=>{const item=document.querySelector('[data-tracking-highlight]');item?.scrollIntoView({block:'center'});});} renderOpportunity(state); renderCandidates(state); renderDetail(candidate,detail);
   renderMarketEvidence(state);if(state.currentGoodsId&&String(detail?.temu_goods_id)===state.currentGoodsId&&state.currentGoodsId!==evidenceGoods){evidenceGoods=state.currentGoodsId;queueMicrotask(()=>{if(review.snapshot().currentGoodsId===state.currentGoodsId)evidence.selectGoods(state.currentGoodsId,{suggestedQuery:suggestSearchQuery(cleanTitle(detail?.temu_context?.temu_title)||recoveredTitles[state.currentGoodsId]?.title)});});}
@@ -249,3 +249,22 @@ $('manual-fx-save').addEventListener('click',()=>{
  const value={status:'AVAILABLE',cny_per_eur:rate,source:'MANUAL_CONFIG',as_of:asOf};
  try{localStorage.setItem(manualFxKey,JSON.stringify(value));manualFx=value;renderMarketEvidence(review.snapshot());status.textContent='汇率已保存，更新日期已刷新。';}catch{status.textContent='保存失败，请检查浏览器存储权限。';}
 });
+
+document.getElementById('deleteReviewRun').onclick=async()=>{
+ const select=document.getElementById('reviewRunSelect'),status=document.getElementById('reviewRunSelectStatus');
+ const id=select.value;if(!id)return;
+ if(!confirm('将以下复核批次移入回收站？可恢复，原始文件和商品池保留。\n'+select.selectedOptions[0].textContent))return;
+ try{const response=await fetch('/api/sourcing/review/recycle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:id,deleted:true})});if(!response.ok)throw Error('删除失败');const remaining=await (await fetch('/api/sourcing/review/runs')).json();if(remaining.runs.length){location.href='/sourcing-review.html?'+new URLSearchParams({run_id:remaining.runs[0].run_id});}else{select.replaceChildren();status.textContent='暂无复核批次，可从回收站恢复';document.querySelectorAll('.review-layout,.summary,.filters').forEach(el=>el.hidden=true);document.getElementById('deleteReviewRun').disabled=true;}}catch(e){status.textContent=e.message;}
+};
+document.getElementById('reviewRecycle').onclick=async()=>{
+ const status=document.getElementById('reviewRunSelectStatus');
+ try{const response=await fetch('/api/sourcing/review/runs?deleted=true');const {runs}=await response.json();
+ const dialog=document.createElement('dialog');const title=document.createElement('h3');title.textContent='复核批次回收站';dialog.append(title);
+ if(!runs.length){const p=document.createElement('p');p.textContent='回收站为空';dialog.append(p);}
+ for(const run of runs){const row=document.createElement('p');row.textContent=(run.pool_batch?.batch_name||run.run_id)+' · '+run.total+'件 · 已确认'+run.confirmed+' ';const button=document.createElement('button');button.textContent='恢复';button.onclick=async()=>{button.disabled=true;try{const r=await fetch('/api/sourcing/review/recycle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:run.run_id,deleted:false})});if(!r.ok)throw Error('恢复失败');location.href='/sourcing-review.html?'+new URLSearchParams({run_id:run.run_id});}catch(e){button.disabled=false;status.textContent=e.message;}};row.append(button);const purge=document.createElement('button');purge.textContent='彻底删除';purge.style.cssText='margin-left:8px;background:#fff1f0;color:#b42318';purge.onclick=async()=>{
+ if(!confirm('彻底删除此复核批次？此操作不可恢复，将删除候选和人工复核记录。原始图片、Excel和正式商品池保留。\n'+(run.pool_batch?.batch_name||run.run_id)+'\n商品数：'+run.total+'，已确认：'+run.confirmed))return;
+ purge.disabled=true;button.disabled=true;try{const res=await fetch('/api/sourcing/review/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:run.run_id,confirmation:run.run_id})});const result=await res.json();if(!res.ok)throw Error(result.error?.message||'删除失败');row.remove();status.textContent='已彻底删除复核批次';}catch(e){purge.disabled=false;button.disabled=false;status.textContent=e.message;alert(e.message);}
+ };row.append(purge);dialog.append(row);}
+ const close=document.createElement('button');close.textContent='关闭';close.onclick=()=>{dialog.close();dialog.remove();};dialog.append(close);document.body.append(dialog);dialog.showModal();
+ }catch(e){status.textContent=e.message;}
+};

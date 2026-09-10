@@ -114,3 +114,23 @@ function isContained(root,target) {
   const relative=path.relative(root,target);
   return relative===''||(!relative.startsWith(`..${path.sep}`)&&relative!=='..'&&!path.isAbsolute(relative));
 }
+
+// Automated sourcing keeps original Temu images beside its task workbook.
+export async function attachBatchTemuImages(resolver,run) {
+  if(!run?.selected_workbook_path)return resolver;
+  const batchRoot=path.dirname(path.dirname(run.selected_workbook_path));
+  let manifest;
+  try{manifest=JSON.parse(await fs.readFile(path.join(batchRoot,'task.json'),'utf8'));}
+  catch{return resolver;}
+  const allowed=new Set((run.items??[]).map(x=>String(x.temu_goods_id)));
+  const images=new Map((manifest.goods??[]).filter(g=>allowed.has(String(g.goods_id))&&g.image_path===`images/${g.goods_id}.jpg`).map(g=>[String(g.goods_id),g.image_path]));
+  const local=createSourcingReviewImageResolver({temuPathBase:batchRoot,temuImageRoot:path.join(batchRoot,'images')});
+  return {...resolver,resolveTemuImage:async context=>{
+    const id=String(context?.temu_goods_id??'');
+    if(images.has(id)){
+      const image=await local.resolveTemuImage({temu_context_status:'AVAILABLE',temu_goods_id:id,temu_image_local_path:images.get(id)});
+      if(image.kind==='LOCAL')return image;
+    }
+    return resolver.resolveTemuImage(context);
+  }};
+}

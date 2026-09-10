@@ -9,7 +9,7 @@ export const SOURCING_STATES=Object.freeze([
   'COMPLETED','COMPLETED_WITH_WARNINGS','FAILED','RETRYING_FAILED_IMAGES',
 ]);
 
-export function createSourcingController({service,repository,settingsStore,poolBatches=null,pathDialog,validateWorkbook=validateExistingWorkbook,validatePaths=validateConfiguredPaths,runIdFactory=()=>crypto.randomUUID()}={}) {
+export function createSourcingController({service,repository,settingsStore,poolBatches=null,automationExportsDir=null,automaticExport=null,pathDialog,validateWorkbook=validateExistingWorkbook,validatePaths=validateConfiguredPaths,runIdFactory=()=>crypto.randomUUID()}={}) {
   if(!service||!repository||!settingsStore||!pathDialog) throw new TypeError('sourcing controller dependencies are required');
   let scannedPool=null;
   let state='UNCONFIGURED',scanToken=null,scanResult=null,currentRunId=null,busy=false,loadedSettings=null,settingsLoadPromise=null;
@@ -104,7 +104,50 @@ export function createSourcingController({service,repository,settingsStore,poolB
     catch(error) { state='FAILED';throw error; }
     finally { busy=false; }
   }
-  return {pools:()=>({pools:poolBatches?.pools()??[]}),settings:getSettings,saveSettings,choosePath,scan,startImport,currentImport,getImport,retryFailedImages};
+  async function automationOptions({poolId}={}) {
+    const pool=poolBatches.resolve(poolId);
+    const completed=new Set(poolBatches.completedGoods(poolId));
+    return {total:pool.goodsIds.length,completed:pool.goodsIds.filter(id=>completed.has(id)).length,remaining:pool.goodsIds.filter(id=>!completed.has(id)).length};
+  }
+  async function automationConfig({poolId,count=5,batchDir}={}) {
+    if(!Number.isInteger(count)||count<1||count>50)throw Error('每次处理数量为1至50件');
+    const pool=poolBatches.resolve(poolId),completed=new Set(poolBatches.completedGoods(poolId));
+    const selected=pool.goodsIds.filter(id=>!completed.has(id)).sort().slice(0,count);
+    if(!selected.length)throw Error('该商品池已全部完成找货');
+    const settings=await ensureSettings();
+    if(!settings.imageCacheDir)throw Error('1688图片缓存目录未配置');
+    const result=await automaticExport(poolId,selected,path.join(batchDir,'任务资料'));
+    return {poolId:pool.id,imageCacheDir:path.join(batchDir,'1688候选图片'),selectedWorkbookPath:result.saved_path,goods:result.goods,batchName:pool.category_key+' 自动找货 '+new Date().toLocaleString('zh-CN'),count:selected.length};
+  }
+  async function importAutomation(batch) {
+    if(busy)throw coded('IMPORT_IN_PROGRESS','其他导入正在进行');
+    busy=true;
+    const runId=batch.importRunId??('shadowbot-'+batch.batchId);
+    try {
+      const previous=repository.getImport(runId);
+      if(previous){
+        if(['COMPLETED','COMPLETED_WITH_WARNINGS'].includes(previous.import_status))return importModel(previous,previous.import_status);
+        throw coded('AUTOMATION_IMPORT_INTERRUPTED','本批导入已有记录但未完成，请检查日志修复；不会重复创建批次。');
+      }
+      const config=batch.importConfig;
+      if(!config)throw coded('AUTOMATION_CONFIG_REQUIRED','本批缺少导入配置');
+      const pool=poolBatches.resolve(config.poolId);
+      const manifest=JSON.parse(await fs.readFile(path.join(batch.batchDir,'task.json'),'utf8'));
+      const expected=manifest.goods.map(x=>String(x.goods_id)).sort();
+      const actual=(await fs.readdir(path.join(batch.batchDir,'results'))).filter(x=>x.endsWith('.xlsx')).map(x=>x.slice(0,-5)).sort();
+      if(!expected.length||JSON.stringify(actual)!==JSON.stringify(expected))throw coded('AUTOMATION_RESULTS_INCOMPLETE','结果文件和任务商品不一致');
+      const settings=await validatePaths({...config,sourceDir:path.join(batch.batchDir,'results')});
+      state='IMPORTING';currentRunId=runId;scanToken=null;scanResult=null;
+      await validateWorkbook(settings.selectedWorkbookPath);
+      const scanned=await service.scan({...settings,allowedGoodsIds:pool.goodsIds});
+      if(scanned.status!=='SCAN_VALID')throw coded('AUTOMATION_SCAN_BLOCKED','结果扫描未通过');
+      const result=await service.startImport({scanToken:scanned.scanToken,runId,onStructured:({runId})=>poolBatches.save(runId,pool,config.batchName||('影刀自动导入 · '+batch.batchId))});
+      state=result.import_status??result.status;
+      return currentModel(result);
+    }catch(error){state='FAILED';throw error;}finally{busy=false;}
+  }
+
+  return {automationOptions,automationConfig,importAutomation,pools:()=>({pools:poolBatches?.pools()??[]}),settings:getSettings,saveSettings,choosePath,scan,startImport,currentImport,getImport,retryFailedImages};
 
   async function ensureSettings() {
     if(loadedSettings)return loadedSettings;

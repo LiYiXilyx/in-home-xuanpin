@@ -1,12 +1,22 @@
+import {createShadowbotMonitor} from './shadowbot-monitor.mjs';
 import {instrument,logs} from './system-log-store.mjs';
 import {exportTrackingWorkbook} from '../modules/tracking/tracking-export.mjs';
 import { operatorMessage } from './status-service.mjs';
 
 export function createRouter({ trackingService,statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
+  const shadowbotMonitor=createShadowbotMonitor({prepareImport:input=>sourcingController.automationConfig(input),importResults:batch=>sourcingController.importAutomation(batch)});
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');instrument(request,response,url);
     try {
+      if(request.method==='GET'&&url.pathname==='/api/sourcing/automation/options')return json(response,200,await sourcingController.automationOptions({poolId:url.searchParams.get('poolId')}));
+      if(request.method==='GET'&&url.pathname==='/api/sourcing/automation')return json(response,200,await shadowbotMonitor.status());
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/switch-pool'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.switchPool(await readJson(request)));}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/import-saved'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.importSaved());}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/open-folder'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.openFolder());}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/retry-search'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.retrySearch());}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/retry-import'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.retryImport());}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/start'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.start(await readJson(request)));}
       if(request.method==='GET'&&url.pathname==='/api/system-logs')return json(response,200,logs());
       if(trackingService && url.pathname.startsWith('/api/tracking')){
         const suffix=url.pathname.slice('/api/tracking'.length);
@@ -20,7 +30,9 @@ export function createRouter({ trackingService,statusService,browserController,j
           if(request.method==='GET'&&!match[2])return json(response,200,trackingService.detail(match[1]));
         }
       }
-      if(request.method==='GET'&&url.pathname==='/api/sourcing/review/runs')return json(response,200,{runs:await sourcingReviewController.listRuns()});
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/review/purge'){assertLocalOrigin(request);return json(response,200,await sourcingReviewController.purge(await readJson(request)));}
+      if(request.method==='POST'&&url.pathname==='/api/sourcing/review/recycle'){assertLocalOrigin(request);return json(response,200,await sourcingReviewController.recycle(await readJson(request)));}
+      if(request.method==='GET'&&url.pathname==='/api/sourcing/review/runs')return json(response,200,{runs:await sourcingReviewController.listRuns(url.searchParams.get('deleted')==='true')});
       if(request.method==='GET'&&url.pathname==='/api/catalog/exports/images/history')return json(response,200,{ok:true,files:await exportController.listImageExports()},CATALOG_HEADERS);
       if(request.method==='POST'&&url.pathname==='/api/catalog/exports/images/choose-folder'){assertLocalOrigin(request);return json(response,200,{ok:true,result:await exportController.chooseImageFolder()},CATALOG_HEADERS);}
       if(request.method==='POST'&&url.pathname==='/api/catalog/exports/images/open-folder'){assertLocalOrigin(request);return json(response,200,{ok:true,result:await exportController.openImageFolder()},CATALOG_HEADERS);}

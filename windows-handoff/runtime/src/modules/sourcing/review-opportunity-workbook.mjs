@@ -1,3 +1,4 @@
+import {readXlsxValues} from './xlsx-values.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 
@@ -8,12 +9,11 @@ const REQUIRED=['goods_id','商品标题','当前价格 EUR','当前 Pool Versio
 
 export async function loadRunOpportunityWorkbook({workbookPath,runGoodsIds,artifact=null}={}) {
   const bytes=await fs.readFile(workbookPath);
-  const tools=artifact??await loadArtifactTool();
-  const workbook=await tools.SpreadsheetFile.importXlsx(await tools.FileBlob.load(workbookPath));
-  const sheet=workbook.worksheets.items.find(item=>item.name===SHEET);
-  if(!sheet) throw fault('REVIEW_WORKBOOK_SHEET_REQUIRED',`workbook 缺少 ${SHEET}`);
+  let values;
+  if(artifact){const workbook=await artifact.SpreadsheetFile.importXlsx(await artifact.FileBlob.load(workbookPath));const sheet=workbook.worksheets.items.find(item=>item.name===SHEET);if(!sheet)throw fault('REVIEW_WORKBOOK_SHEET_REQUIRED','workbook 缺少 '+SHEET);values=sheet.getUsedRange(true)?.values??[];}
+  else {values=await readXlsxValues(workbookPath,SHEET);}
   const sourceId=`${crypto.createHash('sha256').update(bytes).digest('hex')}#${SHEET}`;
-  return parseRunOpportunitySheet(sheet.getUsedRange(true)?.values??[],{runGoodsIds,sourceId});
+  return parseRunOpportunitySheet(values,{runGoodsIds,sourceId});
 }
 
 export function parseRunOpportunitySheet(values,{runGoodsIds,sourceId}={}) {

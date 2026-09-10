@@ -5,9 +5,14 @@ export function mountManualRecapture(){
  host.append(panel);const q=s=>panel.querySelector(s);
  const resume=document.createElement('section');resume.id='existing-task-entry';resume.style.cssText='padding:16px;border:1px solid #c8d8e8;border-radius:8px;margin-bottom:24px;background:#f5f9ff';
  resume.innerHTML='<h2>继续已有任务（接着上次采集）</h2><p>不用填写新任务名称，也不会创建新任务。选择原任务后点击“继续这个任务”，已采商品和进度会接着累积。</p><p id="active-task-summary" role="status"></p>';
- resume.append(q('#recapture-task').closest('.toolbar'),q('#recapture-message'));panel.prepend(resume);
- const createTitle=panel.querySelector(':scope > h2');if(createTitle)createTitle.textContent='新建周期复采（重新观察已有商品）';
-let state=null,busy=false,requestId=null;
+ resume.append(q('#recapture-task').closest('.toolbar'),q('#recapture-message'));panel.prepend(resume);const tip=document.createElement('a');tip.href='#merge-preview';tip.textContent='已完成采集？选好对应任务，去预览入池数量 →';tip.onclick=e=>{e.preventDefault();q('#merge-preview').scrollIntoView({behavior:'smooth'});};resume.append(tip);const next=document.getElementById('catalog-next-sourcing');if(next)panel.append(next);
+ const createTitle=panel.querySelector(':scope > h2');if(createTitle)createTitle.textContent='更新已有商品数据（周期复采）';
+ const periodic=document.createElement('section');periodic.innerHTML='';
+ const nodes=[...panel.children];let collecting=false;for(const node of nodes){if(node===createTitle)collecting=true;if(node.tagName==='HR')break;if(collecting)periodic.append(node);}resume.after(periodic);
+ panel.querySelector('#merge-preview').textContent='预览并合并到正式商品池';
+ const mergeHeading=panel.querySelector(':scope > h3');if(mergeHeading)mergeHeading.textContent='4. 预览采集结果并入池';
+
+let state=null,busy=false,requestId=null;let syncedCategory=null;document.addEventListener('catalog-category-selected',e=>{if(!state||e.detail===syncedCategory)return;const pool=state.pools.find(p=>p.category_key===e.detail);if(pool){q('#recapture-pool').value=pool.id;syncedCategory=e.detail;}});
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const names={'motorcycle-accessories':'摩托车配件','replacement-parts':'替换零件'};
  async function api(body){const r=await fetch('/api/catalog/manual-tasks',{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||'任务操作失败');return d;}
@@ -18,7 +23,7 @@ let state=null,busy=false,requestId=null;
  q('#merge-track').onclick=async()=>{if(!mergeResult||busy)return;busy=true;q('#merge-track').disabled=true;try{const r=await fetch('/api/tracking/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({poolId:mergeResult.poolId,name:`${names[mergeResult.category]||mergeResult.category} · ${mergeResult.total}件跟踪`})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||'创建跟踪计划失败');location.href='/#tracking';location.reload();}catch(e){q('#merge-summary').textContent='正式池已合并；'+e.message+'，可以重试创建跟踪计划。';}finally{busy=false;q('#merge-track').disabled=false;}};
  q('#recapture-task').onchange=()=>{mergePreview=null;q('#merge-confirm').hidden=true;};
  async function refresh(){state=await api();const chosen=q('#recapture-pool').value,chosenTask=q('#recapture-task').value;
-  q('#recapture-pool').innerHTML=state.pools.map(p=>`<option value="${esc(p.id)}">${esc(names[p.category_key]||p.category_key)} · ${esc(p.category_key)} · ${p.product_count} 件</option>`).join('');if(state.pools.some(p=>p.id===chosen))q('#recapture-pool').value=chosen;
+  q('#recapture-pool').innerHTML=state.pools.map(p=>`<option value="${esc(p.id)}">${esc(names[p.category_key]||p.category_key)} · ${esc(p.category_key)} · ${p.product_count} 件</option>`).join('');const category=document.querySelector('#catalog-category-select')?.value;const matching=state.pools.find(p=>p.category_key===category);if(matching)q('#recapture-pool').value=matching.id;else if(state.pools.some(p=>p.id===chosen))q('#recapture-pool').value=chosen;
   q('#recapture-task').innerHTML=state.tasks.map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · ${esc(t.purpose)} · ${t.count} 件 · ${t.id===state.current?.id?'当前任务':t.status==='paused'?'已暂停':esc(t.status)}</option>`).join('');
   if(state.tasks.some(t=>t.id===chosenTask))q('#recapture-task').value=chosenTask;else if(state.current)q('#recapture-task').value=state.current.id;q('#active-task-summary').textContent=state.current?'当前正在使用：'+(state.tasks.find(t=>t.id===state.current.id)?.name||state.current.id)+'。若继续此任务，回 Temu 插件采集即可；只有换任务时才需点击下面按钮。':'当前没有正在使用的任务，请选择原任务继续。';
   q('#recapture-pause').disabled=!state.current;q('#recapture-pause').title=state.current?'暂停的是当前占用中的任务，保留全部已采数据':'目前没有活跃采集任务';q('#recapture-create').disabled=!state.pools.length;q('#recapture-switch').disabled=!state.tasks.length;
@@ -31,5 +36,6 @@ let state=null,busy=false,requestId=null;
  q('#recapture-create').onclick=()=>run(true);q('#recapture-switch').onclick=()=>run(false);q('#recapture-refresh').onclick=()=>refresh().catch(e=>q('#recapture-message').textContent=e.message);
  q('#recapture-pool').onchange=q('#recapture-name').oninput=()=>{requestId=null;};
  document.addEventListener('tracking-recapture',async e=>{location.hash='catalog';await refresh();if(state.pools.some(p=>p.id===e.detail.poolId))q('#recapture-pool').value=e.detail.poolId;panel.scrollIntoView({block:'start'});});
+ document.querySelector('#catalog-category-select')?.addEventListener('change',()=>refresh().catch(e=>q('#recapture-message').textContent=e.message));
  refresh().catch(e=>q('#recapture-message').textContent=e.message);
 }
