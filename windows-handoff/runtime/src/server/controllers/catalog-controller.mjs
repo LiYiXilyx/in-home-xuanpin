@@ -1,0 +1,115 @@
+import { AppError } from '../../shared/errors.mjs';
+
+export function createCatalogController({ catalogService,categoryProfileRegistry,catalogPoolReadRepository,operatorCategoryProfileStore,catalogScopedExportService,catalogClaimInspectionService,catalogClaimRecoveryService,categoryProbeService }) {
+  return {
+    previewRecaptureMerge:id=>catalogService.previewRecaptureMerge(id),
+    mergeRecapturePool:body=>catalogService.mergeRecapturePool(body),
+    pauseManualTask:body=>catalogService.pauseManualTask(body),
+    manualTasks:()=>catalogService.listManualTasks(),
+    switchManualTask:body=>catalogService.switchManualTask(body),
+
+
+    async pauseOperatorInitial(campaignId,body){assertCampaignBodyIdentity(campaignId,body);const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});return catalogService.pauseOperatorInitial({profile,campaignId,queueId:body?.queue_id,expectedClaimGeneration:body?.expected_claim_generation,requestId:body?.request_id});},
+    createCategoryProbe:body=>categoryProbeService.create(body),
+    currentCategoryProbe:()=>categoryProbeService.current(),
+    registerCategoryProbe(id,body){if(body?.probe_id!==id)throw new AppError('Probe 身份不匹配',{code:'CATEGORY_PROBE_CONTEXT_MISMATCH'});return categoryProbeService.register(body);},
+    async operatorEntry(params){const profile=await categoryProfileRegistry.resolve({categoryKey:params.get('category_key'),categoryProfileVersion:params.get('category_profile_version')});return catalogService.resolveOperatorEntry(profile);},
+    async continueOperatorInitial(campaignId,body){assertCampaignBodyIdentity(campaignId,body);const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});return catalogService.continueOperatorInitial({profile,campaignId,requestId:body?.request_id});},
+    claimBlockers(){return catalogClaimInspectionService.listBlockers();},
+    inspectClaim(campaignId,body){return catalogClaimInspectionService.inspect({campaignId,previousInspectionId:body?.previous_inspection_id??null});},
+    endStaleClaim(campaignId,body){return catalogClaimRecoveryService.endStaleClaim({campaignId,queueId:body?.queue_id,sourceId:body?.source_id,firstInspectionId:body?.first_inspection_id,secondInspectionId:body?.second_inspection_id,expectedClaimToken:body?.expected_claim_token,expectedClaimGeneration:body?.expected_claim_generation,requestId:body?.request_id,operatorConfirmation:body?.operator_confirmation});},
+    poolProducts(poolVersionId,searchParams){return catalogPoolReadRepository.listPoolProducts({poolVersionId,
+      categoryKey:searchParams.get('category_key'),categoryProfileVersion:searchParams.get('category_profile_version')});},
+    async operatorProfiles() {
+      const {profiles,invalid}=await categoryProfileRegistry.list();
+      return {
+profiles:profiles.map(profile=>catalogService.describeOperatorProfile(profile)),invalid};
+    },
+    validateOperatorCategoryProfile(body){return operatorCategoryProfileStore.validate(profileDraft(body));},
+    registerOperatorCategoryProfile(body){return operatorCategoryProfileStore.register({
+      requestId:body?.request_id,...profileDraft(body)
+    });},
+    exportInitialPreview(campaignId,body){assertCampaignBodyIdentity(campaignId,body);const run=()=>catalogScopedExportService.exportPreview({
+      campaignId,categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version,
+      candidateRevision:body?.candidate_revision
+    });return catalogService.withOperatorExport?catalogService.withOperatorExport(campaignId,run):run();},
+    exportFormalPool(poolVersionId,body){return catalogScopedExportService.exportFormalPool({poolVersionId,
+      categoryKey:body?.category_key,categoryProfileVersion:body?.category_profile_version});},
+    async createOperatorCampaign(body) {
+      const profile=await categoryProfileRegistry.resolve({ categoryKey:body?.category_key,
+        categoryProfileVersion:body?.category_profile_version });
+      return catalogService.createOperatorManualCampaign({ profile,requestedNewCount:body?.requested_new_count,
+        campaignName:body?.campaign_name,requestId:body?.request_id });
+    },
+    async createOperatorInitialCampaign(body) {
+      const profile=await categoryProfileRegistry.resolve({ categoryKey:body?.category_key,
+        categoryProfileVersion:body?.category_profile_version });
+      return catalogService.createOperatorInitialCampaign({ profile,campaignName:body?.campaign_name,
+        requestId:body?.request_id });
+    },
+    async runInitialPoolQa(campaignId,body) {
+      assertCampaignBodyIdentity(campaignId,body);
+      const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,
+        categoryProfileVersion:body?.category_profile_version});
+      return catalogService.runInitialPoolQa({campaignId,categoryKey:profile.category_key,
+        categoryProfileVersion:profile.category_profile_version,requestId:body?.request_id});
+    },
+    async activateInitialPool(campaignId,body) {
+      assertCampaignBodyIdentity(campaignId,body);
+      const profile=await categoryProfileRegistry.resolve({categoryKey:body?.category_key,
+        categoryProfileVersion:body?.category_profile_version});
+      return catalogService.activateInitialPool({campaignId,categoryKey:profile.category_key,
+        categoryProfileVersion:profile.category_profile_version,requestId:body?.request_id});
+    },
+    operatorCurrent() { const context=catalogService.currentOperatorManualContext();return mapOperatorCurrent(context,
+      context?.campaign?.campaignType==='initial'?catalogService.getInitialQaState(context.campaign.id):null); },
+    context(searchParams) {
+      const campaignId=searchParams.get('campaign_id');
+      const sourceId=searchParams.get('source_id');
+      if (!campaignId || !sourceId) throw new AppError('Catalog context需要campaign_id和source_id。',{ code:'CATALOG_BATCH_INVALID' });
+      return catalogService.getCaptureContext(campaignId,sourceId);
+    },
+    captureBatch(body) { return catalogService.captureExtensionBatch(body); },
+    currentRpaContext() { return catalogService.currentRpaContext(); },
+    claimNext(body) { return catalogService.claimNextSource(body?.campaign_id); },
+    sourceOpened(body) { return catalogService.sourceOpened(body); },
+    checkpoint(body) { return catalogService.saveRpaCheckpoint(body); },
+    manualRequired(body) { return catalogService.markRpaManualRequired(body); },
+    resume(body) { return catalogService.resumeRpa(body); },
+    extensionCheckpoint(body) { return catalogService.saveExtensionCheckpoint(body); },
+    extensionManualRequired(body) { return catalogService.markExtensionManualRequired(body); },
+    extensionResume(body) { return catalogService.resumeExtensionRunner(body); },
+    sourceComplete(body) { return catalogService.completeRpaSource(body); },
+    status(searchParams) {
+      const campaignId=searchParams.get('campaign_id');
+      if (!campaignId) throw new AppError('Catalog status需要campaign_id。',{ code:'CATALOG_BATCH_INVALID' });
+      return catalogService.getStatus(campaignId);
+    }
+  };
+}
+
+function profileDraft(body={}){const {request_id:ignored,...draft}=body??{};return draft;}
+
+function mapOperatorCurrent(context,qa=null) {
+  if (!context) return null;
+  if (context.campaign.quantityMode==='OPEN_ENDED') return { campaign_id:context.campaign.id,campaign_type:context.campaign.campaignType,
+    category_key:context.campaign.categoryKey,category_profile_version:context.campaign.categoryProfileVersion,
+    campaign_name:context.campaign.name,baseline_count:0,target_count:null,remaining:null,target_reached:null,
+    quantity_mode:'OPEN_ENDED',capture_limit:null,current_unique:context.campaign.nonElectronicUniqueCount,
+    status:context.campaign.status,capture_mode:context.campaign.browserControlMode,
+    binding_status:context.queue.checkpoint?.runner_state??'UNBOUND',queue_id:context.queue.id,source_id:context.source.id,
+    claim_generation:context.queue.claimGeneration,candidate_revision:qa?.currentCandidateRevision??0,
+    qa:qa?{status:qa.status,qa_run_id:qa.qaRunId??null,qa_candidate_count:qa.qaCandidateCount,
+      live_unique_count:qa.liveUniqueCount,unreviewed_delta:qa.unreviewedDelta,checks:qa.checks??[],
+      failure_codes:qa.failureCodes??[],duration_ms:qa.durationMs??null}:null };
+  const requested=Number(context.campaign.targetCount-context.campaign.baselinePoolCount);
+  return {
+ campaign_id:context.campaign.id,category_key:context.campaign.categoryKey,
+    category_profile_version:context.campaign.categoryProfileVersion,campaign_name:context.campaign.name,
+    baseline_count:context.campaign.baselinePoolCount,target_count:context.campaign.targetCount,
+    current_unique:context.campaign.nonElectronicUniqueCount,remaining:Math.max(0,context.campaign.targetCount-context.campaign.nonElectronicUniqueCount),
+    requested_new_count:requested,status:context.campaign.status,capture_mode:context.campaign.browserControlMode,
+    binding_status:context.queue.checkpoint?.runner_state ?? 'UNBOUND',queue_id:context.queue.id,source_id:context.source.id };
+}
+function assertCampaignBodyIdentity(campaignId,body) { if (String(body?.campaign_id??'')!==String(campaignId)) throw new AppError(
+  'URL Campaign与请求体不匹配。',{code:'INITIAL_CAMPAIGN_IDENTITY_INVALID'}); }

@@ -1,0 +1,21 @@
+import crypto from 'node:crypto';
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+export function validateCategoryUrl(value){const url=new URL(value);if(url.protocol!=='https:'||url.hostname!=='www.temu.com'||url.username||url.password||!/-o3-\d+\.html$/i.test(url.pathname))throw Error('请输入 https://www.temu.com 的类目链接（不是搜索结果链接）');return url.href;}
+export function createVmAdapter({profile='3059CDF2-1184-45B6-9938-A3E990EBCBE9',fetcher=fetch}={}){
+ async function vm(route,body){const options=body?{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({profileId:profile,body:Buffer.from(body).toString('base64')})}:{};
+  const r=await fetcher('http://127.0.0.1:35000/api/v1/profile'+route+(body?'':(route.includes('?')?'&':'?')+'profileId='+profile),{...options,signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok||d.status!=='OK'||d.success===false)throw Error('VMLogin 接口失败：'+(d.message||d.status||r.status));return d;
+ }
+ async function evaluate(script){const d=await vm('/ExecuteScript',script);let value;try{value=JSON.parse(d.value);}catch{throw Error('VMLogin 脚本未返回有效结果，请确认商品页已加载完成');}const exception=value?.result?.exceptionDetails??value?.exceptionDetails;const remote=value?.result?.result;if(exception||remote?.subtype==='error')throw Error(String(exception?.exception?.description||remote?.description||exception?.text||'页面脚本执行失败').split('\n')[0]);return value;}
+ const guard=url=>`if(location.href!==${JSON.stringify(url)})throw Error('页面已变化');`;
+ async function bridge(action,url,campaignId){const id=crypto.randomUUID();await evaluate(`JSON.stringify((()=>{${guard(url)}if(!window.__catalogVmInbox){window.__catalogVmInbox={};window.addEventListener('message',e=>{if(e.source===window&&e.origin===location.origin&&e.data?.channel==='TEMU_CATALOG_VM_V1'&&e.data.kind==='response')window.__catalogVmInbox[e.data.id]=e.data;});}window.postMessage(${JSON.stringify({channel:'TEMU_CATALOG_VM_V1',kind:'request',id,action,campaignId})},location.origin);return true;})())`);
+  let polls=0;const until=Date.now()+45000;while(Date.now()<until){await wait(400);const response=await evaluate(`JSON.stringify((()=>{${guard(url)}const d=window.__catalogVmInbox?.[${JSON.stringify(id)}];if(d)delete window.__catalogVmInbox[${JSON.stringify(id)}];return d||null;})())`);if(!response&&++polls%5===0)await evaluate(`JSON.stringify((()=>{${guard(url)}window.postMessage(${JSON.stringify({channel:'TEMU_CATALOG_VM_V1',kind:'request',id,action,campaignId})},location.origin);return true;})())`);if(response){if(response.ok!==true)throw Error(response.error||'采集插件返回无效响应，请重新加载独立插件并刷新商品页');return response.result;}}
+  throw Error('采集插件未响应或保存超时。请确认独立插件已更新并刷新 Temu 页面；先检查已保存数量，避免重复启动。');
+ }
+ return {profile,
+  async current(){const s=await vm('/page/pagestate');return validateCategoryUrl(s.baseURI);},
+  async open(url){const target=validateCategoryUrl(url),current=await vm('/page/pagestate');const actual=new URL(current.baseURI);if(['127.0.0.1','localhost'].includes(actual.hostname))throw Error('为保留控制台，已取消跳转：请在 Codex 或普通浏览器打开此控制台，并把 VMLogin 的当前标签切回 Temu 类目页后再检测。');if(actual.origin===new URL(target).origin&&actual.pathname===new URL(target).pathname&&actual.search===new URL(target).search)return;await vm('/openurl?url='+encodeURIComponent(target));},
+  inspect:url=>bridge('inspect',url),prepare:url=>bridge('prepare',url),capture:(url,id)=>bridge('capture',url,id),
+  scroll:url=>evaluate(`JSON.stringify((()=>{${guard(url)}window.scrollBy({top:Math.max(200,innerHeight*.8),behavior:'instant'});return scrollY;})())`),
+  click:(url,text)=>evaluate(`JSON.stringify((()=>{${guard(url)}if(/captcha|verify you are human|security verification|access denied|too many requests/i.test(document.body?.innerText||''))throw Error('页面验证或访问限制');const n=[...document.querySelectorAll('button,a,[role="button"]')].find(n=>{const r=n.getBoundingClientRect();return (n.innerText||'').trim().toLowerCase()===${JSON.stringify(text.toLowerCase())}&&r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight&&getComputedStyle(n).visibility!=='hidden'&&!n.disabled&&n.getAttribute('aria-disabled')!=='true';});if(!n)throw Error('加载按钮不可用');n.click();return true;})())`)
+ };
+}

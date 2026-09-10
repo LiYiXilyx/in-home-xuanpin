@@ -1,0 +1,14 @@
+{
+  "catalog-network-endpoints.js": "2590993c7837d322f8d612d2ae7864d8a94ea1d2f7aaf5046dd20d09f739f7c9",
+  "catalog-network-parser.js": "487eee79486b464fc87563ff4363a4d3301ceaec2e554b2a3e9beebd34389d45",
+  "temu-network-interceptor.js": "1fe9e3e043543c400d1ccc7917513801c72898f987e9db2e73fdba4a8e59d845",
+  "catalog-network-cache.js": "51f9872d9a89f20c57a2cb5a0e5ab464f2f0d65b14aa4e45a9b915cd92cacee5",
+  "catalog-product-merger.js": "056cb01a295f2499e0c7d446ad38edc9bd1e0e94553a73a9c5b259bfe176d644",
+  "catalog-network-bridge.js": "0aa0fd4768b044c84ed820230d8bbeffd31c11faef707d46fb8487936774aac1",
+  "catalog-parser.js": "364bb0cc96d458fd58fc32c25cd2eb8286c6e51a4f1e34e97143b6ede3ec3167",
+  "catalog-capture-transport-policy.js": "ee162a1d47bc65d6f85515a3c07c055d74d4f4b6a5a3c44e63ef64bf21998f2f",
+  "catalog-capture.js": "a0a091a96e2d952f32c4fb33a4d708dab7433cb6e5dcba932144f4dadec1b77c",
+  "catalog-breadcrumbs.js": "602759a8a647ef9aef69c69825fd65397020a7870121fefc02c33b0b6e071c6e",
+  "catalog-manual-binding.js": "9296b4ed519425ab0dc93703c5b8f8385192ed692d6f53af0172ed5dd8b5654c",
+  "catalog-manual-passive-runner.js": "d4093ad9c79338f3b90a96258bf21f17f35d12e8c6cbd2d2255f96aafed97766"
+}

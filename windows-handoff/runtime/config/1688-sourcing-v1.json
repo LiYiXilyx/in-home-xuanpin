@@ -1,0 +1,24 @@
+{
+  "method": "YINGDAO_1688_ASSISTANT",
+  "v1MaxInputGoods": 3,
+  "maxCandidatesPerGoods": 5,
+  "similarityWeights": {
+    "image": 0.60,
+    "title": 0.25,
+    "category": 0.15
+  },
+  "imageSimilarity": {
+    "implementationStatus": "NOT_IMPLEMENTED"
+  },
+  "fx": {
+    "pair": "CNY/EUR",
+    "rate": 0.12,
+    "source": "MANUAL_CONFIG",
+    "observedAt": "2026-08-28"
+  },
+  "sampleGoodsIds": [
+    "601099514149132",
+    "601100641295053",
+    "601099523219339"
+  ]
+}

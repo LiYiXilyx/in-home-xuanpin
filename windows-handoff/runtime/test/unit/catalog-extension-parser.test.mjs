@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+
+const root=path.resolve(import.meta.dirname,'../..');
+test('adjacent duplicate sold labels retain sales without accepting solder text',()=>{
+ const context={URL};context.globalThis=context;vm.runInNewContext(fs.readFileSync(path.join(root,'browser-extension/catalog-parser.js'),'utf8'),context);
+ const parse=context.TemuCatalogParser.parseSalesEvidence;
+ for(const [text,count] of [['€2.082,08€51K+sold51K+soldRRPRRP €2.51',51000],['€3.793,79€47K+sold47K+sold700 reviews',47000],['46K+sold46K+sold3.632 reviews',46000],['100K+ sold',100000],['2,5K+sold2,5K+sold',2500],['solder 51K components',null],['€5.00 700 reviews',null]])assert.equal(parse(text).parsed_sales_count,count,text);
+});
+
+test('Catalog Extension parses the sanitized product-card fixture with stable fields and goods_id identity',() => {
+  const context={ URL };context.globalThis=context;
+  vm.runInNewContext(fs.readFileSync(path.join(root,'browser-extension/catalog-parser.js'),'utf8'),context);
+  const html=fs.readFileSync(path.join(root,'test/fixtures/catalog/product-cards.html'),'utf8');
+  const cards=context.TemuCatalogParser.parseHtmlFixture(html);
+  assert.equal(cards.length,3);
+  assert.deepEqual(Array.from(cards,card => card.goods_id),['601234567890123','609876543210987','601111111111111']);
+  assert.equal(cards[0].href,'https://www.temu.com/goods.html?goods_id=601234567890123&utm_source=fixture');
+  assert.equal(cards[0].title,'Universal Motorcycle Phone Mount');
+  assert.equal(cards[0].image_url,'https://img.example.test/601234567890123.webp');
+  assert.equal(cards[0].price_amount,12.49);
+  assert.equal(cards[0].sales_count,1200);
+  assert.match(cards[0].raw_sales_text,/1\.2K\+ sold/i);
+  assert.equal(cards[0].parsed_sales_count,1200);
+  assert.equal(cards[0].final_sales_count,1200);
+  assert.equal(cards[0].rating,4.8);
+  assert.equal(cards[0].review_count,321);
+  assert.equal(cards[1].price_amount,19.99);
+  assert.equal(cards[1].rating,4.7);
+  assert.equal(cards[1].listing_rank,2);
+  assert.equal(cards[1].dom_sequence,2);
+  assert.equal(cards[2].price_amount,null);
+  assert.match(cards[2].raw_card_text,/Missing Metrics Motorcycle Cover/);
+  assert.equal(context.TemuCatalogParser.extractGoodsId('https://www.temu.com/de-en/item-g-123456.html?x=1'),'123456');
+  assert.equal(context.TemuCatalogParser.extractGoodsId('https://example.test/no-product'),null);
+  assert.equal(context.TemuCatalogParser.parseReviewCount('4.7 out of five stars 4.507 reviews'),4507);
+  for (const [text,count] of [['77K+ sold',77000],['7.7K+ sold',7700],['1.2K+ sold',1200],['2M+ sold',2000000],['12,345 sold',12345],['7,7K+ sold',7700]]) {
+    const evidence=context.TemuCatalogParser.parseSalesEvidence(text);assert.equal(evidence.parsed_sales_count,count,text);assert.equal(evidence.raw_sales_text,text);
+  }
+});

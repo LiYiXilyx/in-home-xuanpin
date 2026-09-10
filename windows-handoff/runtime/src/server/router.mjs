@@ -1,0 +1,346 @@
+import {instrument,logs} from './system-log-store.mjs';
+import {exportTrackingWorkbook} from '../modules/tracking/tracking-export.mjs';
+import { operatorMessage } from './status-service.mjs';
+
+export function createRouter({ trackingService,statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
+  environment={ name:'development',testMode:false },logError=console.error }) {
+  return async function route(request,response) {
+    const url=new URL(request.url,'http://127.0.0.1');instrument(request,response,url);
+    try {
+      if(request.method==='GET'&&url.pathname==='/api/system-logs')return json(response,200,logs());
+      if(trackingService && url.pathname.startsWith('/api/tracking')){
+        const suffix=url.pathname.slice('/api/tracking'.length);
+        if(request.method==='GET'&&suffix==='')return json(response,200,trackingService.list());
+        if(request.method==='POST'&&suffix==='/create'){assertLocalOrigin(request);return json(response,201,trackingService.create(await readJson(request)));}
+        if(request.method==='POST'&&suffix==='/sync'){assertLocalOrigin(request);return json(response,200,trackingService.sync());}
+        const match=suffix.match(/^\/([a-zA-Z0-9-]+)(?:\/(export|status))?$/);
+        if(match){
+          if(request.method==='GET'&&match[2]==='export'){const bytes=await exportTrackingWorkbook(trackingService.detail(match[1]));response.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="period-tracking.xlsx"','Cache-Control':'no-store'});return response.end(bytes);}
+          if(request.method==='POST'&&match[2]==='status'){assertLocalOrigin(request);return json(response,200,trackingService.setStatus(match[1],(await readJson(request)).status));}
+          if(request.method==='GET'&&!match[2])return json(response,200,trackingService.detail(match[1]));
+        }
+      }
+      if(request.method==='GET'&&url.pathname==='/api/sourcing/review/runs')return json(response,200,{runs:await sourcingReviewController.listRuns()});
+      if(request.method==='GET'&&url.pathname==='/api/catalog/exports/images/history')return json(response,200,{ok:true,files:await exportController.listImageExports()},CATALOG_HEADERS);
+      if(request.method==='POST'&&url.pathname==='/api/catalog/exports/images/choose-folder'){assertLocalOrigin(request);return json(response,200,{ok:true,result:await exportController.chooseImageFolder()},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/exports/images/open-folder'){assertLocalOrigin(request);return json(response,200,{ok:true,result:await exportController.openImageFolder()},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/exports/images'){assertLocalOrigin(request);return json(response,200,{ok:true,result:await exportController.exportCatalogImages(await readJson(request))},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/exports/open-folder'){assertLocalOrigin(request);return json(response,200,{ok:true,...await exportController.openCatalogFolder()},CATALOG_HEADERS);}
+      const pauseInitial=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/pause$/);
+      if(request.method==='POST'&&pauseInitial){assertLocalOrigin(request);return json(response,200,{ok:true,result:await catalogController.pauseOperatorInitial(decodeURIComponent(pauseInitial[1]),await readJson(request))},CATALOG_HEADERS);}
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/entry')return json(response,200,{ok:true,entry:await catalogController.operatorEntry(url.searchParams)},CATALOG_HEADERS);
+      const continueInitial=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/continue$/);
+      if(request.method==='POST'&&continueInitial){assertLocalOrigin(request);const result=await catalogController.continueOperatorInitial(decodeURIComponent(continueInitial[1]),await readJson(request));return json(response,200,{ok:true,result:mapInitialCampaignResult(result)},CATALOG_HEADERS);}
+      if(temuMarketEvidenceController&&url.pathname.startsWith('/api/sourcing/review/')) {
+        const sessions=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions$/);
+        if(sessions&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.create({goodsId:decodeURIComponent(sessions[1]),body:await readJson(request,32_768)}));}
+        if(sessions&&request.method==='GET')return json(response,200,await temuMarketEvidenceController.list({goodsId:decodeURIComponent(sessions[1]),runId:url.searchParams.get('run_id')}));
+        const phase=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/phases\/(BEFORE|AFTER)$/);
+        if(phase&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.phase({goodsId:decodeURIComponent(phase[1]),sessionId:decodeURIComponent(phase[2]),phase:phase[3],body:await readJson(request,8_000_000)}));}
+        const assessment=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/assessments$/);
+        if(assessment&&request.method==='POST'){assertLocalOrigin(request);return json(response,201,await temuMarketEvidenceController.assessment({goodsId:decodeURIComponent(assessment[1]),sessionId:decodeURIComponent(assessment[2]),body:await readJson(request,64_000)}));}
+        const close=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/close$/);
+        if(close&&request.method==='POST'){assertLocalOrigin(request);return json(response,200,await temuMarketEvidenceController.close({goodsId:decodeURIComponent(close[1]),sessionId:decodeURIComponent(close[2]),body:await readJson(request,16_384)}));}
+        const reissue=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/reissue-bind-token$/);
+        if(reissue&&request.method==='POST'){assertLocalOrigin(request);return json(response,200,await temuMarketEvidenceController.reissueBindToken({goodsId:decodeURIComponent(reissue[1]),sessionId:decodeURIComponent(reissue[2]),body:await readJson(request,16_384)}));}
+        const screenshot=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)\/phases\/(BEFORE|AFTER)\/screenshot$/);
+        if(screenshot&&request.method==='GET')return evidenceScreenshot(response,await temuMarketEvidenceController.screenshot({goodsId:decodeURIComponent(screenshot[1]),sessionId:decodeURIComponent(screenshot[2]),phase:screenshot[3],runId:url.searchParams.get('run_id')}));
+        const detail=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/evidence-sessions\/([^/]+)$/);
+        if(detail&&request.method==='GET')return json(response,200,await temuMarketEvidenceController.get({goodsId:decodeURIComponent(detail[1]),sessionId:decodeURIComponent(detail[2]),runId:url.searchParams.get('run_id')}));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/review/evidence-extension/bind-token/consume')return json(response,200,await temuMarketEvidenceController.bind({body:await readJson(request,32_768)}),EXTENSION_CORS_HEADERS);
+        const extensionPhase=url.pathname.match(/^\/api\/sourcing\/review\/evidence-extension\/goods\/([^/]+)\/sessions\/([^/]+)\/phases\/(BEFORE|AFTER)$/);
+        if(extensionPhase&&request.method==='POST')return json(response,201,await temuMarketEvidenceController.phase({goodsId:decodeURIComponent(extensionPhase[1]),sessionId:decodeURIComponent(extensionPhase[2]),phase:extensionPhase[3],body:await readJson(request,8_000_000)}),EXTENSION_CORS_HEADERS);
+      }
+      if(sourcingReviewController&&url.pathname.startsWith('/api/sourcing/review/')) {
+        const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
+        if(mutation) assertLocalOrigin(request);
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/review/bootstrap') return json(response,200,await sourcingReviewController.bootstrap({runId:url.searchParams.get('run_id'),filter:url.searchParams.get('filter')??'ALL'}));
+        const visualImage=url.pathname.match(/^\/api\/sourcing\/review\/visual-index\/images\/([^/]+)$/);
+        if(request.method==='GET'&&visualImage) return reviewImage(response,await sourcingReviewController.visualImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualImage[1]),fingerprint:url.searchParams.get('index_fingerprint')}));
+        const visualDisplayImage=url.pathname.match(/^\/api\/sourcing\/review\/visual-index\/display-images\/([^/]+)$/);
+        if(request.method==='GET'&&visualDisplayImage) return reviewImage(response,await sourcingReviewController.visualDisplayImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualDisplayImage[1]),fingerprint:url.searchParams.get('index_fingerprint')}));
+        const visualMatches=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/visual-matches$/);
+        if(request.method==='GET'&&visualMatches) return json(response,200,await sourcingReviewController.visualMatches({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(visualMatches[1]),limit:url.searchParams.get('limit'),fingerprint:url.searchParams.get('index_fingerprint')}));
+        const temuImage=url.pathname.match(/^\/api\/sourcing\/review\/images\/temu\/([^/]+)$/);
+        if(request.method==='GET'&&temuImage) return reviewImage(response,await sourcingReviewController.temuImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(temuImage[1])}));
+        const supplierImage=url.pathname.match(/^\/api\/sourcing\/review\/images\/supplier\/([^/]+)\/([^/]+)$/);
+        if(request.method==='GET'&&supplierImage) return reviewImage(response,await sourcingReviewController.supplierImage({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(supplierImage[1]),productId:decodeURIComponent(supplierImage[2])}));
+        const openLink=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/candidates\/([^/]+)\/open-link$/);
+        if(request.method==='GET'&&openLink) return json(response,200,await sourcingReviewController.openLink({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(openLink[1]),productId:decodeURIComponent(openLink[2])}));
+        const candidateAction=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/candidates\/([^/]+)\/(exclude|restore|note)$/);
+        if(candidateAction&&((candidateAction[3]==='note'&&request.method==='PUT')||(candidateAction[3]!=='note'&&request.method==='POST'))) {
+          const body=await readJson(request,32_768),method={exclude:'exclude',restore:'restore',note:'note'}[candidateAction[3]];
+          return json(response,200,await sourcingReviewController[method]({temuGoodsId:decodeURIComponent(candidateAction[1]),productId:decodeURIComponent(candidateAction[2]),body}));
+        }
+        const goodsAction=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)\/(select|clear-selection)$/);
+        if(request.method==='POST'&&goodsAction) {
+          const body=await readJson(request,32_768),method=goodsAction[2]==='select'?'select':'clearSelection';
+          return json(response,200,await sourcingReviewController[method]({temuGoodsId:decodeURIComponent(goodsAction[1]),body}));
+        }
+        const reviewGoods=url.pathname.match(/^\/api\/sourcing\/review\/goods\/([^/]+)$/);
+        if(request.method==='GET'&&reviewGoods) return json(response,200,await sourcingReviewController.goods({runId:url.searchParams.get('run_id'),temuGoodsId:decodeURIComponent(reviewGoods[1])}));
+      }
+      if (sourcingController && url.pathname.startsWith('/api/sourcing/')) {
+        const mutation=['POST','PUT','PATCH','DELETE'].includes(request.method);
+        if(mutation) assertLocalOrigin(request);
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/settings') return json(response,200,await sourcingController.settings());
+        if(request.method==='PUT'&&url.pathname==='/api/sourcing/settings') return json(response,200,await sourcingController.saveSettings(await readJson(request,32_768)));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/path-dialog') return json(response,200,await sourcingController.choosePath(await readJson(request)));
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/pools')return json(response,200,sourcingController.pools());
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/scan') return json(response,200,await sourcingController.scan(await readJson(request)));
+        if(request.method==='POST'&&url.pathname==='/api/sourcing/imports') return json(response,202,await sourcingController.startImport(await readJson(request)));
+        if(request.method==='GET'&&url.pathname==='/api/sourcing/imports/current') return json(response,200,await sourcingController.currentImport());
+        const retry=url.pathname.match(/^\/api\/sourcing\/imports\/([^/]+)\/retry-failed-images$/);
+        if(request.method==='POST'&&retry) return json(response,200,await sourcingController.retryFailedImages(decodeURIComponent(retry[1])));
+        const imported=url.pathname.match(/^\/api\/sourcing\/imports\/([^/]+)$/);
+        if(request.method==='GET'&&imported) return json(response,200,await sourcingController.getImport(decodeURIComponent(imported[1])));
+      }
+      if (request.method === 'OPTIONS' && (url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/'))) return extensionCors(response,204);
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog/')) return catalogCors(response,204);
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/catalog-rpa/')) return catalogCors(response,204);
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/rpa-claim-blockers'){const result=catalogController.claimBlockers();return json(response,200,{ok:true,primary_blocker:result.primaryBlocker,all_blockers:result.allBlockers},CATALOG_HEADERS);}
+      const claimInspection=url.pathname.match(/^\/api\/catalog\/operator\/rpa-claims\/([^/]+)\/inspections$/);
+      if(request.method==='POST'&&claimInspection){assertLocalOrigin(request);const result=catalogController.inspectClaim(decodeURIComponent(claimInspection[1]),await readJson(request,16_384));return json(response,201,{ok:true,result},CATALOG_HEADERS);}
+      const endStale=url.pathname.match(/^\/api\/catalog\/operator\/rpa-claims\/([^/]+)\/end-stale$/);
+      if(request.method==='POST'&&endStale){assertLocalOrigin(request);const result=catalogController.endStaleClaim(decodeURIComponent(endStale[1]),await readJson(request,32_768));return json(response,200,{ok:true,result},CATALOG_HEADERS);}
+      const poolProducts=url.pathname.match(/^\/api\/catalog\/pools\/([^/]+)\/products$/);
+      if(request.method==='GET'&&poolProducts){const result=catalogController.poolProducts(decodeURIComponent(poolProducts[1]),url.searchParams);
+        return json(response,200,{ok:true,...result},CATALOG_HEADERS);}
+      const poolExport=url.pathname.match(/^\/api\/catalog\/pools\/([^/]+)\/export$/);
+      if(request.method==='POST'&&poolExport){const result=await catalogController.exportFormalPool(decodeURIComponent(poolExport[1]),await readJson(request,16_384));
+        return json(response,200,{ok:true,result},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/operator/category-probes'){
+        const probe=await catalogController.createCategoryProbe(await readJson(request,16_384));return json(response,200,{ok:true,probe},CATALOG_HEADERS);}
+      if(request.method==='GET'&&url.pathname==='/api/catalog/operator/category-probes/current'){
+        return json(response,200,{ok:true,probe:await catalogController.currentCategoryProbe()},CATALOG_HEADERS);}
+      const categoryProbeRegister=url.pathname.match(/^\/api\/catalog\/operator\/category-probes\/([^/]+)\/register$/);
+      if(request.method==='POST'&&categoryProbeRegister){assertLocalOrigin(request);const result=await catalogController.registerCategoryProbe(decodeURIComponent(categoryProbeRegister[1]),await readJson(request,16_384));return json(response,200,{ok:true,...result},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/operator/category-profiles/validate'){
+        const profile=await catalogController.validateOperatorCategoryProfile(await readJson(request,32_768));
+        return json(response,200,{ok:true,profile},CATALOG_HEADERS);}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/operator/category-profiles'){
+        const result=await catalogController.registerOperatorCategoryProfile(await readJson(request,32_768));
+        return json(response,result.idempotentReplay?200:201,{ok:true,profile:result.profile,filename:result.filename,
+          idempotent_replay:result.idempotentReplay},CATALOG_HEADERS);}
+      if(url.pathname==='/api/catalog/recapture-pool-merge'){
+        if(request.method==='GET')return json(response,200,catalogController.previewRecaptureMerge(url.searchParams.get('campaignId')),CATALOG_HEADERS);
+        if(request.method==='POST'){assertLocalOrigin(request);return json(response,200,catalogController.mergeRecapturePool(await readJson(request,16384)),CATALOG_HEADERS);}
+      }
+      if(request.method==='POST'&&url.pathname==='/api/catalog/manual-tasks/pause'){assertLocalOrigin(request);return json(response,200,catalogController.pauseManualTask(await readJson(request,16384)),CATALOG_HEADERS);}
+      if(url.pathname==='/api/catalog/manual-tasks'){
+        if(request.method==='GET')return json(response,200,catalogController.manualTasks(),CATALOG_HEADERS);
+        if(request.method==='POST'){assertLocalOrigin(request);return json(response,200,catalogController.switchManualTask(await readJson(request,16384)),CATALOG_HEADERS);}
+      }
+      if (request.method === 'GET' && url.pathname === '/api/catalog/operator/profiles') {
+        const result=await catalogController.operatorProfiles();
+        return json(response,200,{ ok:true,...result },CATALOG_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/catalog/operator-campaign/current') {
+        return json(response,200,{ ok:true,current:catalogController.operatorCurrent() },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog/operator-campaigns') {
+        const result=await catalogController.createOperatorCampaign(await readJson(request,16_384));
+        return json(response,result.idempotentReplay ? 200:201,{ ok:true,result:mapOperatorCampaignResult(result) },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog/operator/initial-campaigns') {
+        const result=await catalogController.createOperatorInitialCampaign(await readJson(request,16_384));
+        return json(response,result.idempotentReplay?200:201,{ok:true,result:mapInitialCampaignResult(result)},CATALOG_HEADERS);
+      }
+      const previewExport=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/preview-export$/);
+      if(request.method==='POST'&&previewExport){const campaignId=decodeURIComponent(previewExport[1]);
+        const result=await catalogController.exportInitialPreview(campaignId,await readJson(request,16_384));
+        return json(response,200,{ok:true,result},CATALOG_HEADERS);}
+      const initialQa=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/qa-runs$/);
+      if(request.method==='POST'&&initialQa){const campaignId=decodeURIComponent(initialQa[1]);
+        const result=await catalogController.runInitialPoolQa(campaignId,await readJson(request,16_384));
+        return json(response,200,{ok:true,result:mapInitialQaResult(result)},CATALOG_HEADERS);}
+      const initialActivation=url.pathname.match(/^\/api\/catalog\/operator\/initial-campaigns\/([^/]+)\/activate$/);
+      if(request.method==='POST'&&initialActivation){const campaignId=decodeURIComponent(initialActivation[1]);
+        const result=await catalogController.activateInitialPool(campaignId,await readJson(request,16_384));
+        return json(response,200,{ok:true,result:mapInitialActivationResult(result)},CATALOG_HEADERS);}
+      if (request.method === 'GET' && url.pathname === '/api/catalog-rpa/current-context') {
+        return json(response,200,{ ok:true,context:catalogController.currentRpaContext() },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog-rpa/claim-next') {
+        return json(response,200,{ ok:true,result:catalogController.claimNext(await readJson(request,16_384)) },CATALOG_HEADERS);
+      }
+      const catalogRpaAction=url.pathname.match(/^\/api\/catalog-rpa\/(source-opened|checkpoint|manual-required|resume|source-complete)$/);
+      if (request.method === 'POST' && catalogRpaAction) {
+        const body=await readJson(request,64_000);
+        const handlers={ 'source-opened':'sourceOpened',checkpoint:'checkpoint','manual-required':'manualRequired',resume:'resume','source-complete':'sourceComplete' };
+        return json(response,200,{ ok:true,result:catalogController[handlers[catalogRpaAction[1]]](body) },CATALOG_HEADERS);
+      }
+      const catalogExtensionAction=url.pathname.match(/^\/api\/catalog-extension\/(checkpoint|manual-required|resume)$/);
+      if (request.method === 'POST' && catalogExtensionAction) {
+        const body=await readJson(request,64_000);
+        const handlers={ checkpoint:'extensionCheckpoint','manual-required':'extensionManualRequired',resume:'extensionResume' };
+        return json(response,200,{ ok:true,result:catalogController[handlers[catalogExtensionAction[1]]](body) },CATALOG_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/catalog/context') {
+        return json(response,200,{ ok:true,context:catalogController.context(url.searchParams) },CATALOG_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/catalog/batches') {
+        const body=await readJson(request,1_000_000);
+        return json(response,200,{ ok:true,result:catalogController.captureBatch(body) },CATALOG_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/catalog/status') {
+        return json(response,200,{ ok:true,result:catalogController.status(url.searchParams) },CATALOG_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/browser-extension/context') {
+        return json(response,200,{ ok:true,context:reviewController.extensionContext(url.searchParams.get('goods_id')) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/browser-extension/capture-page') {
+        const body=await readJson(request,1_000_000);
+        return json(response,200,{ ok:true,result:reviewController.captureExtensionPage(body) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/browser-extension/capture-batch') {
+        const body=await readJson(request,1_000_000);
+        return json(response,200,{ ok:true,result:reviewController.captureExtensionBatch(body) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/browser-extension/complete-scroll') {
+        const body=await readJson(request,16_384);
+        return json(response,200,{ ok:true,result:reviewController.finishExtensionScroll(body) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/browser-extension/capture-failed') {
+        const body=await readJson(request,16_384);
+        return json(response,200,{ ok:true,result:reviewController.failExtensionCapture(body) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/rpa/review-queue/enqueue') {
+        const body=await readJson(request,64_000);
+        return json(response,200,{ ok:true,result:reviewQueueController.enqueue(body) },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/rpa/review-queue') return json(response,200,{ ok:true,result:reviewQueueController.list(url.searchParams.get('job_id')) },EXTENSION_CORS_HEADERS);
+      if (request.method === 'GET' && url.pathname === '/api/rpa/review-queue/current') return json(response,200,{ ok:true,result:reviewQueueController.current() },EXTENSION_CORS_HEADERS);
+      if (request.method === 'GET' && url.pathname === '/api/rpa/review-safety') return json(response,200,{ ok:true,result:reviewQueueController.safetyStatus(url.searchParams.get('job_id')) },EXTENSION_CORS_HEADERS);
+      if (request.method === 'POST' && url.pathname === '/api/rpa/review-safety/recover') {
+        const body=await readJson(request);return json(response,200,{ ok:true,result:reviewQueueController.recoverSafety(body) },EXTENSION_CORS_HEADERS);
+      }
+      const queueItem=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)$/);
+      if (request.method === 'GET' && queueItem) return json(response,200,{ ok:true,result:reviewQueueController.get(decodeURIComponent(queueItem[1])) },EXTENSION_CORS_HEADERS);
+      if (request.method === 'POST' && url.pathname === '/api/rpa/review-queue/claim-next') {
+        const body=await readJson(request);
+        return json(response,200,{ ok:true,result:reviewQueueController.claimNext(body) },EXTENSION_CORS_HEADERS);
+      }
+      const navigationAction=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)\/navigation\/(resolve|verify)$/);
+      if (request.method === 'POST' && navigationAction) {
+        const body=await readJson(request,256_000);const id=decodeURIComponent(navigationAction[1]);
+        const result=navigationAction[2] === 'resolve' ? reviewQueueController.resolveNavigation(id,body):reviewQueueController.verifyNavigation(id,body);
+        return json(response,200,{ ok:true,result },EXTENSION_CORS_HEADERS);
+      }
+      const safetySignal=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)\/safety\/signal$/);
+      if (request.method === 'POST' && safetySignal) {
+        const body=await readJson(request);return json(response,200,{ ok:true,result:reviewQueueController.signalSafety(decodeURIComponent(safetySignal[1]),body) },EXTENSION_CORS_HEADERS);
+      }
+      const queueAction=url.pathname.match(/^\/api\/rpa\/review-queue\/([^/]+)\/(waiting-operator|fail|retry)$/);
+      if (request.method === 'POST' && queueAction) {
+        const body=await readJson(request);const id=decodeURIComponent(queueAction[1]);
+        const result=queueAction[2] === 'waiting-operator' ? reviewQueueController.waitingOperator(id,body):queueAction[2] === 'fail' ? reviewQueueController.fail(id,body):reviewQueueController.retry(id);
+        return json(response,200,{ ok:true,result },EXTENSION_CORS_HEADERS);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/status') return json(response,200,await statusService.snapshot());
+      if (request.method === 'GET' && url.pathname === '/api/health') return json(response,200,{
+        ok:true,service:'temu-operator-dashboard',apiVersion:1,environment:environment.name,testMode:environment.testMode
+      });
+      if (request.method === 'POST' && url.pathname === '/api/browser/open') return json(response,200,{ ok:true,...await browserController.open() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/connect') return json(response,200,{ ok:true,...await browserController.connectExisting() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/new') return json(response,200,{ ok:true,...await browserController.createFresh() });
+      if (request.method === 'POST' && url.pathname === '/api/browser/validate') return json(response,200,{ ok:true,validation:await browserController.validate() });
+      if (request.method === 'POST' && url.pathname === '/api/jobs/start') {
+        const body=await readJson(request);
+        await browserController.assertReady();
+        return json(response,202,{ ok:true,job:jobController.start(body.targetCount) });
+      }
+      const control=url.pathname.match(/^\/api\/jobs\/([^/]+)\/(pause|resume|cancel|retry)$/);
+      if (request.method === 'POST' && control) return json(response,202,{ ok:true,job:jobController[control[2]](decodeURIComponent(control[1])) });
+      const reviewControl=url.pathname.match(/^\/api\/reviews\/([^/]+)\/(validate-session-recovery|resume)$/);
+      if (request.method === 'POST' && reviewControl) {
+        const jobId=decodeURIComponent(reviewControl[1]);
+        if (reviewControl[2] === 'validate-session-recovery') return json(response,200,{ ok:true,validation:await reviewController.validateSessionRecovery(jobId) });
+        return json(response,202,{ ok:true,job:reviewController.resume(jobId) });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/export') return json(response,200,{ ok:true,result:await exportController.export() });
+      if (request.method === 'POST' && url.pathname === '/api/open/excel') return json(response,200,{ ok:true,...await exportController.openExcel() });
+      if (request.method === 'POST' && url.pathname === '/api/open/folder') return json(response,200,{ ok:true,...await exportController.openFolder() });
+      if (request.method === 'POST' && url.pathname === '/api/clear/excel') {
+        const body=await readJson(request);
+        return json(response,200,{ ok:true,...await exportController.clearExcel({ confirmed:body.confirmed === true }) });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/test/reset') {
+        const body=await readJson(request);
+        return json(response,200,{ ok:true,...await testController.reset({ confirmed:body.confirmed === true,phrase:body.phrase }) });
+      }
+      if (request.method === 'GET' && !url.pathname.startsWith('/api/')) return serveStatic(url.pathname,response);
+      return json(response,404,{ ok:false,error:{ code:'NOT_FOUND',message:'没有找到这个操作。' } });
+    } catch (error) {
+      logError(error?.stack ?? error);
+      const headers=url.pathname.startsWith('/api/catalog/') || url.pathname.startsWith('/api/catalog-rpa/') || url.pathname.startsWith('/api/catalog-extension/') ? CATALOG_HEADERS:
+        url.pathname.startsWith('/api/browser-extension/') || url.pathname.startsWith('/api/rpa/') ? EXTENSION_CORS_HEADERS:undefined;
+      response.operatorErrorCode=error?.code??'OPERATION_FAILED';return json(response,statusFor(error?.code),{ ok:false,error:{ code:error?.code ?? 'OPERATION_FAILED',message:operatorMessage(error?.code,error?.message),details:error?.details??{} } },headers);
+    }
+  };
+}
+
+async function readJson(request,maxBytes=16_384) {
+  let body='';
+  for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body,'utf8') > maxBytes) throw Object.assign(new Error('请求内容过大。'),{ code:'REQUEST_TOO_LARGE' }); }
+  if (!body) return {};
+  try { return JSON.parse(body); } catch { throw Object.assign(new Error('请求格式无效。'),{ code:'INVALID_JSON' }); }
+}
+function statusFor(code) {
+  if(['CATALOG_TASK_BUSY','CATALOG_BINDING_INVALIDATED'].includes(code))return 409;
+  if(code==='LOCAL_ORIGIN_REQUIRED')return 403;
+  if(['JOB_NOT_FOUND','IMPORT_NOT_FOUND','REVIEW_QUEUE_NOT_FOUND','CATALOG_CAMPAIGN_NOT_FOUND','CATALOG_SOURCE_NOT_FOUND','CATALOG_RPA_QUEUE_NOT_FOUND','CATALOG_RPA_NOT_CLAIMED','CATALOG_RPA_CLAIM_NOT_FOUND','CATALOG_RPA_INSPECTION_NOT_FOUND','CATEGORY_PROFILE_NOT_FOUND','CATALOG_POOL_NOT_FOUND','REVIEW_RUN_NOT_FOUND','REVIEW_GOODS_NOT_FOUND','REVIEW_CANDIDATE_NOT_FOUND','REVIEW_IMAGE_NOT_FOUND'].includes(code))return 404;
+  if(['EVIDENCE_SESSION_CONTEXT_MISMATCH','EVIDENCE_EFFECTIVE_QUERY_CONFIRMATION_REQUIRED','EVIDENCE_SESSION_ALREADY_WRITABLE','EVIDENCE_SESSION_REVISION_CONFLICT','EVIDENCE_SESSION_PHASE_ORDER_INVALID','EVIDENCE_SESSION_PHASE_ALREADY_SEALED','EVIDENCE_BIND_TOKEN_EXPIRED','EVIDENCE_REQUEST_ID_CONFLICT','RUN_ID_CONFLICT','IMPORT_IN_PROGRESS','SCAN_STALE','BROWSER_JOB_CONFLICT','REVIEW_TASK_MISMATCH','CATALOG_BATCH_IDEMPOTENCY_CONFLICT','CAMPAIGN_NOT_ACTIVE','CATALOG_RPA_CLAIM_CONFLICT','CATALOG_RPA_CLAIM_MISMATCH','CATALOG_RPA_CONTEXT_AMBIGUOUS','CATALOG_RPA_INSPECTION_SCOPE_MISMATCH','CATALOG_RPA_INSPECTION_TOO_SOON','STALE_CLAIM_NOT_CONFIRMED','STALE_CLAIM_REQUEST_CONFLICT','CAMPAIGN_NAME_CONFLICT','OPERATOR_CREATE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_VERSION_MISMATCH','CATEGORY_PROFILE_IDEMPOTENCY_CONFLICT','CATEGORY_PROFILE_ALREADY_EXISTS','CATEGORY_PROFILE_BUILT_IN_CONFLICT','CATEGORY_PROFILE_REGISTRATION_IN_PROGRESS','CATALOG_PREVIEW_REVISION_STALE','CATALOG_PREVIEW_SCOPE_MISMATCH','INITIAL_QA_REQUEST_CONFLICT','INITIAL_ACTIVATION_REQUEST_CONFLICT','INITIAL_POOL_ACTIVATION_IN_PROGRESS','INITIAL_POOL_ALREADY_EXISTS','INITIAL_POOL_HISTORY_EXISTS','CATALOG_POOL_SCOPE_MISMATCH','REVIEW_CONFLICT'].includes(code))return 409;
+  return 400;
+}
+function mapOperatorCampaignResult(result) {
+  return { campaign_id:result.campaignId,category_key:result.categoryKey,
+    category_profile_version:result.categoryProfileVersion,campaign_name:result.campaignName,
+    baseline_count:result.baselineCount,requested_new_count:result.requestedNewCount,target_count:result.targetCount,
+    capture_mode:result.captureMode,current_unique:result.currentUnique,remaining:result.remaining,status:result.status,
+    binding_status:result.bindingStatus,idempotent_replay:result.idempotentReplay };
+}
+function mapInitialCampaignResult(result){return{campaign_id:result.campaignId,campaign_type:'initial',category_key:result.categoryKey,
+  category_profile_version:result.categoryProfileVersion,campaign_name:result.campaignName,baseline_count:0,
+  target_count:null,remaining:null,target_reached:null,quantity_mode:'OPEN_ENDED',capture_limit:null,
+  capture_mode:result.captureMode,current_unique:result.currentUnique,status:result.status,
+  binding_status:result.bindingStatus,idempotent_replay:result.idempotentReplay};}
+function mapInitialQaResult(result){return{qa_run_id:result.qaRunId,qa_status:result.status,
+  live_unique_count:result.liveUniqueCount,qa_candidate_count:result.qaCandidateCount,
+  unreviewed_delta:result.unreviewedDelta,checks:result.checks??[],failure_codes:result.failureCodes??[],
+  duration_ms:result.durationMs??null,idempotent_replay:result.idempotentReplay};}
+function mapInitialActivationResult(result){return{pool_version_id:result.poolVersionId,category_key:result.categoryKey,
+  pool_count:result.productCount,status:result.status,activated_at:result.activatedAt,
+  source_campaign_id:result.sourceCampaignId,idempotent_replay:result.idempotentReplay};}
+export function assertLocalOrigin(request) {
+  const hostHeader=String(request.headers.host??'').toLowerCase();
+  const host=hostname(hostHeader);
+  const originHeader=request.headers.origin;
+  let origin=null;
+  try { origin=originHeader?new URL(originHeader):null; } catch {}
+  if(!isLocal(host)||!origin||origin.protocol!=='http:'||!isLocal(origin.hostname)||origin.host.toLowerCase()!==hostHeader) {
+    const error=new Error('mutation requests require a local Host and Origin');error.code='LOCAL_ORIGIN_REQUIRED';throw error;
+  }
+}
+function hostname(value) {
+  if(!value)return null;
+  try{return new URL(`http://${value}`).hostname;}catch{return null;}
+}
+function isLocal(value) { return value==='localhost'||value==='127.0.0.1'; }
+const EXTENSION_CORS_HEADERS=Object.freeze({ 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
+const CATALOG_HEADERS=Object.freeze({ 'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type' });
+function extensionCors(response,status) { response.writeHead(status,{ ...EXTENSION_CORS_HEADERS,'Cache-Control':'no-store' });response.end(); }
+function catalogCors(response,status) { response.writeHead(status,{ ...CATALOG_HEADERS,'Cache-Control':'no-store' });response.end(); }
+function json(response,status,data,extraHeaders={}) { response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...extraHeaders }); response.end(JSON.stringify(data)); }
+function reviewImage(response,result) {
+  if(result?.kind==='LOCAL') {
+    response.writeHead(200,{'Content-Type':result.contentType,'Content-Length':result.bytes.length,'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'});
+    return response.end(result.bytes);
+  }
+  if(result?.kind==='URL_FALLBACK') {
+    response.writeHead(302,{Location:result.url,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+    return response.end();
+  }
+  throw Object.assign(new Error('review image 不可用'),{code:'REVIEW_IMAGE_NOT_FOUND'});
+}
+function evidenceScreenshot(response,bytes){response.writeHead(200,{'Content-Type':'image/png','Content-Length':bytes.length,'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'});response.end(bytes);}

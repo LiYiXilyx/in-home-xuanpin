@@ -1,0 +1,11 @@
+import {hammingDistance64} from './visual-image-features.mjs';
+export function queryVisualIndex({index,anchorGoodsId,topK=20,threshold=.72}={}){
+ const products=index?.products??[],anchor=products.find(row=>String(row.goods_id)===String(anchorGoodsId));if(!anchor)throw fault('VISUAL_ANCHOR_NOT_INDEXED',`anchor not indexed: ${anchorGoodsId}`);
+ const matches=[];for(const item of products){if(String(item.goods_id)===String(anchorGoodsId))continue;const semantic=cosine(anchor.vector,item.vector);if(semantic<threshold)continue;
+  const phash=hammingDistance64(anchor.perceptual_hash,item.perceptual_hash),metadata=metadataConsistency(anchor,item),boost=Math.max(0,(12-phash)/12)*.03,penalty=metadata==='CONFLICT'?.12:0,final=Math.max(0,Math.min(1,semantic+boost-penalty));
+  matches.push({...withoutVector(item),semantic_score:round(semantic),phash_distance:phash,metadata_consistency:metadata,final_similarity_score:round(final),match_reason:[semantic>=.9?'SEMANTIC_HIGH':'SEMANTIC_MATCH',phash<=6?'NEAR_DUPLICATE':null,metadata==='CONFLICT'?'METADATA_CONFLICT':null].filter(Boolean).join('+')});}
+ matches.sort((a,b)=>b.final_similarity_score-a.final_similarity_score||b.semantic_score-a.semantic_score||a.phash_distance-b.phash_distance||compareUtf8(a.goods_id,b.goods_id));return {anchor_goods_id:String(anchorGoodsId),index_fingerprint:index.index_fingerprint??null,top_k:Math.min(20,Math.max(1,Number(topK)||20)),threshold,match_count:Math.min(matches.length,topK),matches:matches.slice(0,Math.min(20,topK))};
+}
+function cosine(a,b){if(!Array.isArray(a)||a.length!==b?.length)return 0;let sum=0,aa=0,bb=0;for(let i=0;i<a.length;i++){sum+=a[i]*b[i];aa+=a[i]**2;bb+=b[i]**2;}return aa&&bb?sum/Math.sqrt(aa*bb):0;}
+function metadataConsistency(a,b){const fields=['level2','level3'],known=fields.filter(key=>a[key]&&b[key]);return known.some(key=>norm(a[key])!==norm(b[key]))?'CONFLICT':known.length?'CONSISTENT':'UNKNOWN';}
+function norm(v){return String(v).trim().normalize('NFC').toLowerCase();}function withoutVector({vector,...row}){return row;}function round(v){return Math.round(v*1e6)/1e6;}function compareUtf8(a,b){return Buffer.compare(Buffer.from(String(a),'utf8'),Buffer.from(String(b),'utf8'));}function fault(code,message){return Object.assign(new Error(message),{code});}

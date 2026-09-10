@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Temu Catalog 与评论采集",
+  "version": "0.6.0",
+  "description": "隔离采集当前Catalog列表商品卡或已匹配运营台任务的商品评论。",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://www.temu.com/*",
+    "http://127.0.0.1:37821/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "采集当前商品评论",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["catalog-network-endpoints.js","catalog-network-parser.js","temu-network-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["catalog-network-endpoints.js","catalog-network-parser.js","catalog-network-cache.js","catalog-product-merger.js","catalog-network-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.temu.com/*"],
+      "js": ["review-loader.js","catalog-parser.js","catalog-capture-transport-policy.js","catalog-capture.js","catalog-overlay-mode.js","catalog-breadcrumbs.js","category-page-descriptor.js","category-probe-action.js","catalog-operator-view-model.js","catalog-operator-overlay.js","catalog-manual-binding.js","catalog-manual-passive-runner.js","catalog-auto-runner.js","temu-market-evidence.js","content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

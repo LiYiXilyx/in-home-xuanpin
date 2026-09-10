@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';import {growthInWindow} from '../../ui/tracking-growth.js';
+const day=86400000,end=Date.parse('2026-09-09T23:59:59+08:00');const p=rows=>({history:rows.map(([ago,sales_count])=>({observed_at:new Date(end-ago*day).toISOString(),sales_count}))});
+assert.equal(growthInWindow(p([[13,1000],[0,2000]]),{start:end-7*day,end,minimum:1000}).status,'insufficient');
+assert.equal(growthInWindow(p([[13,1000],[0,2000]]),{start:end-30*day,end,minimum:1000}).delta,1000);
+assert.equal(growthInWindow(p([[6,1000],[0,2000]]),{start:end-7*day,end,minimum:1000}).status,'match');
+assert.equal(growthInWindow(p([[6,1000],[0,1999]]),{start:end-7*day,end,minimum:1000}).status,'below');
+assert.equal(growthInWindow(p([[6,1000],[3,500],[0,2500]]),{start:end-7*day,end,minimum:1000}).status,'reset');
+assert.equal(growthInWindow(p([[6,null],[0,2500]]),{start:end-7*day,end,minimum:1000}).status,'insufficient');
+assert.equal(growthInWindow(p([[0,1000],[0,2500]]),{start:end-7*day,end,minimum:1000}).status,'insufficient');
+console.log('PASS: sparse 7/30 day windows, inclusive threshold, missing sales, resets and identical timestamps');

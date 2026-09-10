@@ -1,0 +1,19 @@
+.opportunity-item img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 280px;
+  margin: 0 auto;
+  object-fit: contain;
+  object-position: center;
+}
+.opportunity-item img.low-resolution { max-width: 224px; max-height: 224px; }
+.visual-image-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  background: #f2f4f2;
+  color: #66756b;
+  border-radius: 8px;
+}

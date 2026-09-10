@@ -1,0 +1,5 @@
+﻿$env:TEMU_CONFIG_PATH = 'F:/TemuWindows/handoff-20260907/state/config.json'
+$env:SOURCING_DB_PATH = 'F:/TemuWindows/handoff-20260907/state/data/1688_sourcing.db'
+$env:TEMU_ARTIFACT_NODE_MODULES = 'F:/TemuWindows/handoff-20260907/runtime/node_modules'
+$env:TEMU_BROWSER_MODE = 'external_cdp'
+Set-Location -LiteralPath 'F:/TemuWindows/handoff-20260907/runtime'

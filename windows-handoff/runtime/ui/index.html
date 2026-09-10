@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Temu 选品运营台</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/modules/catalog/catalog.css">
+  <link rel="stylesheet" href="/modules/yingdao/yingdao.css">
+<style>.operator-section{margin:18px 0;border:1px solid #dfd9d0;background:#fff;border-radius:14px;padding:18px}.operator-section>summary{cursor:pointer;font-size:18px;font-weight:700}.operator-links{display:flex;flex-wrap:wrap;gap:14px}.operator-links a{padding:15px 20px;background:#087f78;color:white;border-radius:9px;text-decoration:none}summary{cursor:pointer}dd{overflow-wrap:anywhere}</style><link rel="stylesheet" href="/admin.css"></head>
+<body>
+  <main class="shell">
+    <section id="environmentBanner" class="test-banner" hidden>测试模式 · 独立测试数据库 · 不写入正式 300 商品库</section>
+    <header class="topbar">
+      <div><p id="operatorHeaderContext" class="eyebrow">Germany / English / EUR · Multi-Category</p><h1 id="consoleTitle">Temu 选品运营台</h1></div>
+      
+    </header>
+
+    <section class="panel"><h2>日常选品</h2><p>先复核候选并加入搜索队列，再看截图筛选，保存值得跟进的机会商品。</p><nav class="operator-links"><a href="/#yingdao-module-root">1688 Excel 随机选5个 / 关联Temu ID</a><a id="daily-review-link" aria-disabled="true" tabindex="-1" title="正在加载复核批次">① 候选人工复核</a><a href="http://127.0.0.1:37821/#auto">② 自动截图队列与历史</a><a href="http://127.0.0.1:37821/#opportunities">③ 机会商品清单</a></nav><p>自动截图使用 VMLogin 的 Temu-DE-Test；运行状态请查看截图队列。</p></section>
+
+    <section id="yingdao-module-root" aria-label="1688候选复核"></section>
+    <details class="operator-section"><summary>类目商品采集与正式商品池（需要新增类目商品时展开）</summary><section id="catalog-module-root" aria-label="Temu 商品采集"></section></details>
+
+    <details class="operator-section"><summary>旧版采集、历史任务与技术诊断</summary><p>以下为旧版 CDP 采集及历史数据库状态，不代表 VMLogin 自动截图任务的状态。日期较早的错误和任务保留供追溯。</p><div class="connection"><span id="browserPulse" class="pulse offline"></span><span id="browserStatus">旧版 Chrome 检查中</span></div><section id="notice" class="notice" aria-live="polite"></section><section class="controls panel">
+      <details class="control-group legacy-browser-tools">
+        <summary class="group-title">旧版 / 高级浏览器连接</summary>
+        <p>Manual Bind 手工采集不需要连接 CDP。</p>
+        <button id="openBrowser" class="primary">打开采集 Chrome</button>
+        <button id="newBrowser">新建采集 Chrome</button>
+        <button id="connectExisting">连接已有 Chrome（Legacy External CDP）</button>
+        <button id="validatePage">验证当前页面</button>
+      </details>
+      <div class="control-group">
+        <span class="group-title">开始采集</span>
+        <button data-start="100">开始 100</button>
+        <button data-start="300">开始 300</button>
+        <button data-start="1000">开始 1000</button>
+      </div>
+      <div class="control-group">
+        <span class="group-title">任务控制</span>
+        <button id="pause">暂停</button>
+        <button id="resume">继续</button>
+        <button id="cancel" class="danger">取消</button>
+        <button id="retry">重试失败</button>
+      </div>
+      <div class="control-group" id="sessionRecoveryControls" hidden>
+        <span class="group-title">Session Recovery Gate</span>
+        <button id="validateSessionRecovery" class="primary">页面已恢复，重新验证</button>
+        <button id="resumeReviewCapture">继续评论采集</button>
+      </div>
+      <div class="control-group">
+        <span class="group-title">结果</span>
+        <button id="export">导出 Excel</button>
+        <button id="openExcel">打开 Excel</button>
+        <button id="clearExcel" class="danger">清除 Excel</button>
+        <button id="openFolder">打开结果目录</button>
+        <button id="resetTestData" class="test-danger" hidden>重置测试数据</button>
+      </div>
+    </section>
+
+    <section class="panel browser-health">
+      <div class="section-title"><div><p class="eyebrow">PAGE HEALTH</p><h2>采集页面准备状态</h2></div><strong id="pageReadiness" class="not-ready">NOT_READY</strong></div>
+      <dl class="health-grid">
+        <div><dt>当前模式</dt><dd id="browserMode">—</dd></div>
+        <div><dt>当前 profile</dt><dd id="profileName">—</dd></div>
+        <div><dt>CDP port</dt><dd id="cdpPort">—</dd></div>
+        <div><dt>国家</dt><dd id="healthCountry">UNKNOWN</dd></div>
+        <div><dt>语言</dt><dd id="healthLanguage">UNKNOWN</dd></div>
+        <div><dt>币种</dt><dd id="healthCurrency">UNKNOWN</dd></div>
+        <div><dt>登录状态</dt><dd id="loginStatus">UNKNOWN</dd></div>
+        <div><dt>商品列表</dt><dd id="productListVisible">NO</dd></div>
+        <div><dt>类目 / Top Sales</dt><dd id="categorySortStatus">NO / NO</dd></div>
+        <div><dt>页面状态</dt><dd id="pageHealthCode">尚未验证</dd></div>
+      </dl>
+      <p id="profileWarning" class="profile-warning" hidden></p>
+      <details class="diagnostic-panel">
+        <summary>页面诊断参数（脱敏）</summary>
+        <pre id="diagnosticParams">点击“验证当前页面”后显示诊断参数。</pre>
+        <p>仅显示 URL 路径和参数名称，不显示参数值、Cookie、Token、浏览器会话或 profile 完整路径。</p>
+      </details>
+    </section>
+
+    <section class="metrics">
+      <article class="metric featured"><span>当前任务</span><strong id="jobStatus">空闲</strong><small id="jobId">—</small></article>
+      <article class="metric"><span>目标</span><strong id="target">0</strong><small>商品数</small></article>
+      <article class="metric"><span>已发现</span><strong id="discovered">0</strong><small>页面唯一商品</small></article>
+      <article class="metric"><span>已保存</span><strong id="stored">0</strong><small>正式写入</small></article>
+      <article class="metric"><span>成功 / 失败</span><strong><b id="success">0</b> / <b id="failed">0</b></strong><small id="resumeCount">恢复 0 次</small></article>
+      <article class="metric"><span>图片覆盖率</span><strong id="imageCoverage">0%</strong><small id="imageCount">0 / 0</small></article>
+    </section>
+
+    <section class="workspace">
+      <div class="panel status-panel">
+        <div class="section-title"><div><p class="eyebrow">实时状态</p><h2>任务与数据</h2></div><span id="updatedAt">—</span></div>
+        <dl class="details">
+          <div><dt>最新 checkpoint</dt><dd id="checkpoint">暂无</dd></div>
+          <div><dt>当前商品池</dt><dd id="activeProducts">0</dd></div>
+          <div><dt>字段质量</dt><dd id="qualitySummary">暂无质量记录</dd></div>
+          <div><dt>最新 Excel</dt><dd id="latestExcel">尚未生成</dd></div>
+          <div><dt>最近错误</dt><dd id="recentError">无</dd></div>
+          <div><dt>Session 状态</dt><dd id="sessionStatus">无待恢复关卡</dd></div>
+        </dl>
+        <div class="history-title"><h3>历史任务</h3><span>状态来自 v2 SQLite</span></div>
+        <div id="jobHistory" class="history"></div>
+      </div>
+
+      <aside class="panel log-panel">
+        <div class="section-title"><div><p class="eyebrow">crawl_events</p><h2>最近事件日志</h2></div><span id="eventCount">0 条</span></div>
+        <div id="events" class="events"><p class="empty">任务事件会显示在这里。</p></div>
+      </aside>
+    </section>
+  </details></main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+<script type="module" src="/admin.js"></script></body>
+</html>

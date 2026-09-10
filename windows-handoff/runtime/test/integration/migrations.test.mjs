@@ -1,0 +1,170 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { openDatabase } from '../../src/db/client.mjs';
+import { migrateDatabase } from '../../src/db/migrate.mjs';
+
+const projectMigrations = fileURLToPath(new URL('../../db/migrations', import.meta.url));
+
+test('all migrations apply once and a repeated run has no side effects', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-migrations-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const databasePath = path.join(directory, 'v2.db');
+  const first = migrateDatabase({ databasePath });
+  const sizeAfterFirst = fs.statSync(databasePath).size;
+  const second = migrateDatabase({ databasePath });
+  assert.deepEqual(first.applied, ['001_core.sql', '002_catalog.sql', '003_quality_and_classification.sql', '004_job_control.sql', '005_catalog_persistence.sql', '006_image_cache_stability.sql', '007_source_url.sql', '008_rule_classification.sql', '009_market_analysis.sql', '010_fine_classification.sql', '011_ai_provider_audit.sql', '012_reviews.sql', '013_review_session_recovery.sql', '014_review_queue.sql', '015_product_lifecycle.sql', '016_navigation_resolutions.sql', '017_catalog_scale_v2.sql', '018_catalog_refresh_baseline.sql', '019_catalog_expansion_1500.sql', '020_catalog_baseline_authority.sql', '021_catalog_expansion_checkpoints.sql', '022_opportunity_analysis.sql', '023_active_pool_reanalysis.sql', '024_sourcing_1688.sql', '025_opportunity_confirmation.sql', '026_initial_category_pool.sql', '027_catalog_rpa_claim_recovery.sql']);
+  assert.equal(second.applied.length, 0);
+  assert.equal(second.skipped.length, 27);
+  assert.equal(fs.statSync(databasePath).size, sizeAfterFirst);
+
+  const db = openDatabase(databasePath);
+  try {
+    const objects = db.prepare("SELECT name,type FROM sqlite_master WHERE type IN ('table','view')").all();
+    const names = new Set(objects.map(item => item.name));
+    for (const name of ['schema_migrations', 'crawl_jobs', 'crawl_events', 'crawl_job_items', 'products', 'catalog_memberships', 'product_snapshots', 'product_images', 'scrape_errors', 'data_quality_checks', 'product_classifications', 'market_analysis_runs', 'category_metrics', 'fine_classification_attempts', 'reviews', 'review_capture_coverage', 'review_session_epochs', 'review_session_control_checks', 'review_queue', 'navigation_resolutions', 'product_lifecycle_runs', 'product_lifecycle_metrics', 'catalog_campaigns', 'catalog_sources', 'catalog_source_runs', 'catalog_capture_batches', 'catalog_product_source_observations', 'catalog_staging_products', 'catalog_exclusion_observations', 'catalog_rpa_queue', 'catalog_pool_versions', 'catalog_pool_version_items', 'catalog_campaign_product_observations', 'catalog_campaign_baseline_items', 'catalog_navigation_risk_observations', 'catalog_refresh_materializations', 'catalog_refresh_audits', 'catalog_expansion_materializations', 'catalog_expansion_audits', 'catalog_baseline_consistency_audits', 'catalog_expansion_checkpoints', 'catalog_pool_activation_history', 'catalog_initial_pool_eligibility_audits', 'catalog_initial_pool_candidate_state', 'catalog_initial_pool_candidate_items', 'catalog_initial_pool_batch_contexts', 'catalog_initial_pool_qa_runs', 'catalog_initial_pool_qa_candidate_items', 'catalog_initial_pool_activation_requests', 'opportunity_analysis_snapshots', 'opportunity_snapshot_items', 'opportunity_segment_metrics', 'opportunity_product_candidates', 'opportunity_confirmations', 'opportunity_confirmation_events', 'sourcing_runs', 'sourcing_run_items', 'supplier_match_candidates', 'supplier_match_selections', 'v_current_products']) {
+      assert.ok(names.has(name), `${name} should exist`);
+    }
+    assert.ok(db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'source_url'));
+    const membershipColumns=new Set(db.prepare('PRAGMA table_info(catalog_memberships)').all().map(column => column.name));
+    for (const name of ['category_key','category_profile_version','campaign_id','source_id']) assert.ok(membershipColumns.has(name));
+    const campaignColumns=new Set(db.prepare('PRAGMA table_info(catalog_campaigns)').all().map(column => column.name));
+    for (const name of ['baseline_source','baseline_pool_version_id']) assert.ok(campaignColumns.has(name));
+    const classificationColumns=new Set(db.prepare('PRAGMA table_info(product_classifications)').all().map(column => column.name));
+    for (const name of ['level1','level2','level3','method','reasons_json']) assert.ok(classificationColumns.has(name));
+    const attemptColumns=new Set(db.prepare('PRAGMA table_info(fine_classification_attempts)').all().map(column => column.name));
+    for (const name of ['provider','model','model_version','prompt_version','input_hash','response_hash','validation_status','confidence','classified_at']) assert.ok(attemptColumns.has(name));
+    db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('temu','same','https://www.temu.com/goods.html?goods_id=same','2026-01-01','2026-01-01')`).run();
+    assert.throws(() => db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('temu','same','https://www.temu.com/another-url','2026-01-01','2026-01-01')`).run(), /UNIQUE/);
+    db.prepare(`INSERT INTO products(platform,external_product_id,canonical_url,first_seen_at,last_seen_at)
+      VALUES('other','same','https://example.test/same','2026-01-01','2026-01-01')`).run();
+  } finally {
+    db.close();
+  }
+});
+
+test('an applied migration cannot be edited silently', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  for (const filename of fs.readdirSync(projectMigrations)) {
+    fs.copyFileSync(path.join(projectMigrations, filename), path.join(migrationsDir, filename));
+  }
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+  fs.appendFileSync(path.join(migrationsDir, '001_core.sql'), '\n-- changed\n');
+  assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
+});
+
+test('migration checksums accept a historical CRLF checksum for the same multiline LF SQL', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-eol-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(\r\n  id INTEGER\r\n);\r\n');
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  fs.writeFileSync(path.join(migrationsDir, '001_sample.sql'), 'CREATE TABLE sample(\n  id INTEGER\n);\n');
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.deepEqual(repeated.applied, []);
+  assert.deepEqual(repeated.skipped, ['001_sample.sql']);
+});
+
+test('migration checksums accept a historical LF checksum for the same multiline CRLF SQL', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-reverse-eol-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  const migrationPath = path.join(migrationsDir, '001_sample.sql');
+  fs.writeFileSync(migrationPath, 'CREATE TABLE sample(\n  id INTEGER\n);\n');
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  fs.writeFileSync(migrationPath, 'CREATE TABLE sample(\r\n  id INTEGER\r\n);\r\n');
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.deepEqual(repeated.applied, []);
+  assert.deepEqual(repeated.skipped, ['001_sample.sql']);
+});
+
+test('migration checksum compatibility is limited to line endings and the existing final-newline rule', async t => {
+  const cases = [
+    { name: 'final newline', before: 'CREATE TABLE sample(id INTEGER);', after: 'CREATE TABLE sample(id INTEGER);\n', compatible: true },
+    { name: 'SQL character', before: 'CREATE TABLE sample(id INTEGER);\n', after: 'CREATE TABLE sample(id TEXT);\n', compatible: false },
+    { name: 'comment content', before: '-- original\nCREATE TABLE sample(id INTEGER);\n', after: '-- changed\nCREATE TABLE sample(id INTEGER);\n', compatible: false },
+    { name: 'SQL whitespace', before: 'CREATE TABLE sample(id INTEGER);\n', after: 'CREATE  TABLE sample(id INTEGER);\n', compatible: false }
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-bounds-'));
+      t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const migrationsDir = path.join(directory, 'migrations');
+      fs.mkdirSync(migrationsDir);
+      const migrationPath = path.join(migrationsDir, '001_sample.sql');
+      fs.writeFileSync(migrationPath, fixture.before);
+      const databasePath = path.join(directory, 'v2.db');
+      migrateDatabase({ databasePath, migrationsDir });
+      fs.writeFileSync(migrationPath, fixture.after);
+      if (fixture.compatible) {
+        assert.deepEqual(migrateDatabase({ databasePath, migrationsDir }).skipped, ['001_sample.sql']);
+      } else {
+        assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_CHECKSUM_MISMATCH');
+      }
+    });
+  }
+});
+
+test('the nine historical CRLF migrations remain compatible with their LF runtime files', t => {
+  const historicalCrlfMigrations = new Set([
+    '001_core.sql',
+    '002_catalog.sql',
+    '003_quality_and_classification.sql',
+    '004_job_control.sql',
+    '009_market_analysis.sql',
+    '010_fine_classification.sql',
+    '011_ai_provider_audit.sql',
+    '012_reviews.sql',
+    '013_review_session_recovery.sql'
+  ]);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-checksum-historical-crlf-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  for (const filename of fs.readdirSync(projectMigrations)) {
+    const sql = fs.readFileSync(path.join(projectMigrations, filename), 'utf8');
+    const historicalSql = historicalCrlfMigrations.has(filename) ? sql.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n') : sql;
+    fs.writeFileSync(path.join(migrationsDir, filename), historicalSql);
+  }
+  const databasePath = path.join(directory, 'v2.db');
+  migrateDatabase({ databasePath, migrationsDir });
+
+  for (const filename of historicalCrlfMigrations) {
+    fs.copyFileSync(path.join(projectMigrations, filename), path.join(migrationsDir, filename));
+  }
+  const repeated = migrateDatabase({ databasePath, migrationsDir });
+  assert.equal(repeated.applied.length, 0);
+  assert.equal(repeated.skipped.length, fs.readdirSync(projectMigrations).filter(filename => /^\d+_.+\.sql$/.test(filename)).length);
+});
+
+test('a failed migration is rolled back completely', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'temu-rollback-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const migrationsDir = path.join(directory, 'migrations');
+  fs.mkdirSync(migrationsDir);
+  fs.writeFileSync(path.join(migrationsDir, '001_bad.sql'), 'CREATE TABLE temporary_table(id INTEGER); THIS IS INVALID;');
+  const databasePath = path.join(directory, 'v2.db');
+  assert.throws(() => migrateDatabase({ databasePath, migrationsDir }), error => error.code === 'MIGRATION_FAILED');
+  const db = openDatabase(databasePath, { readOnly: true });
+  try {
+    assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='temporary_table'").get(), undefined);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 0);
+  } finally {
+    db.close();
+  }
+});

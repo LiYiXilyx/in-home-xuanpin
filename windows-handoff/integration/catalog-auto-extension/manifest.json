@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Temu 类目自动滚动采集（独立版）",
+  "version": "0.3.2",
+  "description": "VMLogin API 控制页面，运营台启动暂停；独立插件负责商品解析、去重和保存。",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.temu.com/*",
+    "http://127.0.0.1:37821/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-endpoints.js",
+        "catalog-network-parser.js",
+        "temu-network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-cache.js",
+        "catalog-product-merger.js",
+        "catalog-network-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-parser.js",
+        "catalog-capture-transport-policy.js",
+        "catalog-capture.js",
+        "catalog-breadcrumbs.js",
+        "catalog-manual-binding.js",
+        "catalog-manual-passive-runner.js",
+        "catalog-api-bridge.js",
+        "auto-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

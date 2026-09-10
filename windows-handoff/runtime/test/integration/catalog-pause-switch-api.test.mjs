@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {createInitialPoolFixture} from '../fixtures/initial-category-pool-fixture.mjs';
+import {createCatalogCampaignService} from '../../src/modules/catalog-scale/catalog-campaign-service.mjs';
+import {createCatalogActivityRegistry} from '../../src/modules/catalog-scale/catalog-activity-registry.mjs';
+import {createCatalogController} from '../../src/server/controllers/catalog-controller.mjs';
+import {createRouter} from '../../src/server/router.mjs';
+test('pause HTTP requires exact scope and returns explicit paused identity',async t=>{
+ const f=await createInitialPoolFixture(t),service=createCatalogCampaignService(f.db,{now:f.now,activityRegistry:createCatalogActivityRegistry()});
+ const c=service.createOperatorInitialCampaign({profile:f.profile,campaignName:'api',requestId:'api'}),q=f.db.prepare('SELECT * FROM catalog_rpa_queue').get();
+ let finishExport;const pendingExport=new Promise(resolve=>{finishExport=resolve;});
+ const catalogController=createCatalogController({catalogService:service,categoryProfileRegistry:{resolve:async()=>f.profile},catalogScopedExportService:{exportPreview:()=>pendingExport}});
+ const server=http.createServer(createRouter({catalogController,serveStatic:(_req,res)=>res.end(),logError:()=>{}}));
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+ const url=`http://127.0.0.1:${server.address().port}/api/catalog/operator/initial-campaigns/${c.campaignId}/pause`;
+ const body={campaign_id:c.campaignId,category_key:f.profile.category_key,category_profile_version:f.profile.category_profile_version,queue_id:q.id,expected_claim_generation:q.claim_generation,request_id:'pause-api'};
+ const post=b=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json',Origin:new URL(url).origin},body:JSON.stringify(b)});
+ const before=f.db.prepare('SELECT total_changes() n').get().n;
+ let response=await post({...body,campaign_id:'wrong'});assert.notEqual(response.status,200);assert.equal(f.db.prepare('SELECT total_changes() n').get().n,before);
+ const exportPromise=catalogController.exportInitialPreview(c.campaignId,body);
+ response=await post(body);assert.equal(response.status,409);assert.equal(f.db.prepare('SELECT total_changes() n').get().n,before);finishExport({});await exportPromise;
+ response=await post(body);assert.equal(response.status,200);assert.equal((await response.json()).result.status,'paused');
+ const after=f.db.prepare('SELECT total_changes() n').get().n;response=await post(body);assert.equal(response.status,200);assert.equal(f.db.prepare('SELECT total_changes() n').get().n,after);
+});

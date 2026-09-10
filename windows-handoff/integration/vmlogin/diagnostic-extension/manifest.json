@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Temu 接入联通检查（只读）",
+  "version": "0.2.0",
+  "description": "手工检查本地连接，并只读当前可见页最多3个商品的ID、价格和币种；不刷新、滚动、下载图片或写正式库。",
+  "host_permissions": [
+    "http://127.0.0.1:37821/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ]
+}

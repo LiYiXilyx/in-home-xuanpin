@@ -1,0 +1,177 @@
+# Temu 第一周选品采集 V1
+
+> 当前验收状态：Day 1—Day 6 PASS；Day 7 为 PARTIAL PASS。规则分类和 300 商品运营 Excel 已完成，真实约 1000 条任务因独立 Chrome 页面 `SEARCH_NO_RESULTS / NOT_READY` 被安全门阻止。禁止绕过页面健康检查或使用历史数据填充数量。详见 `docs/WEEK1_ACCEPTANCE_REPORT.md`。
+
+## 当前运营入口
+
+运营人员只需双击 `启动Temu运营台.vbs`。打开独立采集 Chrome 后，必须先点击“验证当前页面”；只有显示 `READY`、真实商品列表可见、类目与 Top Sales 均确认时才能开始采集。
+
+开发验收命令：
+
+```powershell
+npm run status
+npm run classify
+npm run export -- --job <CATALOG_JOB_ID>
+npm run export:qa -- --job <CATALOG_JOB_ID>
+npm run test:unit
+npm run test:integration
+npm test
+npm run check
+```
+
+分类规则位于 `config/category-rules.example.json`。规则输出写入 v2 SQLite `product_classifications`，包含层级、规则版本、置信度、人工复核标记和可解释理由。
+
+> v2 重构位于 `refactor/week1-catalog-core` 分支。旧评论和开发工具仍作为兼容能力保留，不属于当前运营主入口；在真实约 1000 条验收和引用清理完成前不会删除。
+
+## v2 Day 4：商品池持久化与恢复
+
+- `products` 仅以 `platform + external_product_id` 表示稳定身份；URL、标题变化只更新商品，不新增身份。
+- `catalog_memberships` 独立保存站点/类目/排序、当前 rank 和 active；整批达到安全数量且通过质量门后才事务切换。
+- `product_snapshots` 以 `job_id + product_id` 唯一；同一任务 resume/retry 幂等，不同任务保留新历史。
+- `crawl_job_items.product_id`、`product_images` 和 `data_quality_checks` 在同一正式链路落库。
+- 中断后保持独立 Chrome 与数据库不动，运行 `npm run status`，再运行 `npm run resume -- --job <JOB_ID>`；失败任务使用 `npm run retry -- --job <JOB_ID>`。
+
+## v2 Day 2：浏览器与持久化任务状态
+
+- `src/browser` 管理 Chrome 定位、CDP、当前 Temu 页面、人工验证与错误分类。
+- `src/jobs` 和 job repository 管理任务状态、心跳、暂停、恢复、取消、失败重试和进程中断恢复。
+- Dashboard 状态来自 v2 `crawl_jobs/crawl_events`；服务重启后仍可读取任务和人工关卡。
+- `npm run status` 查看持久化任务；`npm run db:status` 查看 migration 状态。
+- 状态机和错误码见 `docs/DAY2_STATE_MACHINE.md`。
+
+## v2 Day 1：安全迁移基线
+
+新环境按以下顺序初始化：
+
+```powershell
+npm install
+npm run init
+npm run backup -- --config config.json
+npm run migrate -- --config config.json
+npm run migrate -- --config config.json
+npm run status -- --config config.json
+npm run import:v1 -- --config config.json
+npm run test:unit
+npm run test:integration
+npm test
+npm run check
+```
+
+- `config.json` 默认创建独立的 `data/temu_research_v2.db`、`browser-profile/`、`outputs/` 和 `logs/`，这些真实数据均不提交。
+- Day 1 保留的旧采集命令仍指向 `app.legacyDatabasePath`；只有 `migrate`、`status` 和 `import:v1` 使用 `app.databasePath`。Day 2 验收前不会把旧采集器接入 v2 表。
+- `data/temu_week1.db` 被视为旧库，只能由备份和只读导入脚本访问；新电脑没有旧库时会输出可审计的跳过原因。
+- 迁移是只追加且带 SHA-256 校验的。不要修改已执行的 SQL 文件，应新增更高序号迁移。
+- 商品唯一身份是 `goods_id`。完整 URL 保存在来源和快照字段中，不再承担主身份。
+- `@oai/artifact-tool` 是私有的可选安装依赖；公共 npm 无法下载时不阻断 Day 1 数据库开发，但运行旧 Excel 导出前必须配置有权限的 registry 或使用公司已有安装源。
+- 详细边界见 `docs/ARCHITECTURE.md` 和 `docs/WEEK1_EXECUTION.md`。
+
+这是一个全新实现，不依赖工作区中的旧原型。第一周目标是稳定跑通：
+
+1. 德国站 / 英语 / EUR / Top Sales 分类页采集。
+2. 商品详情、评论质量字段与近 7/30/90 天评价采集。
+3. SQLite 保存商品、原始评价、主题证据、断点、运行记录和异常分类。
+4. 计算日均评价、生命周期信号、电子/USB排除、是否入选及多标签差评主题占比。
+5. 生成包含“选品结果、评论明细、差评主题分析、评论抓取进度、字段说明”的 Excel 报表。
+
+## 目录
+
+- `src/`：采集、解析、数据库和分析代码。
+- `tools/build-report.mjs`：从 SQLite 生成 Excel。
+- `test/`：解析、筛选和数据库单元测试。
+- `data/`：运行后生成的 SQLite 数据库，默认不提交。
+- `outputs/week1-mvp/`：Excel和内部QA预览，默认不提交。
+- `browser-profile-fresh/`：运营专用 Chrome 的长期登录会话，默认不提交，也不要共享。
+
+## 初始化
+
+需要 Node.js 22+，并安装 `playwright` 与 `@oai/artifact-tool`：
+
+```powershell
+npm install
+npm run init
+```
+
+编辑 `config.json`：
+
+- `jobs[0].url` 只供旧的开发刷新命令兜底；运营台“采集当前页面”不依赖该链接。
+- 填写一级类目、子类目。
+- 第一周先保留 `targetCount: 100`。
+
+首次安装Playwright浏览器：
+
+```powershell
+npx playwright install chromium
+```
+
+程序只使用Google Chrome，不会自动切换到Microsoft Edge。它会检查当前用户目录和两个常见系统安装目录；也可以在 `browser.executablePath` 中手动指定 `chrome.exe` 的完整路径。
+
+## 运行
+
+运营人员推荐直接双击 `启动Temu运营台.vbs`。它会隐藏后台窗口并打开本地运营台，页面提供采集 Chrome、当前页采集、评论批次、失败重试、Excel导出、实时日志和人工确认按钮。
+
+```powershell
+npm run dashboard
+npm run capture
+npm run crawl
+npm run export
+```
+
+日常流程由运营台完成：先打开采集 Chrome，人工进入德国站摩托配件并选择 `Top Sales`，再点击“采集当前页面”。`npm run capture` 是同一功能的开发命令；它只连接已经打开的采集 Chrome，不导航、不搜索、不刷新。成功采集后，旧链接会退出当前运营队列但保留历史数据；新商品自动进入评论待抓队列。
+
+已有商品后，运营按 Top Sales 页面名次手动打开商品详情，脚本只采集当前页并自动记录进度：
+
+```powershell
+npm run current-review
+npm run export
+```
+
+推荐直接在运营台点击“采集当前商品”：当前商品完成后返回 Top Sales 列表，手动打开下一个商品，再重复点击。这样保留运营人员已经验证正常的页面会话，避免脚本直接打开数据库旧链接后出现空白页。重复采集同一商品不会产生重复评论。
+
+`reviews` 自动批量方式仍作为开发兜底，不作为运营主入口。它直接读取SQLite中的真实Temu商品，自动排除 `demo` 数据；失败商品不会阻塞整批：
+
+```powershell
+npm run reviews:retry
+```
+
+如需主动重新抓已经存在评论的商品，可运行：
+
+```powershell
+node src/cli.mjs reviews --config config.json --batch-size 10 --include-reviewed
+```
+
+`npm run export:qa` 会额外把五张工作表渲染为内部预览图并扫描公式错误；正常的 `npm run export` 也会检查Excel数据与公式。
+
+交给运营后只需双击 `启动Temu运营台.vbs`。运营台还提供带二次确认的“清除 Excel 内容”按钮：它只生成保留表头的空白报表，不删除 SQLite 数据；点击“重新导出”即可恢复完整报表。下面的 CMD 文件保留为开发兜底，不作为日常操作入口：
+
+- `0-刷新TopSales商品池并导表.cmd`
+- `1-抓取下一批评论并导表.cmd`
+- `2-重试失败评论并导表.cmd`
+- `3-仅重新导出Excel.cmd`
+
+采集 Chrome 是由运营台启动的可见普通 Chrome，使用独立且持久的资料目录。请人工完成 VPN、登录及验证码；程序不会绕过验证。不要连接或复制日常主浏览器资料目录。
+
+## 不访问Temu的本地验收
+
+```powershell
+npm test
+npm run demo
+```
+
+`demo` 会写入3个模拟商品及可追溯评价，并生成 `outputs/week1-mvp/Temu第一周选品结果.xlsx`，用于验证数据库、筛选公式和Excel布局。
+
+## 当前边界
+
+- 上架时间仅用“当前已抓评价中的最早日期”估算，并明确标记，不冒充平台官方上架时间。
+- Temu页面结构改变时，需要更新 `config.json` 的选择器。
+- 采集频率默认较低；不建议提高并发或去掉停顿。
+- 同类Top50、竞争度、1688寻源和自动上架字段已预留，但不属于第一周实现范围。
+
+## 阶段门与验收
+
+1. 前10个真实商品：尽量完整抓取评论，至少8个成功；去重、异常分类、断点、近30天活跃度、生命周期、差评证据和运营Excel全部通过。
+2. 100个商品：只在前10通过后执行，抓近30天及部分历史评论，用于稳定性验证。
+3. 1000个商品池：只抓商品基础指标，不批量深抓评论。
+4. 分类与市场分析后筛出2–5个子类，每类10–30个重点商品，再深抓评论和生命周期信号。
+5. 人工确定3–10个候选产品后，才进入1688寻源。
+
+前10验收字段包括日期、星级、正文、SKU、图片、地区和来源链接。默认1–3星为差评，阈值可配置；一条评论允许命中多个主题。每个主题同时保存占全部评论比例、占全部差评比例、评论数、商品数、近30天新增数和原始证据。

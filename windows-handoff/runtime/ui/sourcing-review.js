@@ -1,0 +1,251 @@
+import {suggestSearchQuery} from './search-query-suggestion.js';
+import {recoveredTitles} from './title-recovery.js';
+import {createReviewConsoleState} from './sourcing-review-state.js';
+import {createTemuMarketEvidenceState} from './temu-market-evidence-state.js';
+import {calculateMarketEvidenceRatio,marketEvidenceFxDisplay,normalizeFxContext} from './market-evidence-fx.js';
+import {flashActionCheck} from './action-button-feedback.js';
+
+const RUN_ID=new URLSearchParams(location.search).get('run_id');
+const INITIAL_GOODS_ID=new URLSearchParams(location.search).get('goods_id');
+const FROM_TRACKING=new URLSearchParams(location.search).get('from')==='tracking';let trackingScrolled=false;
+const $=id=>document.getElementById(id);
+const api={
+  async request(path,options={}) {
+    const response=await fetch(path,{
+      method:options.method??'GET',
+      headers:options.body?{'content-type':'application/json'}:undefined,
+      body:options.body?JSON.stringify(options.body):undefined,
+    });
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok) throw Object.assign(new Error(payload.error?.message??payload.message??`请求失败 (${response.status})`),{status:response.status,code:payload.error?.code??payload.code});
+    return payload;
+  },
+};
+const review=RUN_ID?createReviewConsoleState({api,runId:RUN_ID,initialGoodsId:INITIAL_GOODS_ID,openWindow:window.open.bind(window),onChange:()=>render()}):null;
+const evidenceApi={list:(run,goods)=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(goods)}/evidence-sessions?run_id=${encodeURIComponent(run)}`),get:(run,goods,session)=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(goods)}/evidence-sessions/${encodeURIComponent(session)}?run_id=${encodeURIComponent(run)}`),create:body=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(body.anchor_temu_goods_id)}/evidence-sessions`,{method:'POST',body}),reissue:body=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(body.anchor_temu_goods_id)}/evidence-sessions/${encodeURIComponent(body.session_id)}/reissue-bind-token`,{method:'POST',body}),saveAssessment:body=>api.request(`/api/sourcing/review/goods/${encodeURIComponent(body.anchor_temu_goods_id)}/evidence-sessions/${encodeURIComponent(body.session_id)}/assessments`,{method:'POST',body})};
+const evidence=RUN_ID?createTemuMarketEvidenceState({api:evidenceApi,runId:RUN_ID,onChange:()=>render()}):null;let evidenceGoods=null;
+const composingEvidenceInputs=new Set();
+const manualFxKey='temu-manual-calculator-fx-v1';let manualFx=null;try{const saved=JSON.parse(localStorage.getItem(manualFxKey));if(normalizeFxContext(saved).status==='AVAILABLE')manualFx=saved;}catch{}
+let evidenceFx=normalizeFxContext(null);let priceCalculatorGoods=null;
+
+function text(tag,value,className) {
+  const node=document.createElement(tag);
+  if(className) node.className=className;
+  node.textContent=value??'—';
+  return node;
+}
+function cleanTitle(value){const t=String(value??'').replace(/^item picture\s*/i,'').replace(/\s*Open in new tab\.?$/i,'').trim();return /^(icon|image|picture)?$/i.test(t)?'':t;}
+function field(label,value) { return `${label}：${value??'—'}`; }
+function number(value,digits=2) { return Number.isFinite(Number(value))?Number(value).toFixed(digits):'—'; }
+function money(value,currency) { return value===null||value===undefined||value===''?'—':Number.isFinite(Number(value))?`${currency==='CNY'?'¥':'€'}${number(value)}`:'—'; }
+function productId(row) { return String(row?.['1688_product_id']??row?.supplier_product_id??''); }
+function supplierImage(goodsId,row) {
+  const params=new URLSearchParams({run_id:RUN_ID});
+  return `/api/sourcing/review/images/supplier/${encodeURIComponent(goodsId)}/${encodeURIComponent(productId(row))}?${params}`;
+}
+function temuImage(goodsId) {
+  return `/api/sourcing/review/images/temu/${encodeURIComponent(goodsId)}?run_id=${encodeURIComponent(RUN_ID)}`;
+}
+function visualDisplayImage(item) { return item?.display_image_url??null; }
+function image(src,alt) {
+  const img=document.createElement('img'); img.src=src; img.alt=alt; img.loading='lazy';
+  img.addEventListener('error',()=>{const missing=text('span','MISSING','status error');img.replaceWith(missing);},{once:true});
+  return img;
+}
+
+function render() {
+  if(!review){$('reviewRunId').textContent='未指定';$('reviewNotice').textContent='缺少 run_id，请从 YingDao 运营台选择一个 Review Run。';document.querySelectorAll('button,textarea').forEach(node=>node.disabled=true);return;}
+  const state=review.snapshot(),summary=state.bootstrap,detail=state.detail,candidate=state.currentCandidate;
+  if($('search-pilot-dialog').open&&$('search-pilot-dialog').dataset.anchor!==state.currentGoodsId)$('search-pilot-dialog').close();
+  if(state.currentGoodsId){const url=new URL(location.href);url.searchParams.set('goods_id',state.currentGoodsId);history.replaceState(null,'',url);}
+  $('reviewRunId').textContent=RUN_ID;
+  $('metricTotal').textContent=summary?.total_goods??0;
+  $('metricPending').textContent=summary?.awaiting_review??0;
+  $('metricConfirmed').textContent=summary?.confirmed??0;
+  $('metricNoSelection').textContent=summary?.no_selection??0;
+  $('reviewNotice').textContent=state.notice||(FROM_TRACKING&&state.currentGoodsId===INITIAL_GOODS_ID?'已从周期跟踪定位商品 '+INITIAL_GOODS_ID+'，请复核下方 1688 候选。':'');
+  document.querySelectorAll('[data-filter]').forEach(button=>button.classList.toggle('active',button.dataset.filter===state.filter));
+  renderGoods(state); renderTemu(detail);if(FROM_TRACKING&&state.currentGoodsId===INITIAL_GOODS_ID&&detail&&!trackingScrolled){trackingScrolled=true;requestAnimationFrame(()=>{const item=document.querySelector('[data-tracking-highlight]');item?.scrollIntoView({block:'center'});});} renderOpportunity(state); renderCandidates(state); renderDetail(candidate,detail);
+  renderMarketEvidence(state);if(state.currentGoodsId&&String(detail?.temu_goods_id)===state.currentGoodsId&&state.currentGoodsId!==evidenceGoods){evidenceGoods=state.currentGoodsId;queueMicrotask(()=>{if(review.snapshot().currentGoodsId===state.currentGoodsId)evidence.selectGoods(state.currentGoodsId,{suggestedQuery:suggestSearchQuery(cleanTitle(detail?.temu_context?.temu_title)||recoveredTitles[state.currentGoodsId]?.title)});});}
+  const ids=summary?.goods.map(row=>String(row.temu_goods_id))??[],index=ids.indexOf(state.currentGoodsId);
+  $('reviewPrev').disabled=index<=0; $('reviewNext').disabled=index<0||index>=ids.length-1;
+}
+
+function renderMarketEvidence(reviewState){
+  if(priceCalculatorGoods!==reviewState.currentGoodsId){
+    priceCalculatorGoods=reviewState.currentGoodsId;
+    for(const id of ['market-evidence-temu-price','market-evidence-supplier-price','market-evidence-moq'])$(id).value='';
+    for(const id of ['market-evidence-temu-pack','market-evidence-supplier-pack'])$(id).value='1';
+  }
+  if(!evidence)return;const state=evidence.snapshot(),session=state.session,phases=state.evidence?.phases??[];
+  evidenceFx=normalizeFxContext(manualFx??reviewState.detail?.fx_context);if(document.activeElement!==$('manual-fx-input'))$('manual-fx-input').value=evidenceFx.cnyPerEur??'';const fxDisplay=marketEvidenceFxDisplay(evidenceFx);$('market-evidence-fx-rate').textContent=fxDisplay.rate;$('market-evidence-fx-source').textContent=fxDisplay.source;$('market-evidence-fx-as-of').textContent=fxDisplay.asOf;updateEvidenceRatio();
+  for(const [slot,id] of [['1','market-evidence-query'],['2','market-evidence-query-2'],['3','market-evidence-query-3']]){const input=$(id),ready=state.currentGoodsId===reviewState.currentGoodsId,value=ready?(state.queryDrafts?.[slot]??''):'';input.disabled=!ready;if(!composingEvidenceInputs.has(id)&&input.value!==value)input.value=value;}$('market-evidence-query-slot').value=state.selectedQuerySlot??'1';
+  $('search-pilot-add').disabled=state.currentGoodsId!==reviewState.currentGoodsId;$('search-pilot-open').disabled=state.currentGoodsId!==reviewState.currentGoodsId;const notice=$('market-evidence-notice');notice.hidden=!state.notice;$('market-evidence-notice-text').textContent=state.notice?`${state.notice.message}${state.notice.code?` (${state.notice.code})`:''}`:'';notice.dataset.kind=state.notice?.kind??'';
+  $('market-evidence-session').replaceChildren();if(session){$('market-evidence-session').append(text('strong',`Session ${session.session_id}`),text('span',`状态 ${session.status} · revision ${session.revision} · goods ${session.anchor_temu_goods_id} · 创建于 ${session.created_at??'—'}`,'meta'),text('span',`使用搜索词：${session.query??'—'}`,'meta'),text('span','下一步：复制搜索词 → 人工打开 Temu 并搜索 → 在扩展中绑定当前搜索页','meta'));if(session.query!==state.query)$('market-evidence-session').append(text('span',`会话冻结搜索词：${session.query}；当前草稿：${state.query}。继续旧会话将使用旧会话已经冻结的搜索词。`,'status warning'));}else $('market-evidence-session').textContent='尚未创建 Session';
+  $('market-evidence-before').textContent=`BEFORE：${phases.some(x=>x.phase==='BEFORE')?'已保存':'未保存'}`;$('market-evidence-after').textContent=`AFTER：${phases.some(x=>x.phase==='AFTER')?'已保存':'未保存'}`;
+  const creating=state.action?.loading&&state.action.type==='CREATE_SESSION',reissue=$('market-evidence-reissue-token');$('market-evidence-create').disabled=!reviewState.currentGoodsId||creating||Boolean(session&&session.status!=='CLOSED');$('market-evidence-create').textContent=creating?'创建中…':'创建证据会话';reissue.hidden=!session||session.status!=='BOUND'||Boolean(state.bindToken);reissue.disabled=state.action?.loading;$('market-evidence-copy-token').disabled=!state.bindToken;$('market-evidence-refresh').disabled=!session||state.action?.loading;$('market-evidence-continue').hidden=!(session&&session.status!=='CLOSED');
+  const root=$('market-evidence-results');root.replaceChildren();for(const phase of phases){let cards=[];try{cards=JSON.parse(phase.cards_json??'[]');}catch{}const shot=image(evidenceScreenshotUrl(state,phase.phase),`${phase.phase} 商品搜索结果安全区域截图`);shot.className='market-evidence-screenshot';const delta=phase.phase==='AFTER'?state.evidence?.delta?.added?.length:null;root.append(text('strong',`${phase.phase} · ${phase.card_count??cards.length} 个商品${delta===null?'':` · 新增 ${delta}`} · ${phase.captured_at??'时间未记录'}`),shot);const enlarge=text('button','查看大图');enlarge.type='button';enlarge.addEventListener('click',()=>{$('market-evidence-preview-image').src=shot.src;$('market-evidence-preview').showModal();});root.append(enlarge);for(const card of cards.slice(0,30)){const button=text('button',`${card.goods_id} · ${card.title??''} · ${money(card.price_eur,'EUR')}`);button.type='button';button.addEventListener('click',()=>{$('market-evidence-temu-price').value=card.price_eur??'';updateEvidenceRatio();});root.append(button);}}
+}
+function evidenceScreenshotUrl(state,phase){return`/api/sourcing/review/goods/${encodeURIComponent(state.currentGoodsId)}/evidence-sessions/${encodeURIComponent(state.session.session_id)}/phases/${phase}/screenshot?run_id=${encodeURIComponent(state.runId)}`;}
+function assessmentInput(){return{temu_price_eur:Number($('market-evidence-temu-price').value),temu_pack_quantity:Number($('market-evidence-temu-pack').value),supplier_price_cny:Number($('market-evidence-supplier-price').value),supplier_pack_quantity:Number($('market-evidence-supplier-pack').value),moq:$('market-evidence-moq').value===''?null:Number($('market-evidence-moq').value),supplier_product_id:review.snapshot().currentProductId,evidence_phase:'AFTER'};}
+function updateEvidenceRatio(){const result=calculateMarketEvidenceRatio({fx:evidenceFx,temuPriceEur:Number($('market-evidence-temu-price').value),temuPackQuantity:Number($('market-evidence-temu-pack').value),supplierPriceCny:Number($('market-evidence-supplier-price').value),supplierPackQuantity:Number($('market-evidence-supplier-pack').value)});$('market-evidence-ratio').textContent=`价格倍率：${result.priceRatio===null?'—':`约${result.priceRatio.toFixed(2)}x`}`;}
+function clipboardFallback(value){const node=document.createElement('textarea');node.value=value;node.style.position='fixed';node.style.opacity='0';document.body.append(node);node.select();const ok=document.execCommand('copy');node.remove();return ok;}
+async function copyEvidenceQuery(){const button=$('market-evidence-copy-query');await evidence.copySelectedQuery({writeText:value=>navigator.clipboard.writeText(value),fallback:clipboardFallback});flashActionCheck(button);}
+async function copyEvidenceToken(){const button=$('market-evidence-copy-token'),value=evidence.snapshot().bindToken;if(!value)throw new Error('当前没有可复制的绑定码');let copied=false;try{await navigator.clipboard.writeText(value);copied=true;}catch{copied=clipboardFallback(value);}if(!copied)throw new Error('复制失败，请选中绑定码后按 Command+C');flashActionCheck(button);}
+
+function renderGoods(state) {
+  const root=$('goodsList'); root.replaceChildren();
+  for(const item of state.bootstrap?.goods??[]) {
+    const id=String(item.temu_goods_id),button=document.createElement('button');
+    button.dataset.goodsId=id;if(FROM_TRACKING&&id===INITIAL_GOODS_ID&&id===state.currentGoodsId){button.style.cssText='outline:3px solid #f5a623;background:#fff4d6';button.dataset.trackingHighlight='true';}
+    button.type='button'; button.className=`goods-item${id===state.currentGoodsId?' active':''}`;
+    button.append(image(temuImage(id),`Temu ${id}`));
+    const copy=document.createElement('span');
+    copy.append(text('strong',id),text('span',cleanTitle(item.temu_title)||recoveredTitles[id]?.title||'标题缺失，待补充','meta'),text('span',item.review_status,'status'));
+    copy.append(text('span',`${item.group_label??'未可靠分组'} · ${item.group_item_count??1}款`,'meta'));
+    copy.append(text('span',`标价 ${money(item.temu_listed_price_eur,'EUR')} · 单个 ${money(item.temu_unit_price_eur,'EUR')}${item.temu_quantity_confidence==='LOW'||item.quantity_confidence==='LOW'?' (推定)':''}`,'meta'));
+    if(item.image_failed) copy.append(text('span','图片失败','status error'));
+    button.append(copy); button.addEventListener('click',()=>act(()=>review.selectGoods(id,{confirmDiscard:confirmDiscardNote}))); root.append(button);
+  }
+}
+
+function renderTemu(detail) {
+  const root=$('currentTemu'); root.replaceChildren(); if(!detail) return;
+  const context=detail.temu_context??{},id=detail.temu_goods_id;
+  root.append(image(temuImage(id),`Temu ${id}`));
+  const copy=document.createElement('div'); copy.append(text('h2',cleanTitle(context.temu_title)||recoveredTitles[id]?.title||'标题缺失：原始记录未提供有效标题'));
+  if(!cleanTitle(context.temu_title)&&recoveredTitles[id])copy.append(text('p',recoveredTitles[id].source+'；工作表05，第'+recoveredTitles[id].row+'行','meta'));
+  for(const value of [field('goods_id',id),field('复核状态',detail.review_status),field('Temu标价',money(context.temu_listed_price_eur,'EUR')),field('包装数量',context.temu_pack_quantity),field('Temu单个价',`${money(context.temu_unit_price_eur,'EUR')} / 件`),field('数量依据',context.quantity_source),field('解析置信度',context.quantity_confidence),field('价格来源',context.temu_price_source),field('同类',`${context.group_label??'未可靠分组'} (${detail.group_context?.item_count??1}款)`),field('分组依据',`${context.group_source??'—'} / ${context.group_confidence??'—'}`),field('分类',[context.level1,context.level2,context.level3].filter(Boolean).join(' / ')||null),field('上下文',context.temu_context_status)]) copy.append(text('p',value,'meta'));
+  root.append(copy);
+}
+
+function renderOpportunity(state) {
+  const detail=state.detail,result=state.visualResult,index=result?.index;
+  const toggle=$('reviewOpportunityToggle'),panel=$('reviewOpportunityPanel'),summary=$('reviewOpportunitySummary'),items=$('reviewOpportunityItems'),benchmark=$('reviewOpportunityBenchmark');
+  summary.replaceChildren();items.replaceChildren();benchmark.replaceChildren();
+  if(!state.currentGoodsId){toggle.disabled=true;panel.hidden=true;return;}toggle.disabled=false;toggle.setAttribute('aria-expanded',String(state.visualExpanded));toggle.textContent=state.visualExpanded?'收起视觉相似商品':'展开视觉相似商品';panel.hidden=!state.visualExpanded;
+  if(state.visualLoading){summary.append(text('strong',`正在检索当前商品 ${state.currentGoodsId} 的视觉相似商品…`));return;}if(state.visualError){summary.append(text('strong',`视觉索引错误：${state.visualError}`,'status error'));return;}if(!result){summary.append(text('strong','Excel视觉相似商品'),text('span','当前商品尚未加载视觉相似结果','meta'));return;}if(index?.status!=='READY'){summary.append(text('strong',`视觉索引：${index?.status??'NOT_BUILT'}`),text('span','请先运行 YingDao 视觉索引构建','meta'));return;}if(state.visualState.status==='EMPTY'){summary.append(text('strong','当前商品没有达到阈值的视觉相似商品'));benchmark.append(text('strong','视觉相似市场价格基准'),text('span','无可用视觉市场参考','meta'));return;}
+  const m=result.market_metrics??{},matchCount=m.visual_match_count??result.search?.match_count??0;
+  summary.append(text('strong',`Excel视觉相似商品 · 命中 ${matchCount}`),text('span',`来源：05_细分商品明细 · 检索范围 ${index.universe_goods_count}款 · 可用图片 ${index.universe_image_count}张 · 模型 ${index.model_id} r${index.model_revision}`,'meta'),text('span',`视觉命中：${matchCount} · 有效标价：${m.other_listed_price_sample_count??0} · 可靠单价：${m.reliable_unit_price_sample_count??0} · 推定单价：${m.provisional_unit_price_sample_count??0}`,'meta'),text('span',`其他相似最低标价 ${money(m.other_min_listed_price_eur,'EUR')} · 其他相似标价中位数 ${money(m.other_median_listed_price_eur,'EUR')}`,'meta'),text('span',`可靠单价最低 ${money(m.min_reliable_unit_price_eur,'EUR')} · 可靠单价中位数 ${money(m.median_reliable_unit_price_eur,'EUR')} （可靠样本 ${m.reliable_unit_price_sample_count??0} / ${matchCount}）`,'meta'),text('span',`推定单价最低 ${money(m.min_provisional_unit_price_eur,'EUR')} · 推定单价中位数 ${money(m.median_provisional_unit_price_eur,'EUR')} · 样本 ${m.provisional_unit_price_sample_count??0}`,'meta'));
+  if((m.other_listed_price_sample_count??0)===0)summary.append(text('span','视觉相似商品存在，但没有可用 EUR 标价。','status warning'));
+  if((m.provisional_unit_price_sample_count??0)>0)summary.append(text('span','推定：未从标题或结构化字段确认包装数量，暂按单件计算。','status warning'));
+  if(m.listed_price_includes_conflicts)summary.append(text('span','部分视觉匹配与分类/商品类型信息存在冲突。标价可用于人工参考，但不属于严格可靠的同款价格样本。','status warning'));
+  const thumbs=document.createElement('div');thumbs.className='opportunity-thumbs';
+  for(const item of (result.matches??[]).slice(0,6)){if(!visualDisplayImage(item))continue;const img=image(visualDisplayImage(item),`视觉匹配 ${item.goods_id}`);if(item.display_image_low_resolution)img.classList.add('low-resolution');img.addEventListener('click',()=>{review.previewVisualImage(item.goods_id);render();});thumbs.append(img);}summary.append(thumbs);$('reviewOpportunitySort').hidden=true;
+  for(const item of (result.matches??[]).slice(0,20)){const card=document.createElement('article');card.className='opportunity-item';if(visualDisplayImage(item)){const img=image(visualDisplayImage(item),`视觉匹配 ${item.goods_id}`);if(item.display_image_low_resolution)img.classList.add('low-resolution');img.addEventListener('click',()=>{review.previewVisualImage(item.goods_id);render();});card.append(img);}else card.append(text('span','暂无图片','visual-image-placeholder'));if(item.display_image_low_resolution)card.append(text('span','预览图分辨率较低','status warning'));card.append(text('strong',item.title??item.goods_id),text('p',[field('goods_id',item.goods_id),field('图片来源',item.display_image_kind),field('视觉相似度',number(item.final_similarity_score,3)),field('匹配原因',item.match_reason),field('Temu标价',money(item.price_eur,'EUR')),field('销量',item.sales_count),field('评分',item.rating),field('生命周期',item.review_plan_status)].join('\n'),'meta'));if(item.navigation_action==='SWITCH_CURRENT_RUN'){const button=text('button','切换到此商品复核');button.addEventListener('click',()=>act(()=>review.switchVisualCurrentRun(item.goods_id,{confirmDiscard:confirmDiscardNote})));card.append(button);}else if(item.navigation_action==='OPEN_OTHER_RUN'){const button=text('button',`打开 Batch ${item.review_batch_number??''} 复核`);button.addEventListener('click',()=>review.openVisualOtherRun(item.goods_id));card.append(button);}else card.append(text('span','尚未生成1688候选','status'));items.append(card);}
+  benchmark.append(text('strong','视觉相似市场价格基准'),text('span',`当前商品标价 ${money(m.anchor_listed_price_eur,'EUR')} · 其他相似最低标价 ${money(m.other_min_listed_price_eur,'EUR')} · 其他相似标价中位数 ${money(m.other_median_listed_price_eur,'EUR')}`,'meta'),text('span',`可靠单价最低 ${money(m.min_reliable_unit_price_eur,'EUR')} （${m.reliable_unit_price_sample_count??0} / ${matchCount}） · 推定单价最低 ${money(m.min_provisional_unit_price_eur,'EUR')} · 推定中位数 ${money(m.median_provisional_unit_price_eur,'EUR')}`,'meta'));
+  const preview=$('reviewOpportunityPreview'),previewImage=$('reviewOpportunityPreviewImage'),previewItem=(result.matches??[]).find(item=>String(item.goods_id)===String(state.visualPreviewGoodsId));preview.hidden=!state.visualPreviewGoodsId;if(state.visualPreviewGoodsId&&previewItem?.display_image_url)previewImage.src=previewItem.display_image_url;
+}
+
+function renderCandidates(state) {
+  const root=$('candidateGrid'); root.replaceChildren();
+  for(const row of state.detail?.candidates??[]) {
+    const id=productId(row),button=document.createElement('button'); button.type='button';
+    button.className=`candidate-card${id===state.currentProductId?' active':''}${Number(row.review_excluded)===1?' excluded':''}`;
+    button.append(image(supplierImage(state.currentGoodsId,row),`1688 ${id}`),text('h3',row['1688_title']??row.supplier_title??id));
+    const meta=[
+      `#${row.random_sample_rank} · original ${row.original_rank??'—'}`,field('product_id',id),
+      field('RMB',row.price_rmb??row.supplier_price_rmb),field('MOQ',row.moq),field('月销',row.monthly_sales),
+      field('包装数',row.supplier_pack_quantity),field('采购单价CNY',money(row.supplier_unit_price_cny,'CNY')),field('采购单价EUR',money(row.supplier_unit_price_eur,'EUR')),
+      field('价格倍率',row.opportunity_ratio===null?null:`${number(row.opportunity_ratio,1)}x`),field('机会标签',row.opportunity_band),
+      field('累计销量',row.cumulative_sales),field('店铺',row.shop_name),field('店铺资质',row.shop_qualification),
+    ];
+    button.append(text('p',meta.join('\n'),'meta'));
+    if(Number(row.selected_candidate)===1) button.append(text('span','已选定','status'));
+    if(Number(row.review_excluded)===1) button.append(text('span','已排除','status error'));
+    button.addEventListener('click',()=>{review.chooseCandidate(id);render();}); root.append(button);
+  }
+}
+
+function renderDetail(row,detail) {
+  const root=$('candidateDetail'); root.replaceChildren();
+  const disabled=!row;
+  for(const id of ['openSupplierLink','selectCandidate','excludeCandidate','restoreCandidate','saveNote']) $(id).disabled=disabled;
+  $('clearSelection').disabled=!detail?.candidates.some(item=>Number(item.selected_candidate)===1);
+  if(!row) { root.append(text('p','请选择候选')); $('operatorNote').value=''; return; }
+  root.append(image(supplierImage(detail.temu_goods_id,row),`1688 ${productId(row)}`));
+  root.lastChild.className='detail-image';
+  const values=[
+    field('random_sample_rank',row.random_sample_rank),field('original_rank',row.original_rank),field('1688_product_id',productId(row)),
+    field('标题',row['1688_title']??row.supplier_title),field('RMB价格',row.price_rmb??row.supplier_price_rmb),field('MOQ',row.moq),
+    field('价格区间',`${money(row.supplier_price_low_cny,'CNY')} - ${money(row.supplier_price_high_cny,'CNY')}`),field('价格依据',row.supplier_price_basis),field('包装数',row.supplier_pack_quantity),field('包装置信',row.supplier_quantity_confidence),field('采购单价CNY',money(row.supplier_unit_price_cny,'CNY')),field('采购单价EUR',money(row.supplier_unit_price_eur,'EUR')),field('Temu同类最低单价',money(detail.group_context?.metrics?.group_min_unit_price_eur,'EUR')),field('价格倍率',row.opportunity_ratio===null?null:`${number(row.opportunity_ratio,1)}x`),field('机会标签',row.opportunity_band),field('需要检查',(row.opportunity_reasons??[]).join(', ')||null),
+    field('月销',row.monthly_sales),field('累计销量',row.cumulative_sales),field('店铺',row.shop_name),field('店铺资质',row.shop_qualification),
+    field('图片状态',row.image_download_status),field('复核状态',Number(row.review_excluded)===1?'已排除':Number(row.selected_candidate)===1?'已选定':'待复核'),
+  ];
+  for(const value of values) root.append(text('p',value,'meta'));
+  $('operatorNote').value=row.operator_note??'';
+  $('selectCandidate').disabled=Number(row.review_excluded)===1;
+  $('excludeCandidate').hidden=Number(row.review_excluded)===1;
+  $('restoreCandidate').hidden=Number(row.review_excluded)!==1;
+}
+
+function sortedGroupItems(items,sort,currentGoodsId) { const rows=[...items],id=x=>String(x.temu_goods_id),num=x=>Number.isFinite(Number(x))?Number(x):Infinity;if(sort==='GOODS_ID')return rows.sort((a,b)=>id(a).localeCompare(id(b)));if(sort==='LISTED_PRICE')return rows.sort((a,b)=>num(a.temu_listed_price_eur)-num(b.temu_listed_price_eur)||id(a).localeCompare(id(b)));if(sort==='UNIT_PRICE')return rows.sort((a,b)=>num(a.temu_unit_price_eur)-num(b.temu_unit_price_eur)||id(a).localeCompare(id(b)));return rows.sort((a,b)=>(id(a)===currentGoodsId?-1:0)-(id(b)===currentGoodsId?-1:0)||num(a.temu_unit_price_eur)-num(b.temu_unit_price_eur)||id(a).localeCompare(id(b)));}
+function confirmDiscardNote() { return globalThis.confirm?.('人工备注尚未保存，确定放弃并切换商品吗？')??false; }
+
+async function act(operation) {
+  try { await operation(); } catch(error) { $('reviewNotice').textContent=error.message; }
+  render();
+}
+
+document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>act(()=>review.load(button.dataset.filter))));
+$('reviewPrev').addEventListener('click',()=>act(()=>review.previous({confirmDiscard:confirmDiscardNote}))); $('reviewNext').addEventListener('click',()=>act(()=>review.next({confirmDiscard:confirmDiscardNote})));
+$('openSupplierLink').addEventListener('click',()=>act(()=>review.openLink()));
+$('selectCandidate').addEventListener('click',()=>act(()=>review.selectCandidate())); $('clearSelection').addEventListener('click',()=>act(()=>review.clearSelection()));
+$('excludeCandidate').addEventListener('click',()=>act(()=>review.excludeCandidate())); $('restoreCandidate').addEventListener('click',()=>act(()=>review.restoreCandidate()));
+$('saveNote').addEventListener('click',()=>act(()=>review.saveNote($('operatorNote').value)));
+$('operatorNote').addEventListener('input',()=>review.setNoteDirty(true));
+$('reviewOpportunityToggle').addEventListener('click',()=>act(()=>review.toggleVisual()));
+$('reviewOpportunitySort').addEventListener('change',event=>{review.setGroupSort(event.target.value);render();});
+$('reviewOpportunityPreviewClose').addEventListener('click',()=>{review.closeVisualPreview();render();});
+$('market-evidence-create').addEventListener('click',()=>evidence.createSession().catch(()=>{}));
+$('market-evidence-reissue-token').addEventListener('click',()=>evidence.reissueBindToken().catch(()=>{}));
+$('market-evidence-copy-query').addEventListener('click',()=>copyEvidenceQuery().catch(()=>{}));
+$('market-evidence-copy-token').addEventListener('click',()=>copyEvidenceToken().catch(error=>{$('reviewNotice').textContent=error.message;}));
+$('market-evidence-refresh').addEventListener('click',()=>evidence.refreshEvidence({reason:'MANUAL'}).catch(()=>{}));
+$('market-evidence-continue').addEventListener('click',()=>evidence.refreshEvidence({reason:'CONTINUE'}).catch(()=>{}));
+$('market-evidence-notice-close').addEventListener('click',()=>evidence.dismissNotice());
+$('market-evidence-preview-close').addEventListener('click',()=>$('market-evidence-preview').close());
+for(const [slot,id] of [['1','market-evidence-query'],['2','market-evidence-query-2'],['3','market-evidence-query-3']]){const input=$(id),update=()=>evidence.setQueryDraft(slot,input.value);input.addEventListener('input',update);input.addEventListener('change',update);input.addEventListener('compositionstart',()=>composingEvidenceInputs.add(id));input.addEventListener('compositionend',()=>{composingEvidenceInputs.delete(id);update();});}
+$('market-evidence-query-slot').addEventListener('change',event=>evidence.selectQuerySlot(event.target.value));
+$('market-evidence-import-random5').addEventListener('click',()=>{const row=review.snapshot().currentCandidate;if(row){$('market-evidence-supplier-price').value=row.price_rmb??row.supplier_price_rmb??'';$('market-evidence-moq').value=row.moq??'';$('market-evidence-supplier-pack').value=row.supplier_pack_quantity??1;updateEvidenceRatio();}});
+for(const id of ['market-evidence-temu-price','market-evidence-temu-pack','market-evidence-supplier-price','market-evidence-supplier-pack'])$(id).addEventListener('input',updateEvidenceRatio);
+window.addEventListener('focus',()=>{if(evidence?.snapshot().session)evidence.refreshEvidence({reason:'FOCUS'}).catch(()=>{});});
+if(review)act(()=>review.load());else render();
+
+let screenshotOpenSequence=0;
+$('search-pilot-open').addEventListener('click',async()=>{
+ const goods=review?.snapshot().currentGoodsId,sequence=++screenshotOpenSequence,button=$('search-pilot-open'),status=$('search-pilot-open-status');
+ if(!goods){status.textContent='请先选择商品。';return;}
+ button.disabled=true;status.textContent='正在查找该商品最新一轮截图…';
+ try{
+  const base='http://127.0.0.1:37822';
+  const response=await fetch(base+'/history?'+new URLSearchParams({review_run:RUN_ID,anchor:goods}),{cache:'no-store'}),history=await response.json();if(!response.ok)throw Error(history.error||'读取截图失败');
+  const latest=(history.runs||[]).filter(r=>r.status==='DONE'&&String(r.anchor)===goods&&r.review_run===RUN_ID).sort((a,b)=>b.created.localeCompare(a.created)||b.id.localeCompare(a.id))[0];
+  if(!latest)throw Error('当前商品还没有已完成的截图，请先加入自动截图队列并运行。');
+  const grouped=await fetch(base+'/capture-group?id='+encodeURIComponent(latest.id),{cache:'no-store'}),group=await grouped.json();if(!grouped.ok)throw Error(group.error||'读取多屏列表失败');
+  if(!Array.isArray(group.ids)||!group.ids.length)throw Error('该轮没有可查看的截图');
+  if(sequence!==screenshotOpenSequence||review.snapshot().currentGoodsId!==goods)return;
+  $('search-pilot-anchor').textContent='商品：'+goods+' · 最新一轮 '+group.ids.length+' 屏 · 搜索词：'+latest.query;
+  const dialog=$('search-pilot-dialog'),oldFrame=$('search-pilot-frame'),frame=oldFrame.cloneNode(false);
+  frame.removeAttribute('src');frame.style.visibility='hidden';
+  frame.src=base+'/combined?'+new URLSearchParams({ids:group.ids.join(','),opened:Date.now()+'-'+sequence});
+  frame.addEventListener('load',()=>{if(sequence!==screenshotOpenSequence||review.snapshot().currentGoodsId!==goods||!dialog.open)return;frame.style.visibility='visible';status.textContent='已打开最新一轮多屏统一商品列表。';},{once:true});
+  oldFrame.replaceWith(frame);dialog.dataset.anchor=goods;dialog.showModal();status.textContent='正在加载最新一轮截图…';
+ }catch(e){if(sequence===screenshotOpenSequence&&review.snapshot().currentGoodsId===goods)status.textContent=e.message;}
+ finally{if(sequence===screenshotOpenSequence)button.disabled=false;}
+});
+
+$('search-pilot-close').onclick=()=>$('search-pilot-dialog').close();
+$('search-pilot-dialog').addEventListener('close',()=>{screenshotOpenSequence++;const frame=$('search-pilot-frame');frame.style.visibility='hidden';frame.removeAttribute('src');});
+
+$('search-pilot-add').onclick=async()=>{const button=$('search-pilot-add');button.disabled=true;try{const anchor=review.snapshot().currentGoodsId,e=evidence.snapshot();if(e.currentGoodsId!==anchor)throw Error('商品仍在加载，请稍后');const slot=$('market-evidence-query-slot').value,id={'1':'market-evidence-query','2':'market-evidence-query-2','3':'market-evidence-query-3'}[slot],query=$(id).value.trim();if(!query)throw Error('请先填写当前搜索词');const response=await fetch('http://127.0.0.1:37822/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-Pilot':'search-v1'},body:JSON.stringify({anchor,review_run:RUN_ID,query})});const d=await response.json();if(!response.ok)throw Error(d.error);$('search-pilot-status').textContent='已加入队列：'+anchor+' · '+query+'。可继续选择下一个商品，最后到队列页统一开始。';}catch(e){$('search-pilot-status').textContent=e.message;}finally{button.disabled=evidence.snapshot().currentGoodsId!==review.snapshot().currentGoodsId;}};
+
+(async()=>{const select=document.getElementById('reviewRunSelect'),status=document.getElementById('reviewRunSelectStatus');if(!select)return;try{const {runs}=await api.request('/api/sourcing/review/runs');select.replaceChildren();for(const run of runs){const o=document.createElement('option');o.value=run.run_id;o.textContent=(run.pool_batch?run.pool_batch.batch_name+' · '+run.pool_batch.category_key+' · '+run.pool_batch.pool_count+'件池 · '+'建池 '+(run.pool_batch.pool_created_at?new Date(run.pool_batch.pool_created_at).toLocaleDateString('zh-CN'):'日期未记录')+' · ':'历史批次（未关联商品池） · ')+(run.imported_at||'')+' · '+run.total+'件 · 待复核'+run.pending+' · 已确认'+run.confirmed+' · '+run.run_id;select.append(o);}select.value=RUN_ID||'';if(!runs.length)status.textContent='暂无可复核批次';select.addEventListener('change',()=>{if(!select.value)return;location.href='/sourcing-review.html?'+new URLSearchParams({run_id:select.value});});}catch(e){status.textContent='批次读取失败：'+e.message;}})();
+
+$('manual-fx-save').addEventListener('click',()=>{
+ const input=$('manual-fx-input'),rate=Number(input.value),status=$('manual-fx-status');
+ if(!input.value.trim()||!Number.isFinite(rate)||rate<=0){status.textContent='请输入大于 0 的有效汇率。';return;}
+ const asOf=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date());
+ const value={status:'AVAILABLE',cny_per_eur:rate,source:'MANUAL_CONFIG',as_of:asOf};
+ try{localStorage.setItem(manualFxKey,JSON.stringify(value));manualFx=value;renderMarketEvidence(review.snapshot());status.textContent='汇率已保存，更新日期已刷新。';}catch{status.textContent='保存失败，请检查浏览器存储权限。';}
+});
