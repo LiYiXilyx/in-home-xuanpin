@@ -1,4 +1,5 @@
 import {createShadowbotMonitor} from './shadowbot-monitor.mjs';
+import {createHybridMonitor} from './hybrid-monitor.mjs';
 import {instrument,logs} from './system-log-store.mjs';
 import {exportTrackingWorkbook} from '../modules/tracking/tracking-export.mjs';
 import { operatorMessage } from './status-service.mjs';
@@ -6,9 +7,13 @@ import { operatorMessage } from './status-service.mjs';
 export function createRouter({ trackingService,statusService,browserController,jobController,reviewController,reviewQueueController,catalogController,exportController,testController,sourcingController,sourcingReviewController,temuMarketEvidenceController,serveStatic,
   environment={ name:'development',testMode:false },logError=console.error }) {
   const shadowbotMonitor=createShadowbotMonitor({prepareImport:input=>sourcingController.automationConfig(input),importResults:batch=>sourcingController.importAutomation(batch)});
+  const hybrid=createHybridMonitor(catalogController);
   return async function route(request,response) {
     const url=new URL(request.url,'http://127.0.0.1');instrument(request,response,url);
     try {
+      if(request.method==='GET'&&url.pathname==='/api/catalog/hybrid')return json(response,200,await hybrid.status());
+      if(request.method==='POST'&&url.pathname==='/api/catalog/hybrid/start'){assertLocalOrigin(request);return json(response,200,await hybrid.start(await readJson(request)));}
+      if(request.method==='POST'&&url.pathname==='/api/catalog/hybrid/command'){assertLocalOrigin(request);return json(response,200,await hybrid.command(await readJson(request)));}
       if(request.method==='GET'&&url.pathname==='/api/sourcing/automation/options')return json(response,200,await sourcingController.automationOptions({poolId:url.searchParams.get('poolId')}));
       if(request.method==='GET'&&url.pathname==='/api/sourcing/automation')return json(response,200,await shadowbotMonitor.status());
       if(request.method==='POST'&&url.pathname==='/api/sourcing/automation/switch-pool'){assertLocalOrigin(request);return json(response,200,await shadowbotMonitor.switchPool(await readJson(request)));}

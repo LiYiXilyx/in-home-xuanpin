@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Temu 本地鼠标采集专用版",
+  "version": "0.2.0",
+  "description": "本地鼠标采集：页面检测绑定、分批保存及人工暂停控制。请勿与其他采集插件同时启用。",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.temu.com/*",
+    "http://127.0.0.1:37821/*",
+    "http://127.0.0.1:37823/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-endpoints.js",
+        "catalog-network-parser.js",
+        "temu-network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-cache.js",
+        "catalog-product-merger.js",
+        "catalog-network-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-parser.js",
+        "catalog-capture-transport-policy.js",
+        "catalog-capture.js",
+        "catalog-breadcrumbs.js",
+        "catalog-manual-binding.js",
+        "catalog-manual-passive-runner.js",
+        "hybrid-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

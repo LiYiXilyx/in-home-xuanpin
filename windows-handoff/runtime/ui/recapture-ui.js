@@ -6,9 +6,17 @@ export function mountManualRecapture(){
  const resume=document.createElement('section');resume.id='existing-task-entry';resume.style.cssText='padding:16px;border:1px solid #c8d8e8;border-radius:8px;margin-bottom:24px;background:#f5f9ff';
  resume.innerHTML='<h2>继续已有任务（接着上次采集）</h2><p>不用填写新任务名称，也不会创建新任务。选择原任务后点击“继续这个任务”，已采商品和进度会接着累积。</p><p id="active-task-summary" role="status"></p>';
  resume.append(q('#recapture-task').closest('.toolbar'),q('#recapture-message'));panel.prepend(resume);const tip=document.createElement('a');tip.href='#merge-preview';tip.textContent='已完成采集？选好对应任务，去预览入池数量 →';tip.onclick=e=>{e.preventDefault();q('#merge-preview').scrollIntoView({behavior:'smooth'});};resume.append(tip);const next=document.getElementById('catalog-next-sourcing');if(next)panel.append(next);
+
  const createTitle=panel.querySelector(':scope > h2');if(createTitle)createTitle.textContent='更新已有商品数据（周期复采）';
  const periodic=document.createElement('section');periodic.innerHTML='';
  const nodes=[...panel.children];let collecting=false;for(const node of nodes){if(node===createTitle)collecting=true;if(node.tagName==='HR')break;if(collecting)periodic.append(node);}resume.after(periodic);
+
+ const modes=document.createElement('section');modes.className='panel';modes.innerHTML='<h2>你现在要做什么？</h2><div class="toolbar"><button data-mode="new">采集新品</button><button data-mode="continue">继续上次</button><button data-mode="update">更新已有商品</button></div><p id="catalog-mode-tip"></p>';host.prepend(modes);
+ periodic.id='periodic-recapture-entry';
+ const style=document.createElement('style');style.textContent='[data-view="catalog"][data-mode="continue"] #catalog-panel > :not(#catalog-current-campaign),[data-view="catalog"][data-mode="update"] #catalog-panel > :not(#catalog-current-campaign){display:none!important}';document.head.append(style);
+ function selectMode(mode){host.dataset.mode=mode;resume.hidden=mode!=='continue';periodic.hidden=mode!=='update';modes.querySelectorAll('button').forEach(b=>{b.classList.toggle('primary',b.dataset.mode===mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode));});modes.querySelector('p').textContent={new:'选择类目并创建任务，再进入辅助采集。',continue:'选择原任务，进度保留；继续后进入采集控制。',update:'选择已有商品池，创建新一轮复采；按已有商品覆盖情况显示进度。'}[mode];}
+ modes.querySelectorAll('button').forEach(b=>b.onclick=()=>selectMode(b.dataset.mode));selectMode('continue');
+ const instructions=document.getElementById('catalog-manual-bind-steps');if(instructions)instructions.innerHTML='<h3>采集步骤</h3><p>选好任务 → 进入辅助采集 → 检查并开始 → 5秒内切回VMLogin商品页。检测通过后自动绑定并采集；验证码或登录由人工处理。</p>';
  panel.querySelector('#merge-preview').textContent='预览并合并到正式商品池';
  const mergeHeading=panel.querySelector(':scope > h3');if(mergeHeading)mergeHeading.textContent='4. 预览采集结果并入池';
 
@@ -30,7 +38,7 @@ let state=null,busy=false,requestId=null;let syncedCategory=null;document.addEve
  }
  async function run(create){if(busy||!state)return;busy=true;panel.querySelectorAll('button').forEach(b=>b.disabled=true);q('#recapture-message').textContent='正在切换任务…';try{
   requestId??=crypto.randomUUID();await api({...create?{poolId:q('#recapture-pool').value,name:q('#recapture-name').value,requestId}:{campaignId:q('#recapture-task').value},expectedCurrentId:state.current?.id??null,expectedGeneration:state.current?.generation??null});requestId=null;
-  await refresh();if(state.current)q('#recapture-task').value=state.current.id;q('#recapture-message').textContent='任务已切换。请在 Temu 对应类目重新检测并绑定，再点击采集当前页面。原任务可在此选择继续。';
+  await refresh();if(state.current)q('#recapture-task').value=state.current.id;q('#recapture-message').textContent='任务已切换，即将进入采集控制。';location.hash='collection';
  }catch(e){q('#recapture-message').textContent=e.message;await refresh().catch(()=>{});}finally{busy=false;q('#recapture-refresh').disabled=false;q('#merge-preview').disabled=false;q('#merge-confirm').disabled=false;q('#merge-track').disabled=false;}}
  q('#recapture-pause').onclick=async()=>{if(busy||!state?.current)return;busy=true;q('#recapture-pause').disabled=true;try{const r=await fetch('/api/catalog/manual-tasks/pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedCurrentId:state.current.id,expectedGeneration:state.current.generation})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||'暂停失败');await refresh();q('#recapture-message').textContent='当前任务已暂停，采集占用已释放，已采数据保留。现在可在上方创建新类目首次任务；以后选中旧任务，点击“继续这个任务”即可恢复。';}catch(e){q('#recapture-message').textContent=e.message;await refresh().catch(()=>{});}finally{busy=false;q('#recapture-pause').disabled=!state?.current;}};
  q('#recapture-create').onclick=()=>run(true);q('#recapture-switch').onclick=()=>run(false);q('#recapture-refresh').onclick=()=>refresh().catch(e=>q('#recapture-message').textContent=e.message);

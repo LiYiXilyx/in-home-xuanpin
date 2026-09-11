@@ -1,0 +1,12 @@
+const {createRequire}=require('node:module');
+const {chromium}=createRequire('F:/TemuWindows/handoff-20260907/runtime/package.json')('playwright');
+const assert=require('node:assert/strict');
+(async()=>{const b=await chromium.launch({headless:true,executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
+try{const p=await b.newPage();await p.setContent('<div id="hybrid-human-wait" data-job-id="test-job"><button data-local-action="resume">继续采集</button></div>');
+await p.evaluate(()=>{window.sent=[];window.TemuCatalogManualPassiveRunnerModule={scanDom:()=>({rawCards:[]})};window.chrome={runtime:{sendMessage:async message=>{window.sent.push(message);return {ok:true};}}};});
+await p.addScriptTag({path:require('path').join(__dirname,'extension/hybrid-panel.js')});
+await p.locator('[data-local-action="resume"]').click();
+assert.match(await p.locator('[data-feedback]').innerText(),/已收到/);
+const sent=await p.evaluate(()=>window.sent);assert.deepEqual(sent,[{type:'LOCAL_MOUSE_COMMAND',id:'test-job',action:'resume'}]);
+console.log('PASS: Temu resume button sends task-scoped local command and displays acknowledgment');
+}finally{await b.close();}})().catch(e=>{console.error(e);process.exitCode=1});

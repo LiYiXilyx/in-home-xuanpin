@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Temu 人工绑定＋影刀点击（新增测试版）",
+  "version": "0.1.0",
+  "description": "测试版：人工检测绑定，影刀鼠标点击，VMLogin滚动。请勿与其他采集插件同时启用。",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.temu.com/*",
+    "http://127.0.0.1:37821/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-endpoints.js",
+        "catalog-network-parser.js",
+        "temu-network-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-network-cache.js",
+        "catalog-product-merger.js",
+        "catalog-network-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.temu.com/*"
+      ],
+      "js": [
+        "catalog-parser.js",
+        "catalog-capture-transport-policy.js",
+        "catalog-capture.js",
+        "catalog-breadcrumbs.js",
+        "catalog-manual-binding.js",
+        "catalog-manual-passive-runner.js",
+        "hybrid-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

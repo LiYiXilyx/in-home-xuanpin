@@ -5,11 +5,19 @@ import {initialQuantityConfig,INITIAL_TARGET_STORAGE_SENTINEL} from './campaign-
 const MODE='MANUAL_BIND_PASSIVE_CAPTURE';
 export function createManualRecapture({db,repository,now,activityRegistry,createCampaignRecord}){
  const fail=message=>{throw new AppError(message,{code:'MANUAL_TASK_SWITCH_FAILED'});};
+ function metrics(c){
+  if(!c.config?.trackingRecapture)return null;
+  const base=db.prepare('SELECT platform,goods_id FROM catalog_campaign_baseline_items WHERE campaign_id=?').all(c.id);
+  const rows=db.prepare('SELECT platform,goods_id,electronic_screening_status FROM catalog_staging_products WHERE campaign_id=?').all(c.id);
+  const ids=new Set(base.map(r=>r.platform+':'+r.goods_id));
+  const covered=new Set(rows.filter(r=>ids.has(r.platform+':'+r.goods_id)).map(r=>r.platform+':'+r.goods_id)).size;
+  return {previousCount:ids.size,capturedCount:rows.length,covered,added:rows.filter(r=>!ids.has(r.platform+':'+r.goods_id)&&r.electronic_screening_status==='passed').length};
+ }
  function list(){
   const pools=db.prepare("SELECT id,category_key,product_count FROM catalog_pool_versions WHERE status='active' ORDER BY product_count DESC").all();
   const tasks=db.prepare("SELECT id FROM catalog_campaigns WHERE browser_control_mode=? AND status IN ('running','paused','manual_required') ORDER BY created_at DESC").all(MODE).map(r=>repository.getCampaign(r.id));
   const active=repository.listActiveRpaQueues();
-  return {pools,tasks:tasks.map(c=>({id:c.id,name:c.name,category:c.categoryKey,status:c.status,purpose:c.config?.trackingRecapture?'复采跟踪':c.campaignType==='initial'?'首次采集':'补充商品',count:c.nonElectronicUniqueCount})),current:active.length===1?{id:active[0].campaignId,generation:active[0].claimGeneration}:null};
+  return {pools,tasks:tasks.map(c=>({id:c.id,name:c.name,category:c.categoryKey,status:c.status,purpose:c.config?.trackingRecapture?'复采跟踪':c.campaignType==='initial'?'首次采集':'补充商品',count:c.nonElectronicUniqueCount,metrics:metrics(c)})),current:active.length===1?{id:active[0].campaignId,generation:active[0].claimGeneration}:null};
  }
  function switchTask(input){return transaction(db,()=>{
   const active=repository.listActiveRpaQueues();if(active.length>1)fail('存在多个采集任务，请先处理任务占用。');

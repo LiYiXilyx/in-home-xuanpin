@@ -52,13 +52,14 @@ export function catalogPanelMarkup(){return `
     <section id="catalog-claim-blockers" class="catalog-claim-blockers" hidden><h3>Catalog RPA 占用阻塞</h3><pre id="catalog-claim-blocker-list"></pre><button id="catalog-inspect-claim" type="button">检查占用状态</button><button id="catalog-end-stale-claim" type="button" disabled>结束陈旧占用</button></section>
     <section id="catalog-current-campaign" class="catalog-current" hidden>
       <h3 class="catalog-current-title">当前采集任务</h3>
+      <p><a href="#collection">已选好当前任务？进入辅助采集，查看进度与控制 →</a></p>
       <dl class="catalog-current-grid">
         <div class="catalog-current-field"><dt>类目</dt><dd id="catalog-current-category">—</dd></div>
-        
+
         <div class="catalog-current-field"><dt>任务名称</dt><dd id="catalog-current-name">—</dd></div>
-        
-        
-        
+
+
+
         <div class="catalog-current-field"><dt>目标数量</dt><dd id="catalog-current-target">0</dd></div>
         <div class="catalog-current-field"><dt>已采集（去重）</dt><dd id="catalog-live-unique-count">0</dd></div>
         <div class="catalog-current-field"><dt>剩余数量</dt><dd id="catalog-current-remaining">0</dd></div>

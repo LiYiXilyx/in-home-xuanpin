@@ -1,0 +1,22 @@
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('node:assert/strict');
+const world={URL,console,location:{href:'https://www.temu.com/de-en/test'},document:{title:'test'}};
+world.globalThis=world;
+world.TemuCatalogManualBinding={detectCurrentPage:()=>({observed:{},health:{warnings:[]}}),validateBindingForCapture:()=>{},contentFingerprint:ids=>ids.join(','),manualBatchId:x=>JSON.stringify(x)};
+world.TemuCatalogCaptureTransportPolicy={resolveCaptureTransportPolicy:()=>({policy:'DOM_REQUIRED_NETWORK_OPTIONAL'})};
+vm.createContext(world);
+for(const f of ['catalog-capture.js','catalog-manual-passive-runner.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'extension',f),'utf8'),world);
+const mod=world.TemuCatalogManualPassiveRunnerModule;
+const cards=Array.from({length:840},(_,i)=>({goods_id:String(100000+i),title:'part '+i,source_url:'https://www.temu.com/goods.html?goods_id='+i}));
+const context={campaign:{id:'task',status:'running',quantityMode:'OPEN_ENDED',nonElectronicUniqueCount:284},source:{id:'source'},profile:{},queue:{checkpoint:{}}};
+const batches=[];let fail=true;
+const runner=new mod.ManualPassiveRunner({getContext:async()=>context,scan:()=>({rawCards:cards,cardCount:840,goodsIds:new Set(cards.map(c=>c.goods_id))}),passiveCandidates:mod.passiveCandidates,submitPassive:async x=>{if(fail){fail=false;throw Error('network');}batches.push([...x.goodsIds]);return{};},now:()=>new Date().toISOString(),checkpoint:async()=>{}},context);
+runner.binding={binding_generation:1,context_fingerprint:'test'};
+(async()=>{
+ await assert.rejects(()=>runner.captureCurrentPage(),/network/);
+ assert.equal(runner.submitted.size,0,'failed submit must remain retryable');
+ for(let i=0;i<4;i++)await runner.captureCurrentPage();
+ assert.deepEqual(batches.map(b=>b.length),[300,300,240]);
+ assert.equal(new Set(batches.flat()).size,840);
+ assert.equal(context.campaign.nonElectronicUniqueCount,284,'zero database growth must not block processing');
+ console.log('PASS: 840 cards in 300/300/240, failed batch retries, duplicates do not block later batches');
+})().catch(e=>{console.error(e);process.exitCode=1});

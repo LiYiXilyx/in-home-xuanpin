@@ -16,3 +16,8 @@ playwright-report/
 test-results/
 .artifact-work/
 .docx-review/
+
+.venv/
+__pycache__/
+*.pyc
+running.lock

@@ -1,0 +1,28 @@
+export function mountFinishCollection(){
+ const host=document.querySelector('[data-view="catalog"]');if(!host)return;
+ const section=document.createElement('section');section.className='panel';section.innerHTML='<h2>完成采集并入池</h2><p>自动判断首采或复采，检查后预览结果，确认才写入正式池。</p><button class="primary" id="finish-open">检查并预览入池</button>';
+ host.append(section);
+ const dialog=document.createElement('dialog');dialog.style.cssText='max-width:680px;width:90%;border:1px solid #ccd8e4;border-radius:12px;padding:24px';
+ dialog.innerHTML='<h2>完成采集并入池</h2><label>采集任务 <select id="finish-task"></select></label><button id="finish-check">检查并预览</button><pre id="finish-info" style="white-space:pre-wrap" role="status"></pre><label><input type="checkbox" id="finish-track">入池成功后创建跟踪计划（旧计划保留）</label><p><button id="finish-confirm" disabled>确认入池</button> <button id="finish-retry" hidden>重试创建跟踪计划</button> <button id="finish-close">关闭</button></p>';
+ document.body.append(dialog);const q=id=>dialog.querySelector('#finish-'+id);let tasks=[],preview=null,busy=false,saved=null,requestId=null;
+ async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||d.message||'操作失败');return d;}
+ function lock(v){busy=v;q('task').disabled=v;q('check').disabled=v;q('close').disabled=v;q('confirm').disabled=v||!preview||!!saved;q('retry').disabled=v;q('track').disabled=v||!!saved;}
+ async function open(){if(busy)return;preview=null;saved=null;q('info').textContent='读取任务…';q('confirm').disabled=true;q('retry').hidden=true;dialog.showModal();lock(true);try{const d=await api('/api/catalog/manual-tasks');tasks=d.tasks;q('task').replaceChildren(...tasks.map(t=>new Option(t.name+' · '+t.purpose+' · '+t.count+'件',t.id)));q('task').value=d.current?.id||tasks[0]?.id||'';q('info').textContent='已选当前任务。检查生成预览后，再确认入池。';}catch(e){q('info').textContent=e.message;}finally{lock(false);}if(tasks.length)await q('check').onclick();}
+ q('task').onchange=()=>{preview=null;saved=null;q('info').textContent='任务已变化，请重新检查。';q('retry').hidden=true;lock(false);};
+ q('check').onclick=async()=>{if(busy)return;preview=null;saved=null;q('retry').hidden=true;lock(true);try{const t=tasks.find(t=>t.id===q('task').value);if(!t)throw Error('请选择任务');requestId=crypto.randomUUID();
+  if(t.purpose==='复采跟踪'){const m=await api('/api/catalog/recapture-pool-merge?campaignId='+encodeURIComponent(t.id));if(!m.capturedCount)throw Error('该任务尚未采到商品，请先采集');preview={kind:'recapture',task:t,m};q('info').textContent=`任务：${m.campaignName}\n原池 ${m.previousCount} 件；本次采到 ${m.capturedCount} 件\n新品 ${m.added} 件；更新已有 ${m.updated} 件；排除 ${m.excluded} 件\n合并后 ${m.total} 件；原池未采到的商品保留。`;}
+  else if(t.purpose==='首次采集'){const {current:c}=await api('/api/catalog/operator-campaign/current');if(c?.campaign_id!==t.id)throw Error('请先在“继续上次”选中并继续这个首采任务，再检查入池');const body={campaign_id:t.id,category_key:c.category_key,category_profile_version:c.category_profile_version,request_id:crypto.randomUUID()};const d=await api('/api/catalog/operator/initial-campaigns/'+encodeURIComponent(t.id)+'/qa-runs',body);const next=d.result;if(next?.qa?.status!=='PASSED_CURRENT')throw Error('质量检查未通过：'+(next?.qa?.failure_codes||[]).join('、')+'。请查看当前任务检查结果');preview={kind:'initial',task:t,body,revision:next.candidate_revision,count:next.current_unique};q('info').textContent=`任务：${t.name}\n质量检查通过，将建立首个正式商品池：${next.current_unique} 件。`;}
+  else throw Error('补充商品任务暂不支持这个入池流程，请使用已有商品复采任务；不会自动转换或合并。');
+ }catch(e){q('info').textContent=e.message;}finally{lock(false);}};
+ async function tracking(){if(!saved?.poolId)throw Error('正式池已保存，但返回信息缺少池ID，请在周期跟踪页创建计划');await api('/api/tracking/create',{poolId:saved.poolId,name:saved.name+' · '+new Date().toLocaleString('zh-CN')+'跟踪'});q('info').textContent+='\n跟踪计划已创建。';q('retry').hidden=true;}
+ q('confirm').onclick=async()=>{if(busy||!preview||saved)return;lock(true);try{const p=preview;let result;
+  if(p.kind==='recapture'){result=await api('/api/catalog/recapture-pool-merge',{campaignId:p.task.id,revision:p.m.revision,requestId});saved={poolId:result.poolId,name:p.task.name};}
+  else{const {current:c}=await api('/api/catalog/operator-campaign/current');if(c?.campaign_id!==p.task.id||c.candidate_revision!==p.revision||c.qa?.status!=='PASSED_CURRENT')throw Error('任务或采集数据已变化，请重新检查预览');const d=await api('/api/catalog/operator/initial-campaigns/'+encodeURIComponent(p.task.id)+'/activate',{...p.body,request_id:requestId});saved={poolId:d.result?.pool_version_id,name:p.task.name};}
+  q('info').textContent+='\n正式池已保存。';if(q('track').checked){try{await tracking();}catch(e){q('info').textContent+='\n跟踪计划创建未确认：'+e.message+'。先到周期跟踪核对是否已创建，避免重复。';q('retry').hidden=false;}}
+ }catch(e){q('info').textContent+='\n'+e.message;}finally{lock(false);}};
+ q('retry').onclick=async()=>{if(busy)return;lock(true);try{await tracking();}catch(e){q('info').textContent+='\n'+e.message;}finally{lock(false);}};
+ q('close').onclick=()=>dialog.close();dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});
+ section.querySelector('button').onclick=open;
+ const old=document.getElementById('merge-preview');if(old){old.onclick=open;const parent=old.parentElement;let hide=false;for(const node of [...parent.children]){if(node.tagName==='HR')hide=true;if(hide&&node.id!=='catalog-next-sourcing')node.style.display='none';}const next=document.getElementById('catalog-next-sourcing');if(next)section.append(next);}
+ const shortcut=document.querySelector('#existing-task-entry a[href="#merge-preview"]');if(shortcut){shortcut.href='#finish-open';shortcut.onclick=e=>{e.preventDefault();section.scrollIntoView({behavior:'smooth'});};}
+}

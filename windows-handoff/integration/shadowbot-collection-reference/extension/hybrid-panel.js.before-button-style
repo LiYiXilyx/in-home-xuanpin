@@ -1,0 +1,14 @@
+(()=>{
+const mod=globalThis.TemuCatalogManualPassiveRunnerModule;
+const box=document.createElement('section');box.id='hybrid-test-panel';box.style.cssText='position:fixed;left:12px;top:90px;z-index:2147483647;background:white;border:2px solid #167d9a;padding:12px;width:260px;color:#17324a;font:14px sans-serif';
+box.innerHTML='<b>人工绑定＋影刀点击 · 测试版</b><p>① 检测 → ② 绑定 → ③ 在影刀启动测试</p><button id="hybrid-detect">检测页面</button><button id="hybrid-bind" disabled>绑定页面</button><p><button id="hybrid-capture" disabled>测试版：采集当前页面</button></p><button id="hybrid-stop">停止辅助采集</button><p id="hybrid-message">等待人工检测</p>';
+document.documentElement.append(box);const q=s=>box.querySelector(s);let runner=null,busy=false,stopped=true,receipt=0,error='',boundUrl=null;
+const visible=n=>{const r=n.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&getComputedStyle(n).visibility!=='hidden'&&!n.disabled;};
+function publish(){const scan=mod.scanDom(),text=document.body?.innerText||'';const buttons=[...document.querySelectorAll('button,a,[role="button"]')].filter(n=>!box.contains(n)&&visible(n));box.dataset.state=JSON.stringify({version:1,url:location.href,hidden:document.hidden,stopped,busy,error,receipt,bound:!!runner?.binding&&boundUrl===location.href,campaign:runner?.context?.campaign?.id,runnerState:runner?.state,ids:(scan.rawCards||[]).map(c=>String(c.goods_id)),count:Number(runner?.context?.campaign?.nonElectronicUniqueCount||0),blocked:!!scan.captchaBlocking||/access denied|too many requests|temporarily blocked/i.test(text),retry:buttons.some(n=>/^(try again|try more)$/i.test(n.innerText.trim())),more:buttons.some(n=>/^see more$/i.test(n.innerText.trim())),y:scrollY,height:document.documentElement.scrollHeight});}
+async function action(fn){if(busy)return;busy=true;error='';publish();try{await fn();}catch(e){error=e.message;stopped=true;}finally{busy=false;q('#hybrid-message').textContent=error||`状态：${runner?.state} · 已确认保存 ${receipt} 次`;q('#hybrid-bind').disabled=runner?.state!=='PAGE_READY';q('#hybrid-capture').disabled=!runner?.binding||stopped;publish();}}
+q('#hybrid-detect').onclick=()=>action(async()=>{stopped=true;runner=new mod.ManualPassiveRunner(mod.realDependencies());await runner.restore();await runner.detectCurrentPage();});
+q('#hybrid-bind').onclick=()=>action(async()=>{await runner.bindCurrentPage();boundUrl=location.href;stopped=false;});
+q('#hybrid-capture').onclick=()=>action(async()=>{if(stopped||boundUrl!==location.href)throw Error('请重新人工检测绑定');await runner.refreshContext();if(!runner.binding)throw Error('任务变化，请重新绑定');await runner.captureCurrentPage();if(runner.lastError)throw runner.lastError;receipt++;});
+q('#hybrid-stop').onclick=()=>{stopped=true;q('#hybrid-capture').disabled=true;publish();};
+setInterval(publish,500);publish();
+})();
